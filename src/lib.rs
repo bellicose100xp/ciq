@@ -18,6 +18,13 @@
 //! Modules are added as build phases land (see `dev/TASKS.md`); Phase 1 stands up
 //! `error` first, then `schema` and `engine`.
 
+pub mod app;
 pub mod engine;
 pub mod error;
 pub mod schema;
+
+// The headless harness uses dev-only deps (`tempfile`) and is currently consumed only by
+// in-crate tests, so it compiles under `cfg(test)` only. When agent-facing E2E in a later
+// phase needs it from `tests/`, promote it behind a `testutil` feature instead.
+#[cfg(test)]
+pub mod harness;
