@@ -16,3 +16,9 @@
 # framing), and 5 (live resize reflow). All decisions feeding it (event routing via App::on_key,
 # debounce via App::tick, render-to-buffer via app_render) are headless and NOT exempt.
 src/app/event_loop.rs
+
+# Phase 4 (P4.8): the OSC 52 clipboard write — `clipboard::osc52::copy` writes the escape bytes to
+# the real terminal, which has no in-memory backend to receive them. Covers §4.7 row 4 (system
+# clipboard / OSC 52). The byte-production (`encode_osc52`) and every output formatter
+# (`output/emit.rs::render_output`) are pure and headless — only the final write is exempt.
+src/clipboard/osc52.rs

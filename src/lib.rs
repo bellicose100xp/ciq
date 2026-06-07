@@ -20,11 +20,13 @@
 
 pub mod app;
 pub mod autocomplete;
+pub mod clipboard;
 pub mod engine;
 pub mod error;
 pub mod grid;
 pub mod ingest;
 pub mod logging;
+pub mod output;
 pub mod query;
 pub mod schema;
 pub mod schema_bar;

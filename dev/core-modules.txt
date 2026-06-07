@@ -58,6 +58,12 @@ src/sql_ident.rs
 # zero-area tests, so it doesn't erode the floor.
 src/schema_bar.rs
 
+# Phase 4 (present now): output modes — pure `render_output` (CSV RFC-4180 quoting, TSV escaping,
+# JSON null-vs-"" type fidelity, Markdown alignment). Every branch is a real format-correctness
+# case (a mis-quoted field corrupts the export; a wrong JSON shape loses the §8/Q12 null-vs-empty
+# distinction), so it earns the hard floor.
+src/output/emit.rs
+
 # csv_config.rs (the minimal [csv] TOML loader) is a thin serde-parse-to-default seam — its real
 # behavior is covered by csv_config_tests, but the floor lives on the pure transform modules
 # above (judgment per the brief; the full config schema is Phase 5 / Q5).

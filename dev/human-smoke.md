@@ -51,3 +51,19 @@ active column or the literal delimiter glyph as a real terminal renders them. Co
 2. **Delimiter/header summary.** The pane border title reads `delim , | header on` (or the actual
    delimiter for your file; a TSV shows `delim \t`). Confirm it is legible in a light and a dark
    terminal (the §4.7 polarity check).
+
+## Phase 4 — output modes / OSC 52 clipboard (P4.8)
+
+The headless suite proves the emitted bytes of every format (`render_output` goldens) AND the full
+`--output csv|tsv|json|markdown` CLI path end-to-end against `tests/fixtures/sample.csv`. The only
+residue a terminal must confirm is the OSC 52 *clipboard write* — `clipboard::osc52::copy` emits the
+escape sequence to the real terminal, which no in-memory backend can receive (the §4.7 row 4
+clipboard / OSC 52 check). The escape-string builder (`encode_osc52`) is round-trip tested headless;
+this only confirms the terminal actually honors it. Confirm by hand:
+
+1. **Copy the result.** With a result on screen, trigger the in-app copy (the export/copy key, once
+   wired). Switch to another app and paste — confirm the clipboard now holds the rendered result in
+   the selected format (e.g. a CSV block whose fields/quoting match what `--output csv` prints).
+2. **Over SSH / multiplexer.** Repeat 1 inside `tmux`/`ssh` if you use one — OSC 52 is the path that
+   carries the clipboard across the wire, so confirm the paste still lands (the terminal/multiplexer
+   may need OSC 52 forwarding enabled).

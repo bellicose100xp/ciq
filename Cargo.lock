@@ -469,6 +469,7 @@ dependencies = [
 name = "ciq"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "clap",
  "duckdb",
  "env_logger",

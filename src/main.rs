@@ -11,8 +11,10 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use ciq::engine::CsvOpts;
+use ciq::engine::{CsvOpts, DuckdbEngine, QueryEngine, QueryOutcome};
 use ciq::ingest::{load_csv_config_str, merge, parse_types_spec, sniff_bytes};
+use ciq::output::{OutputFormat, render_output};
+use ciq::query::preprocess::prepare_interactive;
 
 /// CSV Interactive Query — type DuckDB SQL, watch an aligned grid update live.
 #[derive(Debug, Parser)]
@@ -65,6 +67,15 @@ struct Cli {
     /// Explicit date parse format, e.g. --date-format '%d/%m/%Y'.
     #[arg(long, value_name = "FMT")]
     date_format: Option<String>,
+
+    /// Run a query non-interactively and write the result to stdout in this format, then exit
+    /// (no TUI). One of csv, tsv, json, markdown.
+    #[arg(long, value_name = "FORMAT")]
+    output: Option<String>,
+
+    /// The SQL to run on the `--output` path. Defaults to `SELECT * FROM t` (the whole table).
+    #[arg(long, short = 'q', value_name = "SQL")]
+    query: Option<String>,
 }
 
 impl Cli {
@@ -153,6 +164,10 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+            // `--output` => non-interactive: run one query, print the result, exit. No terminal.
+            if let Some(fmt) = &cli.output {
+                return run_output(path, &opts, fmt, cli.query.as_deref());
+            }
             match ciq::app::event_loop::run(path.clone(), opts) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
@@ -164,6 +179,56 @@ fn main() -> ExitCode {
         None => {
             // stdin ingest lands in a later phase; for now require a file.
             eprintln!("ciq: no file given (stdin ingest lands in a later phase)");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The headless `--output` path: load `path` once, run `query` (default `SELECT * FROM t`),
+/// serialize the result in `fmt`, and write it to stdout. Pure I/O at the edges; the formatting
+/// (`render_output`) and the safety check (`prepare_interactive`) are headless-tested. This is
+/// the integration seam ciq exposes for scripting and for the `--output` end-to-end test.
+fn run_output(path: &Path, opts: &CsvOpts, fmt: &str, query: Option<&str>) -> ExitCode {
+    let Some(format) = OutputFormat::parse(fmt) else {
+        eprintln!("ciq: unknown --output format '{fmt}' (expected csv, tsv, json, or markdown)");
+        return ExitCode::FAILURE;
+    };
+
+    let raw = query.unwrap_or("SELECT * FROM t");
+    // Reuse the interactive grammar guard (single read-only SELECT — never mutates `t`) but with
+    // an effectively-unbounded row cap: the Output Result path bypasses the viewport LIMIT (§2.3).
+    // The cap is `i64::MAX` (a valid DuckDB BIGINT — `usize::MAX` overflows its INT64 LIMIT), so
+    // it never truncates a real result while keeping the read-only/single-statement guard.
+    const OUTPUT_LIMIT: usize = i64::MAX as usize;
+    let sql = match prepare_interactive(raw, OUTPUT_LIMIT) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("ciq: {}", e.message());
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let engine = match DuckdbEngine::open(path, opts) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("ciq: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match engine.query(&sql) {
+        QueryOutcome::Rows(table) => {
+            let schema = table.schema();
+            print!("{}", render_output(&table, &schema, format));
+            ExitCode::SUCCESS
+        }
+        QueryOutcome::Error { message, .. } => {
+            eprintln!("ciq: {message}");
+            ExitCode::FAILURE
+        }
+        // A non-interactive single query is never superseded, so it cannot be cancelled.
+        QueryOutcome::Cancelled => {
+            eprintln!("ciq: query cancelled");
             ExitCode::FAILURE
         }
     }

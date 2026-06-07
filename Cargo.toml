@@ -35,6 +35,11 @@ env_logger = "0.11"
 toml = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 
+# Base64 — used only by the OSC52 clipboard escape-string builder (PLAN.md §6.7), ported from
+# jiq's `clipboard/osc52.rs`. The encoded payload is pure/headless-tested; only the final write
+# of the escape bytes to the real terminal is the §4.7 human-validated residue.
+base64 = "0.22"
+
 [dev-dependencies]
 # Snapshot testing (render buffers, generated SQL, schema goldens).
 insta = "1.40"
