@@ -20,3 +20,4 @@
 //! immutable argument, so unit/property tests pass a hand-built cache and never spin up DuckDB.
 
 pub mod clause_context;
+pub mod sql_keywords;
