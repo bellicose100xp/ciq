@@ -64,7 +64,7 @@ These are not repeated per-task; they apply to **every** task that writes Rust:
 
 ---
 
-## Phase 1.5 — Debug logging infrastructure  ·  Status: TODO  ·  Deps: P1
+## Phase 1.5 — Debug logging infrastructure  ·  Status: **DONE** ✅  ·  Deps: P1
 
 > Stand up `--debug` file logging before Phase 2 so the worker/engine/cancel code is instrumented *as it's written* (cheaper than retrofitting). Mirrors jiq's `log` + `env_logger` + RAII `Timer` pattern, with ciq's twist: logs to a **`/tmp/ciq/` folder** (created on demand). Goes to a **file only**, never stdout/stderr (which would corrupt the TUI). The wall-clock calls (`Instant::now`/`SystemTime::now`) are confined to this logging module as the documented `clippy.toml` seam exception — logic code stays clock-free.
 
