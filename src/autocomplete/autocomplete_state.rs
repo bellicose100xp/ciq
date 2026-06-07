@@ -13,7 +13,12 @@
 //!    (jq-iterator and `$var` have no SQL analog).
 //!  - `with_signature` / `with_description` carry the optional function signature + one-line hint
 //!    that `sql_keywords::FunctionEntry` supplies. `needs_parens` is dropped (jiq inserted `(` for
-//!    its builtins; SQL function insertion is a P3.6 concern handled by the signature, not a flag).
+//!    its builtins; SQL function insertion is handled by the signature, not a flag).
+//!
+//! This file also owns the **popup state machine** [`AutocompleteState`] (P3.6) — the open/closed
+//! flag, the candidate list, and the selected index — ported from jiq's `AutocompleteState`. It is
+//! pure owned data: the App drives it with synthetic keys (open/close/move-selection) and the
+//! render layer reads it; nothing here touches a terminal or the engine.
 
 use std::fmt;
 
@@ -108,6 +113,104 @@ impl Suggestion {
     pub fn with_signature(mut self, sig: impl Into<String>) -> Self {
         self.signature = Some(sig.into());
         self
+    }
+}
+
+/// The autocomplete popup state machine (`dev/PLAN.md` §5.1/§5.6) — ported from jiq's
+/// `AutocompleteState`. Owned, pure data: whether the popup is open, the ranked candidate list it
+/// is showing, and which entry is selected. The App recomputes the list on each query-bar edit and
+/// drives selection/dismissal through synthetic keys; the render layer reads it.
+///
+/// Closed is the default. The popup is open iff it was opened with a **non-empty** candidate list —
+/// [`open_with`] closes itself on an empty list, so "open but showing nothing" is never a state.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AutocompleteState {
+    open: bool,
+    suggestions: Vec<Suggestion>,
+    /// Selected index into `suggestions`; always `< suggestions.len()` while `open`.
+    selected: usize,
+}
+
+impl AutocompleteState {
+    /// A closed, empty popup.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// (Re)open the popup with a fresh candidate list, selecting the first entry. An **empty**
+    /// list closes the popup instead (there is nothing to show). Called after each edit recomputes
+    /// suggestions — so the popup tracks the current cursor context.
+    pub fn open_with(&mut self, suggestions: Vec<Suggestion>) {
+        if suggestions.is_empty() {
+            self.close();
+            return;
+        }
+        self.suggestions = suggestions;
+        self.selected = 0;
+        self.open = true;
+    }
+
+    /// Close the popup and drop its candidate list.
+    pub fn close(&mut self) {
+        self.open = false;
+        self.suggestions.clear();
+        self.selected = 0;
+    }
+
+    /// Whether the popup is currently open (and therefore showing at least one candidate).
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    /// The candidates currently shown (empty when closed).
+    pub fn suggestions(&self) -> &[Suggestion] {
+        &self.suggestions
+    }
+
+    /// The selected index into [`suggestions`](Self::suggestions).
+    pub fn selected(&self) -> usize {
+        self.selected
+    }
+
+    /// The currently-selected suggestion, or `None` when the popup is closed.
+    pub fn selected_suggestion(&self) -> Option<&Suggestion> {
+        if self.open {
+            self.suggestions.get(self.selected)
+        } else {
+            None
+        }
+    }
+
+    /// Move the selection down one (the next candidate), wrapping from the last back to the first.
+    /// No-op when closed.
+    pub fn select_next(&mut self) {
+        if !self.open || self.suggestions.is_empty() {
+            return;
+        }
+        self.selected = (self.selected + 1) % self.suggestions.len();
+    }
+
+    /// Move the selection up one (the previous candidate), wrapping from the first to the last.
+    /// No-op when closed.
+    pub fn select_prev(&mut self) {
+        if !self.open || self.suggestions.is_empty() {
+            return;
+        }
+        self.selected = if self.selected == 0 {
+            self.suggestions.len() - 1
+        } else {
+            self.selected - 1
+        };
+    }
+
+    /// Number of candidates currently shown.
+    pub fn len(&self) -> usize {
+        self.suggestions.len()
+    }
+
+    /// Whether the popup shows no candidates (always true when closed).
+    pub fn is_empty(&self) -> bool {
+        self.suggestions.is_empty()
     }
 }
 

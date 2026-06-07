@@ -38,5 +38,14 @@ src/autocomplete/value_source.rs
 # earns the hard floor.
 src/autocomplete/candidates.rs
 
+# Phase 3 (present now): autocomplete insertion — pure `insert_suggestion` (replace-the-partial +
+# SQL identifier/value quoting). Every branch is a real behavior case (which span is replaced,
+# when an identifier is quoted, when a value is a string literal), so it earns the hard floor.
+src/autocomplete/insertion.rs
+
 # sql_keywords.rs is static data (keyword/function/operator tables) — const-sanity-tested but
 # largely branchless, so it is left off the hard floor (judgment per the brief).
+#
+# autocomplete_state.rs (Suggestion + the popup state machine) and autocomplete_render.rs (the
+# popup blit) are seam-ish — a state machine + a TestBackend blit — so they are exercised by
+# behavior/snapshot tests rather than the hard floor (judgment per the brief).

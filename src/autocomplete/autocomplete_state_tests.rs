@@ -49,3 +49,94 @@ fn suggestion_is_plain_data_clone_and_eq() {
     let b = a.clone();
     assert_eq!(a, b);
 }
+
+// --- AutocompleteState popup state machine (P3.6) ---
+
+fn suggestions(names: &[&str]) -> Vec<Suggestion> {
+    names
+        .iter()
+        .map(|n| Suggestion::new(*n, SuggestionType::Field))
+        .collect()
+}
+
+#[test]
+fn new_state_is_closed() {
+    let s = AutocompleteState::new();
+    assert!(!s.is_open());
+    assert!(s.is_empty());
+    assert_eq!(s.selected_suggestion(), None);
+}
+
+#[test]
+fn open_with_candidates_opens_and_selects_first() {
+    let mut s = AutocompleteState::new();
+    s.open_with(suggestions(&["id", "status"]));
+    assert!(s.is_open());
+    assert_eq!(s.len(), 2);
+    assert_eq!(s.selected(), 0);
+    assert_eq!(s.selected_suggestion().map(|x| x.text.as_str()), Some("id"));
+}
+
+#[test]
+fn open_with_empty_closes() {
+    let mut s = AutocompleteState::new();
+    s.open_with(suggestions(&["x"]));
+    assert!(s.is_open());
+    s.open_with(vec![]);
+    assert!(!s.is_open(), "an empty candidate list closes the popup");
+    assert_eq!(s.selected_suggestion(), None);
+}
+
+#[test]
+fn close_clears_state() {
+    let mut s = AutocompleteState::new();
+    s.open_with(suggestions(&["a", "b"]));
+    s.select_next();
+    s.close();
+    assert!(!s.is_open());
+    assert!(s.is_empty());
+    assert_eq!(s.selected(), 0);
+}
+
+#[test]
+fn select_next_wraps() {
+    let mut s = AutocompleteState::new();
+    s.open_with(suggestions(&["a", "b", "c"]));
+    s.select_next();
+    assert_eq!(s.selected(), 1);
+    s.select_next();
+    assert_eq!(s.selected(), 2);
+    s.select_next();
+    assert_eq!(s.selected(), 0, "wraps from last to first");
+}
+
+#[test]
+fn select_prev_wraps() {
+    let mut s = AutocompleteState::new();
+    s.open_with(suggestions(&["a", "b", "c"]));
+    s.select_prev();
+    assert_eq!(s.selected(), 2, "wraps from first to last");
+    s.select_prev();
+    assert_eq!(s.selected(), 1);
+}
+
+#[test]
+fn selection_movement_is_noop_when_closed() {
+    let mut s = AutocompleteState::new();
+    s.select_next();
+    s.select_prev();
+    assert!(!s.is_open());
+    assert_eq!(s.selected(), 0);
+}
+
+#[test]
+fn reopen_resets_selection_to_first() {
+    let mut s = AutocompleteState::new();
+    s.open_with(suggestions(&["a", "b", "c"]));
+    s.select_next();
+    s.select_next();
+    assert_eq!(s.selected(), 2);
+    // A fresh recompute (next keystroke) re-opens at the first candidate.
+    s.open_with(suggestions(&["x", "y"]));
+    assert_eq!(s.selected(), 0);
+}

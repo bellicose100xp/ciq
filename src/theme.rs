@@ -40,6 +40,37 @@ pub mod app {
     }
 }
 
+/// Autocomplete popup colors and styles (`dev/PLAN.md` §5.1/§5.6).
+///
+/// The popup overlays the query bar: a bordered list of candidates, each a candidate text plus a
+/// right-aligned type-hint label (`int`/`date`/`kw`/`fn`/`agg`/`op`/…). The selected row is
+/// reverse-video so it stands out; the type-hint column is dimmed so it reads as secondary
+/// metadata against the candidate text. Color polarity (legibility light vs dark) is the §4.7
+/// human-validated concern — centralizing here keeps that a single-file change.
+pub mod autocomplete {
+    use ratatui::style::{Color, Modifier, Style};
+
+    /// The popup border / frame.
+    pub fn border() -> Style {
+        Style::default().fg(Color::DarkGray)
+    }
+
+    /// A normal (unselected) candidate row's text.
+    pub fn item() -> Style {
+        Style::default()
+    }
+
+    /// The selected candidate row — reverse video so it stands out regardless of terminal theme.
+    pub fn selected() -> Style {
+        Style::default().add_modifier(Modifier::REVERSED)
+    }
+
+    /// The right-aligned type-hint label (`int`/`kw`/`fn`/…) — dimmed as secondary metadata.
+    pub fn type_hint() -> Style {
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM)
+    }
+}
+
 /// Grid (results table) colors and styles.
 pub mod grid {
     use ratatui::style::{Color, Modifier, Style};

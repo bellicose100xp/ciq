@@ -326,6 +326,17 @@ fn is_keyword(word: &str) -> bool {
     KEYWORDS.iter().any(|kw| word.eq_ignore_ascii_case(kw))
 }
 
+/// Whether `word` is a reserved SQL keyword in the lexer's keyword set (case-insensitive).
+///
+/// Public so the autocomplete insertion path can decide whether a bare column name needs
+/// double-quoting on insert (a column literally named `order`/`select` collides with a keyword
+/// and must be emitted as `"order"` — §5.7). Same set the lexer uses to classify `Keyword` vs
+/// `Ident`, so "what the lexer would re-read as a keyword" and "what insertion quotes" stay in
+/// lockstep.
+pub fn is_reserved_keyword(word: &str) -> bool {
+    is_keyword(word)
+}
+
 const KEYWORDS: &[&str] = &[
     "select",
     "from",

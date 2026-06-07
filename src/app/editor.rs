@@ -61,6 +61,26 @@ impl Editor {
             .unwrap_or(self.text.len())
     }
 
+    /// The cursor's **byte** offset into the text — the index the byte-oriented SQL lexer,
+    /// clause-context detector, and autocomplete insertion all use. Always a char boundary.
+    pub fn cursor_byte(&self) -> usize {
+        self.byte_offset(self.cursor)
+    }
+
+    /// Set the buffer and place the cursor at the given **byte** offset (snapped to the nearest
+    /// char boundary at or before it). Used by autocomplete insertion, which computes a new text +
+    /// byte cursor; the editor stores the cursor as a char index, so convert here.
+    pub fn set_text_with_byte_cursor(&mut self, text: impl Into<String>, byte_cursor: usize) {
+        self.text = text.into();
+        let byte_cursor = byte_cursor.min(self.text.len());
+        // Count chars up to the byte offset; snap onto a boundary if it landed mid-char.
+        self.cursor = self
+            .text
+            .char_indices()
+            .take_while(|(b, _)| *b < byte_cursor)
+            .count();
+    }
+
     /// Insert a single character at the cursor, advancing it past the inserted char.
     pub fn insert_char(&mut self, c: char) {
         let at = self.byte_offset(self.cursor);
