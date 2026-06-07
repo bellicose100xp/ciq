@@ -33,18 +33,6 @@ use std::thread::JoinHandle;
 
 use super::types::{ProcessedResult, QueryRequest, QueryResponse};
 use crate::engine::{QueryEngine, QueryOutcome};
-use crate::grid::{GridView, layout_grid};
-
-/// The default viewport the worker lays the grid out against. The App re-lays-out from the
-/// retained `rows` on resize (`ProcessedResult.rows`), so this is only a sane first frame: a
-/// conventional 80x24 terminal's inner area. Picked deliberately so a fresh result is renderable
-/// before the App has reported its real terminal size.
-const DEFAULT_VIEW: GridView = GridView {
-    width: 80,
-    height: 24,
-    h_col_offset: 0,
-    v_row_offset: 0,
-};
 
 /// Spawn the query worker thread.
 ///
@@ -109,10 +97,9 @@ fn handle_request(engine: &dyn QueryEngine, request: QueryRequest) -> QueryRespo
     let (outcome, elapsed_ms) = timed(|| engine.query(&query));
     match outcome {
         QueryOutcome::Rows(table) => {
-            let grid = layout_grid(&table, &DEFAULT_VIEW);
             let schema = table.schema();
             QueryResponse::ProcessedSuccess {
-                result: ProcessedResult::new(grid, table, schema, elapsed_ms),
+                result: ProcessedResult::new(table, schema, elapsed_ms),
                 request_id,
             }
         }

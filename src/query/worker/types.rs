@@ -8,15 +8,15 @@
 //!   dispatcher holds an [`InterruptHandle`](crate::engine::InterruptHandle) clone and calls
 //!   `.interrupt()` from its own thread when a newer `request_id` supersedes the in-flight
 //!   query. The worker only ever blocks in `engine.query()` and returns `Cancelled`.
-//! - **`ProcessedResult` carries tabular data, not JSON** (§0/S6): the pre-computed
-//!   [`GridLayout`], the columnar [`Table`] of rows, the result [`Schema`], and the
-//!   redacted-from-snapshots `execution_time_ms`. jiq's JSON-only `parsed` field is dropped,
-//!   and its `line_count`/`max_width`/`line_widths`/`result_type` are not carried because the
-//!   grid renderer derives them from the `GridLayout` (`body.len()`, `total_width`), so storing
-//!   them would be redundant denormalized state.
+//! - **`ProcessedResult` carries tabular data, not JSON** (§0/S6): the columnar [`Table`] of
+//!   rows, the result [`Schema`], and the redacted-from-snapshots `execution_time_ms`. jiq's
+//!   JSON-only `parsed` field is dropped, and no pre-laid-out grid is carried: the App re-lays
+//!   out from `rows` against the *real* terminal viewport on every frame (resize reflow without
+//!   re-querying), so a worker-side grid against a fixed viewport would be thrown away. Anything
+//!   the grid would derive (row count, widths) comes from `rows`, so storing it would be
+//!   redundant denormalized state.
 
 use crate::engine::Table;
-use crate::grid::GridLayout;
 use crate::schema::Schema;
 
 /// A request to run one SQL query, stamped with a monotonic `request_id` for stale-discard.
@@ -41,19 +41,16 @@ impl QueryRequest {
     }
 }
 
-/// A fully processed successful query result: the laid-out grid plus the data behind it.
+/// A fully processed successful query result: the data behind the grid.
 ///
 /// Built on the worker thread (off the UI thread) from a `QueryOutcome::Rows`. Carries exactly
-/// the fields with a real ciq consumer (§0/S6): the pre-computed [`GridLayout`] the renderer
-/// paints, the [`Table`] of `rows` (kept so re-layout on resize and copy-target selection work
-/// without re-querying), the result [`Schema`], and `execution_time_ms`.
+/// the fields with a real ciq consumer (§0/S6): the [`Table`] of `rows` (the App lays the grid
+/// out from it against the real viewport on every frame, and selects copy targets, without
+/// re-querying), the result [`Schema`], and `execution_time_ms`.
 #[derive(Debug, Clone)]
 pub struct ProcessedResult {
-    /// The pre-computed aligned grid (header + body lines + per-column geometry) — what the
-    /// blit (`grid_render`) paints. Computed on the worker thread.
-    pub grid: GridLayout,
-    /// The columnar result table. Retained so the App can re-layout the grid on a resize and
-    /// select copy targets (a cell/row/column) without issuing another query.
+    /// The columnar result table. The App lays out the grid from it against the real viewport
+    /// (so a resize reflows without re-querying) and selects copy targets (a cell/row/column).
     pub rows: Table,
     /// The result schema (column names + types), derived from the result columns.
     pub schema: Schema,
@@ -63,9 +60,8 @@ pub struct ProcessedResult {
 }
 
 impl ProcessedResult {
-    pub fn new(grid: GridLayout, rows: Table, schema: Schema, execution_time_ms: u64) -> Self {
+    pub fn new(rows: Table, schema: Schema, execution_time_ms: u64) -> Self {
         Self {
-            grid,
             rows,
             schema,
             execution_time_ms,
@@ -76,9 +72,10 @@ impl ProcessedResult {
 /// The response from the worker for one [`QueryRequest`], correlated by `request_id`.
 ///
 /// Three arms map one-to-one onto `QueryOutcome` (`Rows`→`ProcessedSuccess`, `Error`→`Error`,
-/// `Cancelled`→`Cancelled`), so the worker's match is total and compiler-checked. A `request_id`
-/// of `0` on `Error` marks a worker-level panic (no specific query), which the App applies
-/// immediately rather than stale-discarding.
+/// `Cancelled`→`Cancelled`), so the worker's match is total and compiler-checked. Every response
+/// carries the real `request_id` of the query it answers — including the per-request panic catch,
+/// which surfaces as `Error` under that query's id (and is stale-discarded like any other
+/// response if a newer query has superseded it).
 #[derive(Debug, Clone)]
 pub enum QueryResponse {
     /// The query succeeded; carries the processed result and its `request_id`.
@@ -86,7 +83,8 @@ pub enum QueryResponse {
         result: ProcessedResult,
         request_id: u64,
     },
-    /// The query failed (invalid SQL, or `request_id == 0` for a worker-level panic).
+    /// The query failed (invalid SQL, or the engine panicked while running it — caught
+    /// per-request and reported under that query's `request_id`).
     Error { message: String, request_id: u64 },
     /// The query was interrupted (superseded). The App discards it by `request_id`.
     Cancelled { request_id: u64 },

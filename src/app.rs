@@ -210,13 +210,21 @@ impl App {
     }
 
     fn scroll_down(&mut self, by: usize) {
-        let body_len = self.result.as_ref().map(|r| r.grid.body.len()).unwrap_or(0);
-        let max = body_len.saturating_sub(1);
+        let row_count = self
+            .result
+            .as_ref()
+            .map(|r| r.rows.row_count())
+            .unwrap_or(0);
+        let max = row_count.saturating_sub(1);
         self.v_row_offset = (self.v_row_offset + by).min(max);
     }
 
     fn scroll_right(&mut self) {
-        let col_count = self.result.as_ref().map(|r| r.schema.len()).unwrap_or(0);
+        let col_count = self
+            .result
+            .as_ref()
+            .map(|r| r.rows.col_count())
+            .unwrap_or(0);
         let max = col_count.saturating_sub(1);
         self.h_col_offset = (self.h_col_offset + 1).min(max);
     }
@@ -289,12 +297,12 @@ impl App {
     // --- response handling (stale-discard + state update) ---
 
     /// Apply a [`QueryResponse`] from the worker. Stale responses (an older `request_id`) are
-    /// dropped before touching result state (§0/D4). A worker-level panic (`request_id == 0`) is
-    /// applied immediately. Returns `true` if the visible state changed.
+    /// dropped before touching result state (§0/D4). A per-request engine panic arrives as
+    /// `Error` under that query's id and is stale-discarded like any other response. Returns
+    /// `true` if the visible state changed.
     pub fn on_response(&mut self, resp: QueryResponse) -> bool {
         let id = resp.request_id();
-        // request_id 0 marks a worker-level panic with no specific query — apply immediately.
-        if id != 0 && !self.dispatcher.accept(id) {
+        if !self.dispatcher.accept(id) {
             return false; // stale: a newer query superseded this one
         }
         match resp {

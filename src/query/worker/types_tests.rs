@@ -2,7 +2,6 @@
 //! `QueryResponse` variants (the contract the App's dispatch loop relies on being total).
 
 use crate::engine::types::{Cell, Column, Table};
-use crate::grid::{GridView, layout_grid};
 use crate::query::worker::types::{ProcessedResult, QueryRequest, QueryResponse};
 use crate::schema::{ColumnMeta, ColumnType, Schema};
 
@@ -19,9 +18,8 @@ fn sample_table() -> Table {
 
 fn sample_processed() -> ProcessedResult {
     let table = sample_table();
-    let grid = layout_grid(&table, &GridView::new(80, 24));
     let schema = table.schema();
-    ProcessedResult::new(grid, table, schema, 7)
+    ProcessedResult::new(table, schema, 7)
 }
 
 #[test]
@@ -32,16 +30,16 @@ fn request_holds_query_and_id_no_cancel_token() {
 }
 
 #[test]
-fn processed_result_carries_grid_rows_schema_and_time() {
+fn processed_result_carries_rows_schema_and_time() {
     let p = sample_processed();
     assert_eq!(p.rows.row_count(), 2);
+    assert_eq!(p.rows.col_count(), 2);
     assert_eq!(p.schema.len(), 2);
     assert_eq!(
         p.schema.column_type("id"),
         Some(&ColumnType::Int),
         "schema is derived from the result columns"
     );
-    assert_eq!(p.grid.body.len(), 2, "one body line per row");
     assert_eq!(p.execution_time_ms, 7);
 }
 
@@ -73,6 +71,17 @@ fn response_request_id_for_each_variant() {
 }
 
 #[test]
+fn error_response_carries_the_querys_real_id() {
+    // Every Error (including a per-request engine panic) is correlated by the real request_id
+    // of the query it answers — there is no special id-0 marker.
+    let resp = QueryResponse::Error {
+        message: "query panicked: boom".into(),
+        request_id: 42,
+    };
+    assert_eq!(resp.request_id(), 42);
+}
+
+#[test]
 fn exhaustive_match_over_all_response_variants() {
     // The dispatch loop relies on this match being total; the test enumerates every arm so a
     // future variant addition fails to compile here (and forces a conscious update).
@@ -100,14 +109,4 @@ fn exhaustive_match_over_all_response_variants() {
         };
         assert!(!label.is_empty());
     }
-}
-
-#[test]
-fn worker_level_error_uses_request_id_zero() {
-    // request_id == 0 is the worker-level panic marker (applied immediately, not stale-discarded).
-    let resp = QueryResponse::Error {
-        message: "worker crashed".into(),
-        request_id: 0,
-    };
-    assert_eq!(resp.request_id(), 0);
 }

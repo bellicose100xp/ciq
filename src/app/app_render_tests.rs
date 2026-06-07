@@ -34,8 +34,7 @@ fn result() -> ProcessedResult {
         ),
     ]);
     let s = table.schema();
-    let grid = crate::grid::layout_grid(&table, &crate::grid::GridView::new(80, 24));
-    ProcessedResult::new(grid, table, s, 0)
+    ProcessedResult::new(table, s, 0)
 }
 
 #[test]

@@ -37,8 +37,7 @@ fn two_row_table() -> Table {
 fn two_row_result() -> ProcessedResult {
     let table = two_row_table();
     let s = table.schema();
-    let grid = crate::grid::layout_grid(&table, &crate::grid::GridView::new(80, 24));
-    ProcessedResult::new(grid, table, s, 0)
+    ProcessedResult::new(table, s, 0)
 }
 
 // --- render snapshots (TestBackend; headless) ---

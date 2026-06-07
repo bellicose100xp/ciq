@@ -47,8 +47,8 @@ fn rows_outcome_becomes_processed_success() {
         QueryResponse::ProcessedSuccess { result, request_id } => {
             assert_eq!(request_id, 1);
             assert_eq!(result.rows.row_count(), 2);
+            assert_eq!(result.rows.col_count(), 2);
             assert_eq!(result.schema.len(), 2);
-            assert_eq!(result.grid.body.len(), 2, "one grid body line per row");
         }
         other => panic!("expected ProcessedSuccess, got {other:?}"),
     }

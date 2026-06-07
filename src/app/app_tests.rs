@@ -37,8 +37,7 @@ fn two_row_result() -> ProcessedResult {
         ),
     ]);
     let schema = table.schema();
-    let grid = crate::grid::layout_grid(&table, &crate::grid::GridView::new(80, 24));
-    ProcessedResult::new(grid, table, schema, 0)
+    ProcessedResult::new(table, schema, 0)
 }
 
 fn drain(rx: &Receiver<QueryRequest>) -> Vec<String> {
@@ -233,16 +232,43 @@ fn engine_error_response_enhances_to_status_no_crash() {
 }
 
 #[test]
-fn worker_panic_response_id_zero_applied_immediately() {
+fn per_request_panic_error_surfaces_under_its_real_id() {
+    // A per-request engine panic arrives as Error under the query's real id (never 0) and is
+    // applied like any other current-id Error.
     let (mut app, _rx) = app();
     app.on_loaded("ready");
-    // No query issued; a worker-level panic (request_id 0) should still surface.
+    type_str(&mut app, "SELECT 1", 0);
+    app.tick(150);
+    let id = app.latest_request_id();
     let changed = app.on_response(QueryResponse::Error {
         message: "query panicked: boom".into(),
-        request_id: 0,
+        request_id: id,
     });
     assert!(changed);
-    assert!(app.status().contains("boom") || !app.status().is_empty());
+    assert_eq!(app.phase(), &AppPhase::Ready);
+    assert!(app.status().contains("boom"));
+}
+
+#[test]
+fn superseded_panic_error_is_stale_discarded() {
+    // A panic Error for an older id is stale-discarded exactly like any other superseded
+    // response — there is no immediate-apply special case for panics.
+    let (mut app, rx) = app();
+    app.on_loaded("ready");
+    type_str(&mut app, "SELECT 1", 0);
+    app.tick(150);
+    type_str(&mut app, " WHERE 1=1", 200);
+    app.tick(400);
+    let _ = drain(&rx);
+    assert_eq!(app.latest_request_id(), 2);
+    let changed = app.on_response(QueryResponse::Error {
+        message: "query panicked: boom".into(),
+        request_id: 1,
+    });
+    assert!(
+        !changed,
+        "a panic Error for a superseded id must be discarded"
+    );
 }
 
 // --- scroll (focus handoff + offsets) ---
@@ -368,8 +394,7 @@ fn wide_result(rows: usize) -> ProcessedResult {
         Column::new("name", ColumnType::Text, names),
     ]);
     let schema = table.schema();
-    let grid = crate::grid::layout_grid(&table, &crate::grid::GridView::new(80, 24));
-    ProcessedResult::new(grid, table, schema, 0)
+    ProcessedResult::new(table, schema, 0)
 }
 
 fn app_with_result(rows: usize) -> (App, std::sync::mpsc::Receiver<QueryRequest>) {
