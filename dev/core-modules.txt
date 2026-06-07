@@ -13,6 +13,12 @@ src/schema.rs
 src/schema/types.rs
 src/engine/types.rs
 
+# Phase 4 (present now): faithful temporal/decimal/blob/interval value rendering — pure
+# data-in/data-out conversion of a DuckDB ValueRef to its canonical display text. A wrong civil-date
+# or fraction-trim is a real output-corruption bug (it shipped `Date32(19372)` once), so it earns the
+# hard floor.
+src/engine/value_render.rs
+
 # Phase 2 (present now): SQL preprocess, query_state stale-discard, grid layout/col_width math,
 # and the query-bar editor (pure char-indexed buffer + cursor — fully covered by its tests).
 src/query/preprocess.rs
@@ -24,6 +30,11 @@ src/app/editor.rs
 # Phase 3 (present now): the shared SQL lexer (D6) — neutral top-level module both `query` and
 # `autocomplete` consume; pure, total `tokenize(&str) -> Vec<Token>`.
 src/sql_lexer.rs
+
+# Phase 4 (present now): the shared fuzzy-filter primitive — neutral top-level leaf both the
+# autocomplete ranker and the column palette consume (lifted out so neither duplicates it nor
+# couples to the other); pure, total `is_subsequence(&str, &str) -> bool`.
+src/text_match.rs
 
 # Phase 3 (present now): the clause-context detector — pure `detect_context` over the lexer token
 # stream; a wrong cursor-context silently corrupts every suggestion, so it earns the hard floor.

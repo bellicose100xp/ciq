@@ -140,10 +140,12 @@ impl QueryEngine for DuckdbEngine {
     }
 
     fn distinct(&self, col: &str, limit: usize) -> QueryOutcome {
-        // Quote the identifier defensively; ordering by frequency desc is the value-autocomplete
-        // shape (PLAN §5.5). The full builder lives in autocomplete later; this is the engine path.
+        // Quote the identifier defensively; frequency-desc with a `1 ASC` value tie-break is the
+        // value-autocomplete shape (PLAN §5.5) — the tie-break keeps the top-K stable/deterministic
+        // under LIMIT (matching `value_source::build_distinct_sql`). The full builder lives in
+        // autocomplete; this is the engine path.
         let sql = format!(
-            "SELECT \"{}\", count(*) AS n FROM {TABLE} WHERE \"{}\" IS NOT NULL GROUP BY 1 ORDER BY n DESC LIMIT {}",
+            "SELECT \"{}\", count(*) AS n FROM {TABLE} WHERE \"{}\" IS NOT NULL GROUP BY 1 ORDER BY n DESC, 1 ASC LIMIT {}",
             col.replace('"', "\"\""),
             col.replace('"', "\"\""),
             limit
@@ -205,9 +207,11 @@ fn map_type(t: Type) -> ColumnType {
     }
 }
 
-/// Convert a borrowed DuckDB value into an owned `Cell`. Non-primitive/temporal/decimal
-/// values are rendered to text (ciq does not re-parse them; the engine's string form is the
-/// display form).
+/// Convert a borrowed DuckDB value into an owned `Cell`. Temporal / decimal / blob / interval
+/// values are rendered to their DuckDB-canonical text via
+/// [`value_render::render_value`](crate::engine::value_render::render_value) — **not** `{:?}` on
+/// the `ValueRef` enum, which would leak `Date32(19372)` / `Decimal(1250.50)` Debug garbage into
+/// the grid and every `--output` writer.
 fn value_ref_to_cell(vr: ValueRef<'_>) -> Cell {
     match vr {
         ValueRef::Null => Cell::Null,
@@ -224,7 +228,7 @@ fn value_ref_to_cell(vr: ValueRef<'_>) -> Cell {
         ValueRef::Float(f) => Cell::Float(f as f64),
         ValueRef::Double(f) => Cell::Float(f),
         ValueRef::Text(bytes) => Cell::Text(String::from_utf8_lossy(bytes).into_owned()),
-        other => Cell::Text(format!("{other:?}")),
+        other => Cell::Text(crate::engine::value_render::render_value(other)),
     }
 }
 

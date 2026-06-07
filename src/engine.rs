@@ -13,6 +13,7 @@
 pub mod duckdb_engine;
 pub mod fake_engine;
 pub mod types;
+pub mod value_render;
 
 pub use duckdb_engine::DuckdbEngine;
 pub use fake_engine::FakeEngine;

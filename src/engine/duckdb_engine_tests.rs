@@ -115,6 +115,43 @@ fn nulls_distinct_from_text() {
 }
 
 #[test]
+fn temporal_and_decimal_cells_render_faithfully() {
+    // Regression guard for the `Date32(19372)` / `Decimal(1250.50)` Debug-garbage defect: a DATE
+    // and a DECIMAL cell must arrive through `value_ref_to_cell` as DuckDB's canonical text, not
+    // the `{:?}` form of the `ValueRef` enum.
+    let (_f, engine) = open_sales();
+    let outcome = engine.query(
+        "SELECT created_at, CAST(amount AS DECIMAL(12,2)) AS amt FROM t ORDER BY id LIMIT 1",
+    );
+    match outcome {
+        QueryOutcome::Rows(t) => {
+            assert_eq!(t.columns()[0].cells[0], Cell::Text("2024-03-04".into()));
+            assert_eq!(t.columns()[1].cells[0], Cell::Text("12.50".into()));
+        }
+        other => panic!("expected Rows, got {other:?}"),
+    }
+}
+
+#[test]
+fn timestamp_and_time_cells_render_faithfully() {
+    // The other temporal arms: a TIMESTAMP and a TIME value round-trip to DuckDB's canonical text.
+    let (_f, engine) = open_sales();
+    let outcome = engine.query(
+        "SELECT CAST('2023-01-15 12:34:56.5' AS TIMESTAMP) AS ts, CAST('01:02:03' AS TIME) AS tm FROM t LIMIT 1",
+    );
+    match outcome {
+        QueryOutcome::Rows(t) => {
+            assert_eq!(
+                t.columns()[0].cells[0],
+                Cell::Text("2023-01-15 12:34:56.5".into())
+            );
+            assert_eq!(t.columns()[1].cells[0], Cell::Text("01:02:03".into()));
+        }
+        other => panic!("expected Rows, got {other:?}"),
+    }
+}
+
+#[test]
 fn distinct_values_for_autocomplete() {
     let (_f, engine) = open_sales();
     let outcome = engine.distinct("status", 10);

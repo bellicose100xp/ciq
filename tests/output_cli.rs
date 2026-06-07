@@ -82,6 +82,40 @@ fn output_default_query_is_select_star() {
 }
 
 #[test]
+fn output_csv_renders_date_and_decimal_faithfully() {
+    // Regression guard for the `Date32(19372)` / `Decimal(1250.50)` Debug-garbage defect: the DATE
+    // column and a DECIMAL cast must emit DuckDB's canonical text, byte-exact, not the `{:?}` form.
+    let (ok, stdout) = run_ciq(&[
+        "--output",
+        "csv",
+        "-q",
+        "SELECT created_at, CAST(amount AS DECIMAL(12,2)) AS amt FROM t ORDER BY id LIMIT 2",
+    ]);
+    assert!(ok, "exit success");
+    assert_eq!(
+        stdout,
+        "created_at,amt\n2023-01-15,1250.50\n2023-02-20,980.00\n"
+    );
+}
+
+#[test]
+fn output_json_renders_date_as_iso_string() {
+    // The DATE column emits a quoted ISO string in JSON (a date has no JSON-number form), NOT the
+    // `Date32(...)` garbage that previously shipped.
+    let (ok, stdout) = run_ciq(&[
+        "--output",
+        "json",
+        "-q",
+        "SELECT id, created_at FROM t ORDER BY id LIMIT 1",
+    ]);
+    assert!(ok, "exit success");
+    assert_eq!(
+        stdout,
+        "[\n  {\"id\": 1, \"created_at\": \"2023-01-15\"}\n]"
+    );
+}
+
+#[test]
 fn output_rejects_non_select() {
     let (ok, stdout) = run_ciq(&["--output", "csv", "-q", "DROP TABLE t"]);
     assert!(!ok, "DML/DDL is rejected before the engine");
