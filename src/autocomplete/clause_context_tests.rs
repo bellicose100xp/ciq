@@ -376,6 +376,168 @@ fn closed_literal_is_not_value_mode() {
     assert!(!matches!(ctx(src), CursorContext::ColumnValue { .. }));
 }
 
+// ── completed predicate -> Keyword (operand slot filled), not Predicate (columns) ───────────────
+// After a fully-formed `col op value` / `col IS …`, a column is no longer a legal next token — the
+// user wants a connector/clause keyword (AND/OR/ORDER BY/...). The detector must report `Keyword`,
+// not `Predicate` (which would offer a popup full of columns where none can go).
+
+#[test]
+fn completed_eq_predicate_is_keyword_position_not_columns() {
+    assert_eq!(
+        ctx("WHERE city = 'New' "),
+        CursorContext::Keyword {
+            partial: String::new()
+        }
+    );
+    assert_eq!(
+        ctx("WHERE a > 5 "),
+        CursorContext::Keyword {
+            partial: String::new()
+        }
+    );
+    assert_eq!(
+        ctx("SELECT a FROM t WHERE id = 5 "),
+        CursorContext::Keyword {
+            partial: String::new()
+        }
+    );
+}
+
+#[test]
+fn completed_is_null_predicate_is_keyword_position() {
+    assert_eq!(
+        ctx("WHERE a IS NULL "),
+        CursorContext::Keyword {
+            partial: String::new()
+        }
+    );
+    assert_eq!(
+        ctx("WHERE a IS NOT NULL "),
+        CursorContext::Keyword {
+            partial: String::new()
+        }
+    );
+}
+
+#[test]
+fn completed_in_list_is_keyword_position_not_columns() {
+    // After a closed `IN (...)` list, columns are illegal — the user wants AND/OR/etc.
+    assert_eq!(
+        ctx("WHERE status IN ('a', 'b') "),
+        CursorContext::Keyword {
+            partial: String::new()
+        }
+    );
+}
+
+#[test]
+fn after_is_and_is_not_offers_keyword_not_columns() {
+    // §5.4 + finding: after a typed `IS` / `IS NOT` (no operand yet) only NULL/NOT NULL are legal,
+    // so the position is a Keyword position — NOT a Predicate (column) position.
+    assert_eq!(
+        ctx("WHERE a IS "),
+        CursorContext::Keyword {
+            partial: String::new()
+        }
+    );
+    assert_eq!(
+        ctx("WHERE a IS NOT "),
+        CursorContext::Keyword {
+            partial: String::new()
+        }
+    );
+}
+
+#[test]
+fn connector_reopens_a_fresh_column_position_after_a_completed_predicate() {
+    // `... = 5 AND ` starts a new sub-predicate, so the LHS column slot reopens (Predicate), even
+    // though the first predicate was complete.
+    assert_eq!(
+        ctx("WHERE a = 5 AND "),
+        CursorContext::Predicate {
+            partial: String::new()
+        }
+    );
+    assert_eq!(
+        ctx("WHERE a IS NULL AND st"),
+        CursorContext::Predicate {
+            partial: "st".into()
+        }
+    );
+}
+
+#[test]
+fn between_with_no_operand_still_offers_columns() {
+    // BETWEEN accepts a column range bound, so v1 deliberately keeps offering columns there — it
+    // must NOT be forced to a Keyword position the way IS is.
+    assert_eq!(
+        ctx("WHERE a BETWEEN "),
+        CursorContext::Predicate {
+            partial: String::new()
+        }
+    );
+}
+
+#[test]
+fn dangling_operator_with_no_value_still_offers_columns() {
+    // `WHERE a > ` (operator typed, no operand yet) leaves the slot open — a column/value is still
+    // a legal next token, so it stays a Predicate (column) position, not a Keyword position.
+    assert_eq!(
+        ctx("WHERE a > "),
+        CursorContext::Predicate {
+            partial: String::new()
+        }
+    );
+}
+
+// ── function-wrapped LHS -> ComparisonOp (operator), not Predicate (columns) ────────────────────
+
+#[test]
+fn function_wrapped_lhs_is_comparison_op_position() {
+    // `WHERE lower(city) ` — a complete function-call LHS expression. The user wants a comparison
+    // operator next; the popup title carries no single column (the LHS is an expression).
+    assert_eq!(
+        ctx("WHERE lower(city) "),
+        CursorContext::ComparisonOp { lhs_col: None }
+    );
+}
+
+#[test]
+fn function_call_after_an_operator_is_not_a_predicate_lhs() {
+    // `WHERE a = lower(city) ` — the `)` closes a call on the RHS of `=`, so the operand slot is
+    // already filled; it must NOT be read as a fresh LHS operator position.
+    assert!(!matches!(
+        ctx("WHERE a = lower(city) "),
+        CursorContext::ComparisonOp { .. }
+    ));
+}
+
+// ── hard-floor branch: qualified-column ComparisonOp (the qualifier-skip arms) ──────────────────
+
+#[test]
+fn qualified_column_comparison_op_strips_qualifier() {
+    // `WHERE t.created_at ` -> ComparisonOp on the BARE column name (the qualifier-skip arms in
+    // `is_predicate_lhs_position` + the qualifier stripping for the title). Pins the otherwise
+    // untested qualified-LHS operator position on this hard-floor module.
+    assert_eq!(
+        ctx("WHERE t.created_at "),
+        CursorContext::ComparisonOp {
+            lhs_col: Some("created_at".into())
+        }
+    );
+}
+
+#[test]
+fn not_before_a_bare_column_is_not_a_predicate_lhs() {
+    // `WHERE NOT status ` — `NOT` is an operator-ish keyword, so `status` is not a fresh predicate
+    // LHS (exercises the `not` early-out in `is_predicate_lhs_position`). It must not be read as a
+    // ComparisonOp position.
+    assert!(!matches!(
+        ctx("WHERE NOT status "),
+        CursorContext::ComparisonOp { .. }
+    ));
+}
+
 // ── branch coverage: quoted-ident value columns, operator-ish predicate positions, scan-through ──
 
 #[test]

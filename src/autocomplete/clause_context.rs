@@ -103,7 +103,7 @@ pub fn detect_context(src: &str, tokens: &[Token], cursor: usize) -> CursorConte
         && is_predicate_lhs_position(src, tokens, prev)
     {
         return CursorContext::ComparisonOp {
-            lhs_col: Some(qualified_col_text(src, tokens, prev)),
+            lhs_col: lhs_col_text(src, tokens, prev),
         };
     }
 
@@ -130,7 +130,7 @@ fn classify_by_governing_keyword(
             continue;
         }
         if t.kind == TokenKind::Keyword
-            && let Some(ctx) = context_for_keyword(src, tokens, idx, t.text(src), &partial)
+            && let Some(ctx) = context_for_keyword(src, tokens, idx, t.text(src), from, &partial)
         {
             return ctx;
         }
@@ -141,11 +141,16 @@ fn classify_by_governing_keyword(
 
 /// Map a governing clause keyword (found while scanning backward) to a context, if it determines
 /// one. Returns `None` if this keyword is not clause-governing (so the scan continues left).
+///
+/// `scan_from` is where the backward walk started (the index just before the cursor's own
+/// in-progress token); a predicate keyword consults the tokens between it and `scan_from` to tell
+/// a fresh column position from a position where the operand slot is already filled.
 fn context_for_keyword(
     src: &str,
     tokens: &[Token],
     kw_idx: usize,
     kw_text: &str,
+    scan_from: usize,
     partial: &str,
 ) -> Option<CursorContext> {
     let kw = kw_text.to_ascii_lowercase();
@@ -156,11 +161,22 @@ fn context_for_keyword(
         "from" | "join" => Some(CursorContext::FromTable {
             partial: partial.to_string(),
         }),
-        // A predicate-opening keyword: the cursor is at a column position. (The `WHERE col |`
-        // operator-position case is handled earlier in `detect_context` before this scan.)
-        "where" | "and" | "or" | "having" | "on" => Some(CursorContext::Predicate {
-            partial: partial.to_string(),
-        }),
+        // A predicate-opening keyword. The cursor is at a column (LHS) position *only* when no
+        // top-level comparison has already filled the operand slot between this keyword and the
+        // cursor. (The `WHERE col |` operator-position case is handled earlier in `detect_context`
+        // before this scan.) Once `col op value` / `col IS NULL` / `col IS ` is complete, the user
+        // wants a connector/clause keyword — not another column — so we return `Keyword` (§5.4's
+        // "after a complete clause where a keyword is expected" row).
+        "where" | "and" | "or" | "having" | "on" => {
+            Some(match predicate_slot(src, tokens, kw_idx, scan_from) {
+                PredicateSlot::Lhs => CursorContext::Predicate {
+                    partial: partial.to_string(),
+                },
+                PredicateSlot::Filled => CursorContext::Keyword {
+                    partial: partial.to_string(),
+                },
+            })
+        }
         // `BY` only governs after `GROUP`/`ORDER`; look one content token further left.
         "by" => {
             let prev = prev_content(tokens, kw_idx)?;
@@ -180,12 +196,83 @@ fn context_for_keyword(
     }
 }
 
-/// Is the content token at `idx` a predicate LHS column (so the next thing is an operator)? True
-/// when it's an `Ident`/`QuotedIdent`/qualified name at top-level paren depth and the nearest
+/// What slot of a predicate the cursor occupies, relative to its governing predicate keyword.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PredicateSlot {
+    /// A column (left-hand-side) position — the next token is a column. `WHERE `, `WHERE st`,
+    /// `WHERE a = 5 AND ` (after a connector), `WHERE a > ` (dangling operator, a column/value is
+    /// still a legal next token).
+    Lhs,
+    /// The operand slot is already filled (or can only take a connector keyword): a comparison
+    /// `col op value` is complete, or `col IS …` has begun (which only takes `NULL`/`NOT NULL`).
+    /// A bare column is no longer legal here — the user wants a connector/clause keyword.
+    Filled,
+}
+
+/// Classify the cursor's position within the predicate governed by the keyword at `kw_idx`, by
+/// scanning forward over the tokens between the keyword and `scan_from` (the start of the backward
+/// walk) at the keyword's own paren depth.
+///
+/// The slot becomes [`PredicateSlot::Filled`] once the operand slot is complete or can only take a
+/// connector: a comparison `Operator` (or `IN`/`LIKE`/`ILIKE`) completed by an operand, or `IS`
+/// (which only takes `NULL`/`NOT NULL`). Otherwise it stays [`PredicateSlot::Lhs`] — a fresh column
+/// position. `BETWEEN` and a *dangling* operator are deliberately left as `Lhs`: a column (or value)
+/// is still a legal next token there (e.g. `WHERE a BETWEEN ` accepts a column range bound), so v1
+/// keeps offering columns. A connector (`AND`/`OR`) reopens the LHS slot for a new sub-predicate.
+fn predicate_slot(src: &str, tokens: &[Token], kw_idx: usize, scan_from: usize) -> PredicateSlot {
+    let kw_depth = tokens[kw_idx].depth;
+    let mut saw_operator = false; // a top-level operator awaiting its operand
+    let mut i = kw_idx + 1;
+    while i < scan_from {
+        let t = tokens[i];
+        i += 1;
+        // The closing `)` of an `IN (…)` list sits at `kw_depth`; it completes the operand.
+        let is_close_paren = t.kind == TokenKind::Punct && t.text(src) == ")";
+        if t.depth == kw_depth && is_close_paren && saw_operator {
+            return PredicateSlot::Filled;
+        }
+        if t.is_trivia() || t.depth != kw_depth {
+            continue; // skip trivia and anything nested inside a function call / sub-paren
+        }
+        match t.kind {
+            TokenKind::Keyword => match t.text(src).to_ascii_lowercase().as_str() {
+                // A connector starts a fresh sub-predicate: the LHS slot reopens.
+                "and" | "or" => saw_operator = false,
+                // `IS` only takes `NULL`/`NOT NULL` — never a column. The slot is filled the moment
+                // it appears (so `WHERE a IS ` offers keywords, not columns).
+                "is" => return PredicateSlot::Filled,
+                // Membership/pattern operators open a value slot (their operand completes it).
+                "in" | "like" | "ilike" => saw_operator = true,
+                _ => {}
+            },
+            // A comparison operator opens the value slot; an operand after it completes the clause.
+            TokenKind::Operator => saw_operator = true,
+            // Any operand-shaped token after an operator completes the predicate.
+            TokenKind::Number
+            | TokenKind::StringLit { .. }
+            | TokenKind::Ident
+            | TokenKind::QuotedIdent
+                if saw_operator =>
+            {
+                return PredicateSlot::Filled;
+            }
+            _ => {}
+        }
+    }
+    PredicateSlot::Lhs
+}
+
+/// Is the content token at `idx` a predicate LHS-complete position (so the next thing is an
+/// operator)? True for an `Ident`/`QuotedIdent`/qualified name at top-level paren depth, **or** a
+/// closing `)` that completes a function-call expression (`WHERE lower(city) `), when the nearest
 /// governing keyword to its left is a predicate keyword (`WHERE`/`AND`/`OR`/`HAVING`/`ON`), with no
-/// intervening operator.
+/// intervening comparison operator.
 fn is_predicate_lhs_position(src: &str, tokens: &[Token], idx: usize) -> bool {
     let t = tokens[idx];
+    // A complete function-call LHS ends in a top-level `)`; after it the user wants an operator.
+    if t.kind == TokenKind::Punct && t.text(src) == ")" {
+        return closes_predicate_call(src, tokens, idx);
+    }
     if !matches!(t.kind, TokenKind::Ident | TokenKind::QuotedIdent) {
         return false;
     }
@@ -222,11 +309,53 @@ fn is_predicate_lhs_position(src: &str, tokens: &[Token], idx: usize) -> bool {
     false
 }
 
-/// The full (possibly qualified) column text for the token at `idx`, e.g. `t.created_at` -> the
-/// bare `created_at` (qualifier stripped, per §5.7 "strip the `t.` prefix"). Used to title the
-/// `ComparisonOp` popup and to key the `ColumnValue` lookup.
-fn qualified_col_text(src: &str, tokens: &[Token], idx: usize) -> String {
-    column_name_at(src, tokens, idx)
+/// The (informational) `lhs_col` to title the `ComparisonOp` popup, for the LHS-complete token at
+/// `idx`. A bare/qualified column resolves to its bare name (`t.created_at` -> `created_at`, per
+/// §5.7 "strip the `t.` prefix"); a function-call LHS (`lower(city)`, whose token is the closing
+/// `)`) has no single column to name, so it yields `None`.
+fn lhs_col_text(src: &str, tokens: &[Token], idx: usize) -> Option<String> {
+    match tokens[idx].kind {
+        TokenKind::Ident | TokenKind::QuotedIdent => Some(column_name_at(src, tokens, idx)),
+        _ => None,
+    }
+}
+
+/// Whether the `)` at `idx` closes a function-call expression in predicate position — i.e. its
+/// matching `(` is preceded by an `Ident` (the function name) and the call sits under a predicate
+/// keyword with no comparison operator already consumed. This makes `WHERE lower(city) ` a
+/// predicate-LHS-complete (operator) position rather than a fresh column position.
+fn closes_predicate_call(src: &str, tokens: &[Token], idx: usize) -> bool {
+    // The lexer records the depth *inside* a `(` (incremented before push) and the depth *after* a
+    // `)` (decremented before push), so the matching `(` of a `)` at depth `d` carries depth `d+1`.
+    let close_depth = tokens[idx].depth;
+    let open_depth = close_depth + 1;
+    let mut open = None;
+    let mut i = idx;
+    while i > 0 {
+        i -= 1;
+        let t = tokens[i];
+        if t.is_trivia() {
+            continue;
+        }
+        if t.kind == TokenKind::Punct && t.text(src) == "(" && t.depth == open_depth {
+            open = Some(i);
+            break;
+        }
+        // A top-level comparison operator before the matching `(` means we are past the LHS.
+        if t.depth == close_depth && t.kind == TokenKind::Operator {
+            return false;
+        }
+    }
+    let Some(open) = open else { return false };
+    // The token just left of the `(` must be the function name (an Ident), e.g. `lower(`.
+    let Some(name_idx) = prev_content(tokens, open) else {
+        return false;
+    };
+    if tokens[name_idx].kind != TokenKind::Ident {
+        return false;
+    }
+    // And that call must sit directly under a predicate keyword (no operator already consumed).
+    is_predicate_lhs_position(src, tokens, name_idx)
 }
 
 /// Resolve the bare column name for a column reference token at `idx`, stripping any `qualifier.`
