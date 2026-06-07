@@ -6,6 +6,40 @@
 //! what lets a light/dark polarity pass (a §4.7 human-validated concern) be a single-file
 //! change rather than a hunt across render code.
 
+/// App shell colors and styles (query bar, status line, prompts).
+pub mod app {
+    use ratatui::style::{Color, Modifier, Style};
+
+    /// The query bar's leading prompt glyph / label.
+    pub fn prompt() -> Style {
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// The query text the user is typing.
+    pub fn query_text() -> Style {
+        Style::default()
+    }
+
+    /// A normal (informational) status line: "N rows", "ready", "running…".
+    pub fn status() -> Style {
+        Style::default().fg(Color::DarkGray)
+    }
+
+    /// An error status line (invalid SQL, load failure) — stands out from the normal status.
+    pub fn status_error() -> Style {
+        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+    }
+
+    /// The transient "loading CSV…" indicator shown in the results area during ingest.
+    pub fn loading() -> Style {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::DIM)
+    }
+}
+
 /// Grid (results table) colors and styles.
 pub mod grid {
     use ratatui::style::{Color, Modifier, Style};

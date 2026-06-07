@@ -13,11 +13,13 @@ src/schema.rs
 src/schema/types.rs
 src/engine/types.rs
 
-# Phase 2 (present now): SQL preprocess, query_state stale-discard, grid layout/col_width math.
+# Phase 2 (present now): SQL preprocess, query_state stale-discard, grid layout/col_width math,
+# and the query-bar editor (pure char-indexed buffer + cursor — fully covered by its tests).
 src/query/preprocess.rs
 src/query/query_state.rs
 src/grid/grid_layout.rs
 src/grid/col_width.rs
+src/app/editor.rs
 
 # Phase 3+ (added as they land): autocomplete lexer/context/candidates/keywords.
 # src/autocomplete/sql_lexer.rs

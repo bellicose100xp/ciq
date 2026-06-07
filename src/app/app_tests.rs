@@ -1,19 +1,446 @@
-//! Tests for the minimal P1.7 `App` (state + structured assertions). Render-to-buffer
-//! assertions live in `harness/app_harness_tests.rs`.
+//! Tests for the `App` shell — event routing, the debounce-fire wiring, response handling
+//! (stale-discard), invalid-SQL handling, scroll, and the load state machine (P2.8 + P2.11).
+//!
+//! These drive the App through its headless surface (`on_key` / `tick` / `on_response` /
+//! `on_loaded` / `on_load_error`) with synthetic `KeyEvent`s and explicit `u64` time — no
+//! terminal, no wall clock. Worker-coupled behaviors (debounce coalescing against a counting
+//! engine, out-of-band cancel) live in `harness/app_harness_tests.rs` where a real worker is
+//! wired.
 
-use crate::app::{App, AppPhase};
+use std::sync::mpsc::{Receiver, channel};
+
+use super::{App, AppPhase, Focus, Key, KeyEvent, VIEWPORT_ROW_LIMIT};
+use crate::engine::InterruptHandle;
+use crate::engine::types::{Cell, Column, Table};
+use crate::query::worker::types::{ProcessedResult, QueryRequest, QueryResponse};
+use crate::schema::ColumnType;
+
+/// Build an App over a request channel whose receiver the test keeps (to inspect dispatches).
+fn app() -> (App, Receiver<QueryRequest>) {
+    let (tx, rx) = channel();
+    (App::new(tx, InterruptHandle::noop()), rx)
+}
+
+fn type_str(app: &mut App, s: &str, now_ms: u64) {
+    for c in s.chars() {
+        app.on_key(KeyEvent::char(c), now_ms);
+    }
+}
+
+fn two_row_result() -> ProcessedResult {
+    let table = Table::new(vec![
+        Column::new("id", ColumnType::Int, vec![Cell::Int(1), Cell::Int(2)]),
+        Column::new(
+            "region",
+            ColumnType::Text,
+            vec![Cell::Text("EU".into()), Cell::Text("NA".into())],
+        ),
+    ]);
+    let schema = table.schema();
+    let grid = crate::grid::layout_grid(&table, &crate::grid::GridView::new(80, 24));
+    ProcessedResult::new(grid, table, schema, 0)
+}
+
+fn drain(rx: &Receiver<QueryRequest>) -> Vec<String> {
+    let mut out = Vec::new();
+    while let Ok(r) = rx.try_recv() {
+        out.push(r.query);
+    }
+    out
+}
+
+// --- initial state ---
 
 #[test]
-fn default_app_is_loading() {
-    let app = App::new();
+fn new_app_is_loading_on_query_bar() {
+    let (app, _rx) = app();
     assert_eq!(app.phase(), &AppPhase::Loading);
-    assert_eq!(app.status(), "loading…");
+    assert_eq!(app.focus(), Focus::QueryBar);
+    assert_eq!(app.query(), "");
+}
+
+// --- editor routing ---
+
+#[test]
+fn typing_updates_query_buffer() {
+    let (mut app, _rx) = app();
+    type_str(&mut app, "SELECT 1", 0);
+    assert_eq!(app.query(), "SELECT 1");
+    assert_eq!(app.editor().cursor(), 8);
 }
 
 #[test]
-fn set_ready_transitions_phase_and_status() {
-    let mut app = App::new();
-    app.set_ready("3 rows");
+fn backspace_and_cursor_keys_route_to_editor() {
+    let (mut app, _rx) = app();
+    type_str(&mut app, "abc", 0);
+    app.on_key(KeyEvent::plain(Key::Backspace), 0);
+    assert_eq!(app.query(), "ab");
+    app.on_key(KeyEvent::plain(Key::Home), 0);
+    assert_eq!(app.editor().cursor(), 0);
+}
+
+#[test]
+fn paste_inserts_decoded_payload() {
+    let (mut app, _rx) = app();
+    app.on_key(KeyEvent::plain(Key::Paste("SELECT * FROM t".into())), 0);
+    assert_eq!(app.query(), "SELECT * FROM t");
+}
+
+#[test]
+fn quit_keys_signal_quit() {
+    let (mut a, _rx) = app();
+    assert!(a.on_key(KeyEvent::plain(Key::Esc), 0));
+    let (mut b, _rx2) = app();
+    assert!(b.on_key(KeyEvent::new(Key::Char('c'), super::KeyMods::CTRL), 0));
+}
+
+// --- debounce-fire wiring (P2.8) ---
+
+#[test]
+fn typing_then_tick_past_window_dispatches_wrapped_sql() {
+    let (mut app, rx) = app();
+    app.on_loaded("ready"); // engine ready
+    type_str(&mut app, "SELECT * FROM t", 0);
+    // Before the window elapses, nothing fires.
+    assert!(!app.tick(100));
+    assert!(drain(&rx).is_empty());
+    // After 150ms quiet, exactly one query is dispatched, LIMIT-wrapped.
+    assert!(app.tick(150));
+    let sent = drain(&rx);
+    assert_eq!(sent.len(), 1);
+    assert!(
+        sent[0].contains(&format!("LIMIT {VIEWPORT_ROW_LIMIT}")),
+        "expected viewport LIMIT wrap, got: {}",
+        sent[0]
+    );
+    assert_eq!(app.phase(), &AppPhase::Querying);
+}
+
+#[test]
+fn cursor_only_keys_do_not_reschedule() {
+    let (mut app, rx) = app();
+    app.on_loaded("ready");
+    type_str(&mut app, "SELECT 1", 0);
+    app.tick(150); // fires once
+    assert_eq!(drain(&rx).len(), 1);
+    // A pure cursor move at a later time must NOT schedule a new query.
+    app.on_key(KeyEvent::plain(Key::Left), 200);
+    assert!(!app.tick(400));
+    assert!(drain(&rx).is_empty());
+}
+
+#[test]
+fn empty_query_clears_result_and_does_not_dispatch() {
+    let (mut app, rx) = app();
+    app.on_loaded("ready");
+    // Type then delete back to empty.
+    type_str(&mut app, "x", 0);
+    app.on_key(KeyEvent::plain(Key::Backspace), 0);
+    assert!(!app.tick(150));
+    assert!(drain(&rx).is_empty());
     assert_eq!(app.phase(), &AppPhase::Ready);
-    assert_eq!(app.status(), "3 rows");
+    assert!(app.result().is_none());
+}
+
+// --- invalid SQL -> status error, no dispatch, no crash ---
+
+#[test]
+fn invalid_grammar_sets_status_error_and_does_not_dispatch() {
+    let (mut app, rx) = app();
+    app.on_loaded("ready");
+    type_str(&mut app, "DROP TABLE t", 0);
+    assert!(!app.tick(150));
+    assert!(drain(&rx).is_empty(), "DML must not reach the engine");
+    assert_eq!(app.status(), "read-only SELECT queries only");
+    assert_eq!(app.phase(), &AppPhase::Ready);
+}
+
+#[test]
+fn multi_statement_rejected() {
+    let (mut app, rx) = app();
+    app.on_loaded("ready");
+    type_str(&mut app, "SELECT 1; SELECT 2", 0);
+    assert!(!app.tick(150));
+    assert!(drain(&rx).is_empty());
+    assert_eq!(app.status(), "single statement only");
+}
+
+// --- response handling + stale-discard ---
+
+#[test]
+fn processed_success_updates_result_and_status() {
+    let (mut app, rx) = app();
+    app.on_loaded("ready");
+    type_str(&mut app, "SELECT * FROM t", 0);
+    app.tick(150);
+    let _ = drain(&rx);
+    let id = app.latest_request_id();
+    assert!(app.on_response(QueryResponse::ProcessedSuccess {
+        result: two_row_result(),
+        request_id: id,
+    }));
+    assert!(app.result().is_some());
+    assert_eq!(app.result().unwrap().rows.row_count(), 2);
+    assert_eq!(app.status(), "2 rows");
+    assert_eq!(app.phase(), &AppPhase::Ready);
+}
+
+#[test]
+fn stale_response_is_discarded() {
+    let (mut app, rx) = app();
+    app.on_loaded("ready");
+    // Dispatch twice so latest_id == 2 (both valid SELECTs).
+    type_str(&mut app, "SELECT 1", 0);
+    app.tick(150);
+    type_str(&mut app, " WHERE 1=1", 200);
+    app.tick(400);
+    let _ = drain(&rx);
+    assert_eq!(app.latest_request_id(), 2);
+    // A response for the older id=1 must be dropped (no result set, no state change).
+    let changed = app.on_response(QueryResponse::ProcessedSuccess {
+        result: two_row_result(),
+        request_id: 1,
+    });
+    assert!(!changed, "stale id=1 response must be discarded");
+    assert!(app.result().is_none());
+}
+
+#[test]
+fn cancelled_response_shows_nothing() {
+    let (mut app, _rx) = app();
+    app.on_loaded("ready");
+    type_str(&mut app, "SELECT 1", 0);
+    app.tick(150);
+    let id = app.latest_request_id();
+    assert!(!app.on_response(QueryResponse::Cancelled { request_id: id }));
+    assert!(app.result().is_none());
+}
+
+#[test]
+fn engine_error_response_enhances_to_status_no_crash() {
+    let (mut app, _rx) = app();
+    app.on_loaded("ready");
+    type_str(&mut app, "SELECT bogus", 0);
+    app.tick(150);
+    let id = app.latest_request_id();
+    let changed = app.on_response(QueryResponse::Error {
+        message: "Binder Error: Referenced column \"bogus\" not found".into(),
+        request_id: id,
+    });
+    assert!(changed);
+    assert_eq!(app.status(), "unknown column: \"bogus\"");
+    assert_eq!(app.phase(), &AppPhase::Ready);
+}
+
+#[test]
+fn worker_panic_response_id_zero_applied_immediately() {
+    let (mut app, _rx) = app();
+    app.on_loaded("ready");
+    // No query issued; a worker-level panic (request_id 0) should still surface.
+    let changed = app.on_response(QueryResponse::Error {
+        message: "query panicked: boom".into(),
+        request_id: 0,
+    });
+    assert!(changed);
+    assert!(app.status().contains("boom") || !app.status().is_empty());
+}
+
+// --- scroll (focus handoff + offsets) ---
+
+#[test]
+fn down_from_query_bar_focuses_results_and_scrolls() {
+    let (mut app, _rx) = app();
+    app.on_loaded("ready");
+    type_str(&mut app, "SELECT * FROM t", 0);
+    app.tick(150);
+    let id = app.latest_request_id();
+    app.on_response(QueryResponse::ProcessedSuccess {
+        result: two_row_result(),
+        request_id: id,
+    });
+    // Down moves focus to the results pane.
+    app.on_key(KeyEvent::plain(Key::Down), 200);
+    assert_eq!(app.focus(), Focus::Results);
+    // Down in results scrolls the body (clamped to body_len-1 == 1).
+    app.on_key(KeyEvent::plain(Key::Down), 200);
+    assert_eq!(app.v_row_offset(), 1);
+    app.on_key(KeyEvent::plain(Key::Down), 200);
+    assert_eq!(app.v_row_offset(), 1, "scroll clamps at the last row");
+}
+
+#[test]
+fn up_at_top_of_results_returns_focus_to_query_bar() {
+    let (mut app, _rx) = app();
+    app.on_loaded("ready");
+    type_str(&mut app, "SELECT 1", 0);
+    app.tick(150);
+    let id = app.latest_request_id();
+    app.on_response(QueryResponse::ProcessedSuccess {
+        result: two_row_result(),
+        request_id: id,
+    });
+    app.on_key(KeyEvent::plain(Key::Down), 0); // focus results
+    assert_eq!(app.focus(), Focus::Results);
+    app.on_key(KeyEvent::plain(Key::Up), 0); // at top -> back to bar
+    assert_eq!(app.focus(), Focus::QueryBar);
+}
+
+// --- load state machine (P2.11) ---
+
+#[test]
+fn load_completion_transitions_loading_to_ready() {
+    let (mut app, _rx) = app();
+    assert_eq!(app.phase(), &AppPhase::Loading);
+    assert!(!app.on_loaded("loaded: 3 columns"));
+    assert_eq!(app.phase(), &AppPhase::Ready);
+    assert_eq!(app.status(), "loaded: 3 columns");
+}
+
+#[test]
+fn query_typed_during_load_fires_on_ready() {
+    let (mut app, rx) = app();
+    // Editable during load: type a query and let the debounce window elapse while still Loading.
+    type_str(&mut app, "SELECT * FROM t", 0);
+    assert!(!app.tick(150), "must not dispatch while Loading");
+    assert!(drain(&rx).is_empty());
+    // Now the engine becomes ready: the pending query fires immediately.
+    let fired = app.on_loaded("ready");
+    assert!(fired, "the query typed during load must fire on Ready");
+    let sent = drain(&rx);
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].contains("SELECT * FROM t"));
+    assert_eq!(app.phase(), &AppPhase::Querying);
+}
+
+#[test]
+fn no_pending_query_does_not_fire_on_ready() {
+    let (mut app, rx) = app();
+    let fired = app.on_loaded("ready");
+    assert!(!fired);
+    assert!(drain(&rx).is_empty());
+}
+
+#[test]
+fn load_error_freezes_bar_and_sets_error_status() {
+    let (mut app, _rx) = app();
+    app.on_load_error("file not found");
+    assert!(matches!(app.phase(), AppPhase::LoadError(_)));
+    assert_eq!(app.status(), "load error: file not found");
+    // The query bar is frozen: typing has no effect.
+    type_str(&mut app, "SELECT 1", 0);
+    assert_eq!(app.query(), "");
+}
+
+// --- belt-and-suspenders: never dispatch while loading even if ticked ---
+
+#[test]
+fn tick_while_loading_never_dispatches() {
+    let (mut app, rx) = app();
+    type_str(&mut app, "SELECT 1", 0);
+    for t in (150..1000).step_by(50) {
+        assert!(!app.tick(t));
+    }
+    assert!(drain(&rx).is_empty());
+}
+
+// --- remaining editor keys routed through the query bar ---
+
+#[test]
+fn delete_right_end_editor_keys_route() {
+    let (mut app, _rx) = app();
+    type_str(&mut app, "abc", 0);
+    app.on_key(KeyEvent::plain(Key::Home), 0);
+    app.on_key(KeyEvent::plain(Key::Delete), 0); // removes 'a'
+    assert_eq!(app.query(), "bc");
+    app.on_key(KeyEvent::plain(Key::Right), 0); // cursor 0 -> 1
+    app.on_key(KeyEvent::plain(Key::End), 0); // cursor -> end
+    assert_eq!(app.editor().cursor(), 2);
+}
+
+// --- results-pane navigation (all scroll branches) ---
+
+/// A result with `n` rows and two columns, for exercising scroll bounds.
+fn wide_result(rows: usize) -> ProcessedResult {
+    let ids: Vec<Cell> = (0..rows as i64).map(Cell::Int).collect();
+    let names: Vec<Cell> = (0..rows).map(|i| Cell::Text(format!("r{i}"))).collect();
+    let table = Table::new(vec![
+        Column::new("id", ColumnType::Int, ids),
+        Column::new("name", ColumnType::Text, names),
+    ]);
+    let schema = table.schema();
+    let grid = crate::grid::layout_grid(&table, &crate::grid::GridView::new(80, 24));
+    ProcessedResult::new(grid, table, schema, 0)
+}
+
+fn app_with_result(rows: usize) -> (App, std::sync::mpsc::Receiver<QueryRequest>) {
+    let (mut app, rx) = app();
+    app.on_loaded("ready");
+    type_str(&mut app, "SELECT * FROM t", 0);
+    app.tick(150);
+    let id = app.latest_request_id();
+    app.on_response(QueryResponse::ProcessedSuccess {
+        result: wide_result(rows),
+        request_id: id,
+    });
+    app.on_key(KeyEvent::plain(Key::Down), 200); // focus results
+    (app, rx)
+}
+
+#[test]
+fn page_down_and_page_up_scroll_in_tens_clamped() {
+    let (mut app, _rx) = app_with_result(30);
+    app.on_key(KeyEvent::plain(Key::PageDown), 0);
+    assert_eq!(app.v_row_offset(), 10);
+    app.on_key(KeyEvent::plain(Key::PageDown), 0);
+    assert_eq!(app.v_row_offset(), 20);
+    app.on_key(KeyEvent::plain(Key::PageDown), 0);
+    assert_eq!(app.v_row_offset(), 29, "clamps at last row (body_len-1)");
+    app.on_key(KeyEvent::plain(Key::PageUp), 0);
+    assert_eq!(app.v_row_offset(), 19);
+}
+
+#[test]
+fn up_decrements_then_returns_focus_at_top() {
+    let (mut app, _rx) = app_with_result(30);
+    app.on_key(KeyEvent::plain(Key::Down), 0); // offset 1
+    app.on_key(KeyEvent::plain(Key::Down), 0); // offset 2
+    assert_eq!(app.v_row_offset(), 2);
+    app.on_key(KeyEvent::plain(Key::Up), 0); // offset 1 (decrement, still focused)
+    assert_eq!(app.v_row_offset(), 1);
+    assert_eq!(app.focus(), Focus::Results);
+}
+
+#[test]
+fn home_in_results_jumps_to_top() {
+    let (mut app, _rx) = app_with_result(30);
+    app.on_key(KeyEvent::plain(Key::PageDown), 0);
+    assert_eq!(app.v_row_offset(), 10);
+    app.on_key(KeyEvent::plain(Key::Home), 0);
+    assert_eq!(app.v_row_offset(), 0);
+}
+
+#[test]
+fn left_right_scroll_columns_clamped() {
+    let (mut app, _rx) = app_with_result(5); // 2 columns -> h_col_offset max 1
+    app.on_key(KeyEvent::plain(Key::Right), 0);
+    assert_eq!(app.h_col_offset(), 1);
+    app.on_key(KeyEvent::plain(Key::Right), 0);
+    assert_eq!(app.h_col_offset(), 1, "clamps at last column (col_count-1)");
+    app.on_key(KeyEvent::plain(Key::Left), 0);
+    assert_eq!(app.h_col_offset(), 0);
+    app.on_key(KeyEvent::plain(Key::Left), 0);
+    assert_eq!(app.h_col_offset(), 0, "clamps at 0");
+}
+
+// --- set_interrupt swaps the handle (the load-completion install path) ---
+
+#[test]
+fn set_interrupt_installs_handle_without_panicking() {
+    let (mut app, _rx) = app();
+    // The placeholder is a no-op; installing a fresh no-op handle must be a clean swap.
+    app.set_interrupt(InterruptHandle::noop());
+    // A subsequent dispatch path still works (no in-flight interrupt fires, but the call is live).
+    app.on_loaded("ready");
+    type_str(&mut app, "SELECT 1", 0);
+    assert!(app.tick(150));
 }

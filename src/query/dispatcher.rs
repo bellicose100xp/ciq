@@ -42,6 +42,17 @@ impl Dispatcher {
         }
     }
 
+    /// Swap in the real engine interrupt handle once the engine finishes loading.
+    ///
+    /// The shell builds the `App` (and thus the dispatcher) **before** the off-thread CSV load
+    /// completes, so it starts with a no-op placeholder handle; the loader hands back the real
+    /// `Arc<duckdb::InterruptHandle>` on completion and the event loop installs it here. Safe to
+    /// do at any point: no query can be in-flight to interrupt until after load, since
+    /// `dispatch()` only fires `interrupt()` while [`in_flight`](Self::in_flight) is true.
+    pub fn set_interrupt(&mut self, interrupt: InterruptHandle) {
+        self.interrupt = interrupt;
+    }
+
     /// Dispatch a new query. If a prior request is in-flight, interrupt it first (from this
     /// thread), then issue a fresh monotonic `request_id` and send the request. Returns the new
     /// id.

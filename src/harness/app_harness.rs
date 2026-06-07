@@ -1,48 +1,91 @@
 //! `AppHarness` — drive the `App` against `ratatui::TestBackend` with no real terminal.
 //!
-//! **P1.7 minimal form.** It renders the `App` to an in-memory `TestBackend` and returns the
-//! serialized buffer (the App-level analog of jiq's `render_to_string`). In Phase 2 it grows
-//! a synthetic key-event feed and a `current_time_ms: u64` seam to drive the debouncer
-//! deterministically, plus worker pumping — but the render-to-string core is established here.
+//! `dev/PLAN.md` §4.2: the App-level headless driver. It owns the `App`, an in-memory
+//! `TestBackend`, the **receiver** end of the App's request channel (so a test can inspect /
+//! count the SQL the App dispatched), and a synthetic clock. It mirrors the real
+//! [`event_loop`](crate::app::event_loop) but with everything terminal/clock-bound replaced by
+//! explicit calls:
+//!   - [`key`](Self::key) / [`type_str`](Self::type_str) feed synthetic [`KeyEvent`]s,
+//!   - [`advance`](Self::advance) moves the synthetic `now_ms` and ticks the debouncer,
+//!   - [`dispatched`](Self::dispatched) drains the SQL the App actually sent the worker,
+//!   - [`respond`](Self::respond) feeds a [`QueryResponse`] back to the App,
+//!   - [`complete_load`](Self::complete_load) / [`fail_load`](Self::fail_load) drive the load
+//!     state machine.
 //!
-//! `TestBackend` is an in-memory cell grid: no escape sequences, no real keyboard, no TTY. So
-//! everything an `AppHarness` test asserts is in the headless majority (North Star 2); the
-//! true-terminal residue is the §4.7 human surface.
+//! `TestBackend` is an in-memory cell grid: no escape sequences, no real keyboard, no TTY — so
+//! everything an `AppHarness` test asserts is in the headless majority (North Star 2).
+
+use std::sync::mpsc::{Receiver, channel};
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-use crate::app::App;
+use crate::app::{App, Key, KeyEvent};
+use crate::engine::InterruptHandle;
+use crate::query::worker::types::{QueryRequest, QueryResponse};
 
-/// A headless driver for `App`: owns the app and an in-memory terminal.
+/// A headless driver for `App`: owns the app, an in-memory terminal, the request receiver, and a
+/// synthetic clock.
 pub struct AppHarness {
     app: App,
     terminal: Terminal<TestBackend>,
-    /// Monotonic synthetic test time fed to the debouncer (P2). Present now as the seam so
-    /// no wall-clock ever enters harness logic (determinism rule).
+    /// The receiver end of the App's request channel — drained by [`dispatched`](Self::dispatched).
+    request_rx: Receiver<QueryRequest>,
+    /// Monotonic synthetic test time fed to the debouncer. No wall clock ever enters here.
     now_ms: u64,
 }
 
 impl AppHarness {
-    /// Build a harness with an in-memory terminal of the given size.
-    pub fn new(app: App, width: u16, height: u16) -> Self {
+    /// Build a harness with a fresh `App` (in `Loading`) and an in-memory terminal of the given
+    /// size. The App's interrupt handle is a no-op by default; pass a real one via
+    /// [`with_interrupt`](Self::with_interrupt) when exercising cancellation.
+    pub fn new(width: u16, height: u16) -> Self {
+        Self::with_interrupt(width, height, InterruptHandle::noop())
+    }
+
+    /// Build a harness whose `App` holds the given interrupt handle (for cancellation tests).
+    pub fn with_interrupt(width: u16, height: u16, interrupt: InterruptHandle) -> Self {
+        let (request_tx, request_rx) = channel();
+        let app = App::new(request_tx, interrupt);
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend).expect("TestBackend terminal");
         Self {
             app,
             terminal,
+            request_rx,
             now_ms: 0,
         }
     }
 
-    /// Build a harness over a default (loading) `App`.
-    pub fn loading(width: u16, height: u16) -> Self {
-        Self::new(App::new(), width, height)
+    // --- driving input + time ---
+
+    /// Feed one key event at the current synthetic time.
+    pub fn key(&mut self, ev: KeyEvent) -> &mut Self {
+        self.app.on_key(ev, self.now_ms);
+        self
     }
 
-    /// Advance the synthetic clock. (No-op on render in P1.7; drives the debouncer in P2.)
-    pub fn advance(&mut self, ms: u64) {
+    /// Type a string one `Char` key at a time (the common "user types SQL" path).
+    pub fn type_str(&mut self, s: &str) -> &mut Self {
+        for c in s.chars() {
+            self.app.on_key(KeyEvent::char(c), self.now_ms);
+        }
+        self
+    }
+
+    /// Press a plain (unmodified) key.
+    pub fn press(&mut self, key: Key) -> &mut Self {
+        self.app.on_key(KeyEvent::plain(key), self.now_ms);
+        self
+    }
+
+    /// Advance the synthetic clock by `ms` and drive the debouncer once (the harness analog of
+    /// one event-loop turn after time passes). A debounced query is dispatched here if its quiet
+    /// window has elapsed and the engine is `Ready`.
+    pub fn advance(&mut self, ms: u64) -> &mut Self {
         self.now_ms += ms;
+        self.app.tick(self.now_ms);
+        self
     }
 
     /// Current synthetic time.
@@ -50,18 +93,53 @@ impl AppHarness {
         self.now_ms
     }
 
-    /// Mutable access to the app (to set state in tests).
-    pub fn app_mut(&mut self) -> &mut App {
-        &mut self.app
+    // --- load state machine ---
+
+    /// Complete the off-thread load: drive `Loading -> Ready` and fire any query typed during
+    /// load. (The interrupt handle was set at construction, so unlike the real event loop there
+    /// is nothing to install here.) Returns whether a query was dispatched on becoming ready.
+    pub fn complete_load(&mut self, summary: impl Into<String>) -> bool {
+        self.app.on_loaded(summary)
     }
+
+    /// Fail the off-thread load: drive into `LoadError`.
+    pub fn fail_load(&mut self, message: impl Into<String>) -> &mut Self {
+        self.app.on_load_error(message);
+        self
+    }
+
+    // --- worker channel inspection / injection ---
+
+    /// Drain every SQL string the App has dispatched to the worker since the last call. Lets a
+    /// test assert "N debounced keystrokes produced exactly one query" by counting the result.
+    pub fn dispatched(&mut self) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Ok(req) = self.request_rx.try_recv() {
+            out.push(req.query);
+        }
+        out
+    }
+
+    /// Feed a [`QueryResponse`] back to the App (the worker-result edge), as the event loop does.
+    /// Returns whether the visible state changed (stale responses are discarded inside the App).
+    pub fn respond(&mut self, resp: QueryResponse) -> bool {
+        self.app.on_response(resp)
+    }
+
+    // --- state access ---
 
     /// Read-only access to the app state (assert on structured state, not just the screen).
     pub fn app(&self) -> &App {
         &self.app
     }
 
-    /// Render the current app state and return the serialized buffer — what the user would
-    /// see, as a deterministic string suitable for `insta` snapshots.
+    /// Mutable access to the app (rarely needed; prefer the driving methods above).
+    pub fn app_mut(&mut self) -> &mut App {
+        &mut self.app
+    }
+
+    /// Render the current app state and return the serialized buffer — a deterministic string
+    /// suitable for `insta` snapshots.
     pub fn screen(&mut self) -> String {
         let app = &self.app;
         self.terminal

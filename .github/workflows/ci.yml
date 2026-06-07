@@ -73,8 +73,22 @@ jobs:
         run: cargo install cargo-tarpaulin
       # Project-wide coverage report. WARN-only (D5): we do NOT fail the build on the overall
       # percentage; the report is informational and surfaced as an annotation.
+      #
+      # Shell-exempt files (the §4.7 human surface — real-terminal paint/raw-mode input) cannot be
+      # exercised headlessly, so they are excluded from the coverage denominator (§4.6: the
+      # enumerated shell files are listed in tarpaulin's --exclude-files). The exclusion is driven
+      # by the single source of truth, dev/shell-exempt.txt, so it can never drift from the
+      # marker-containment gate.
       - name: Generate coverage report
-        run: cargo tarpaulin --out Xml --out Html --output-dir coverage -- --test-threads=1
+        shell: bash
+        run: |
+          excludes=()
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in \#*) continue ;; esac
+            excludes+=(--exclude-files "$f")
+          done < <(grep -vE '^\s*(#|$)' dev/shell-exempt.txt || true)
+          cargo tarpaulin --out Xml --out Html --output-dir coverage "${excludes[@]}" -- --test-threads=1
       # WARN-only project-wide 95% target: annotate below 95%, never fail.
       - name: Warn if project-wide coverage < 95%
         run: bash dev/ci/coverage-warn.sh 95 coverage/cobertura.xml

@@ -1,0 +1,114 @@
+//! App render layer — query bar (top) + results grid (middle) + status line (bottom).
+//!
+//! `dev/PLAN.md` §3 / §4.1: a **pure function of `App` state into a `Frame`**. The only
+//! `Frame`-touching code in the shell besides the grid blit, and like every ciq render surface
+//! it is `TestBackend`-snapshot-tested (NOT shell-exempt — `TestBackend` is an in-memory cell
+//! grid an agent asserts). All colors come from [`theme::app`] / [`theme::grid`]; this file
+//! never names a `Color`.
+//!
+//! Layout: a one-row query bar, a bordered results pane (which re-lays-out the retained result
+//! `rows` against the *actual* inner viewport so a resize reflows without re-querying — §3.1's
+//! "App re-lays-out from retained rows on resize"), and a one-row status line.
+
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Paragraph};
+
+use crate::app::{App, AppPhase};
+use crate::grid::{GridView, grid_render, layout_grid};
+use crate::theme;
+
+/// Render the whole app into `frame`.
+pub fn render(app: &App, frame: &mut Frame) {
+    let area = frame.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // query bar
+            Constraint::Min(1),    // results pane
+            Constraint::Length(1), // status line
+        ])
+        .split(area);
+
+    render_query_bar(app, frame, chunks[0]);
+    render_results(app, frame, chunks[1]);
+    render_status(app, frame, chunks[2]);
+}
+
+/// The query bar: a prompt glyph followed by the current query text.
+fn render_query_bar(app: &App, frame: &mut Frame, area: Rect) {
+    let line = Line::from(vec![
+        Span::styled("> ", theme::app::prompt()),
+        Span::styled(app.query().to_string(), theme::app::query_text()),
+    ]);
+    frame.render_widget(Paragraph::new(line), area);
+}
+
+/// The results pane: a bordered box containing the aligned grid, a loading indicator, or an
+/// empty hint. The grid is re-laid-out against the actual inner viewport.
+fn render_results(app: &App, frame: &mut Frame, area: Rect) {
+    let block = Block::default().borders(Borders::ALL);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    match app.phase() {
+        AppPhase::Loading => {
+            let p = Paragraph::new(Span::styled("loading CSV…", theme::app::loading()));
+            frame.render_widget(p, inner);
+            return;
+        }
+        AppPhase::LoadError(msg) => {
+            let p = Paragraph::new(Span::styled(
+                format!("could not load CSV: {msg}"),
+                theme::app::status_error(),
+            ));
+            frame.render_widget(p, inner);
+            return;
+        }
+        AppPhase::Ready | AppPhase::Querying => {}
+    }
+
+    match app.result() {
+        Some(result) => {
+            // Re-lay-out from the retained rows against the real viewport so a resize reflows
+            // without re-querying (§3.1). Column-granular h-scroll from the App's offset.
+            let view = GridView {
+                width: inner.width,
+                height: inner.height,
+                h_col_offset: app.h_col_offset(),
+                v_row_offset: app.v_row_offset(),
+            };
+            let grid = layout_grid(&result.rows, &view);
+            grid_render::render_grid(frame, inner, &grid, app.v_row_offset());
+        }
+        None => {
+            let hint = Paragraph::new(Span::styled(
+                "type a SQL query above (e.g. SELECT * FROM t)",
+                theme::app::status(),
+            ));
+            frame.render_widget(hint, inner);
+        }
+    }
+}
+
+/// The status line: error-styled when the phase is a load error, normal otherwise.
+fn render_status(app: &App, frame: &mut Frame, area: Rect) {
+    let style = if matches!(app.phase(), AppPhase::LoadError(_)) {
+        theme::app::status_error()
+    } else {
+        theme::app::status()
+    };
+    frame.render_widget(
+        Paragraph::new(Span::styled(app.status().to_string(), style)),
+        area,
+    );
+}
+
+#[cfg(test)]
+#[path = "app_render_tests.rs"]
+mod app_render_tests;

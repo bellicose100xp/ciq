@@ -188,6 +188,18 @@ impl InterruptHandle {
         Self { inner }
     }
 
+    /// A handle whose `interrupt()` does nothing. The shell's placeholder before the engine
+    /// finishes loading (the real handle is installed via
+    /// [`Dispatcher::set_interrupt`](crate::query::dispatcher::Dispatcher::set_interrupt) on
+    /// load completion); also handy in tests that don't exercise cancellation.
+    pub fn noop() -> Self {
+        struct Noop;
+        impl Interruptible for Noop {
+            fn interrupt(&self) {}
+        }
+        Self::new(Arc::new(Noop))
+    }
+
     /// Interrupt the query currently running on the associated connection. Safe to call from
     /// any thread. Not request-scoped — it cancels *whatever* query is running, so the
     /// dispatcher only calls it while a specific request is known in-flight (§0/D4).

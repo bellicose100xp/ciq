@@ -1,12 +1,16 @@
 //! ciq binary entry point.
 //!
-//! P1.1 scaffold: parses CLI args and exits. Ingest, the App, and the TUI loop are
-//! wired in later phases (P2). Kept thin — the testable core lives in the library
-//! (`ciq::*`), reachable without launching a terminal.
+//! Parses CLI args, stands up debug logging, and — when given a file — launches the interactive
+//! TUI session via the crossterm event loop (`ciq::app::event_loop::run`). Kept thin: the
+//! testable core lives in the library (`ciq::*`), reachable without launching a terminal. Only
+//! the event loop touches a real terminal (the §4.7 human surface).
 
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use clap::Parser;
+
+use ciq::engine::CsvOpts;
 
 /// CSV Interactive Query — type DuckDB SQL, watch an aligned grid update live.
 #[derive(Debug, Parser)]
@@ -21,25 +25,26 @@ struct Cli {
     debug: bool,
 }
 
-fn main() {
+fn main() -> ExitCode {
     let cli = Cli::parse();
 
     // Stand up debug logging first so everything after it can be instrumented. No-op (and
-    // no file) unless --debug / CIQ_DEBUG=1 / a debug build.
+    // no file) unless --debug / CIQ_DEBUG=1.
     ciq::logging::init_logger(cli.debug);
     log::debug!("=== ciq debug session started ===");
 
-    // P1.1: no interactive surface yet. Acknowledge the arg and exit cleanly so
-    // `ciq --version` / `ciq --help` work and the binary smoke-tests pass.
     match cli.file {
-        Some(path) => {
-            eprintln!(
-                "ciq: scaffold build — would open {} (ingest + TUI land in Phase 2)",
-                path.display()
-            );
-        }
+        Some(path) => match ciq::app::event_loop::run(path, CsvOpts::default()) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("ciq: {e}");
+                ExitCode::FAILURE
+            }
+        },
         None => {
-            eprintln!("ciq: scaffold build — no file given (stdin ingest lands in Phase 2)");
+            // stdin ingest lands in a later phase; for now require a file.
+            eprintln!("ciq: no file given (stdin ingest lands in a later phase)");
+            ExitCode::FAILURE
         }
     }
 }

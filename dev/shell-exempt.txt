@@ -9,3 +9,10 @@
 #
 # Empty at Phase 1 — no terminal-edge files exist yet. Entries are added (with the §4.7 row
 # they correspond to) as the crossterm flush, clipboard, and paint shims land in Phase 2+.
+
+# Phase 2 (P2.8): the crossterm event loop — raw-mode setup/teardown, the real event poll +
+# key/paste/resize decode, the wall-clock read feeding the debouncer, and the CrosstermBackend
+# flush. Covers §4.7 rows 1 (glyph/color paint), 2 (raw-mode keyboard/mouse), 3 (bracketed-paste
+# framing), and 5 (live resize reflow). All decisions feeding it (event routing via App::on_key,
+# debounce via App::tick, render-to-buffer via app_render) are headless and NOT exempt.
+src/app/event_loop.rs
