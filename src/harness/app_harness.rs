@@ -148,7 +148,18 @@ impl AppHarness {
             .into_iter()
             .filter_map(|r| match r.kind {
                 RequestKind::Value { column } => Some((column, r.query)),
-                RequestKind::Main => None,
+                RequestKind::Main | RequestKind::Facet { .. } => None,
+            })
+            .collect()
+    }
+
+    /// Drain only the facet fetches (P4.6) the App dispatched — `(column, sql)` pairs.
+    pub fn facet_fetches(&mut self) -> Vec<(String, String)> {
+        self.dispatched_requests()
+            .into_iter()
+            .filter_map(|r| match r.kind {
+                RequestKind::Facet { column } => Some((column, r.query)),
+                RequestKind::Main | RequestKind::Value { .. } => None,
             })
             .collect()
     }

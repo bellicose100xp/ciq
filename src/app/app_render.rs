@@ -17,10 +17,16 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::app::{App, AppPhase};
 use crate::autocomplete::autocomplete_render::{MAX_VISIBLE_ROWS, render_popup};
+use crate::facets::facet_render::render_facet;
 use crate::grid::{GridFrame, GridView, grid_render, layout_grid};
 use crate::palette::palette_render::{MAX_VISIBLE_ROWS as PALETTE_MAX_ROWS, render_palette};
 use crate::schema_bar;
 use crate::theme;
+
+/// Max content rows the facet popup reserves: the histogram is up to 2 stat lines + the top-K bars
+/// ([`DEFAULT_TOP_K`](crate::facets::facet_query::DEFAULT_TOP_K) = 10), so 12 covers the largest
+/// case; a summary (4 lines) fits comfortably inside it. The popup is height-clamped to the pane.
+const FACET_POPUP_ROWS: u16 = 12;
 
 /// Render the whole app into `frame`.
 pub fn render(app: &App, frame: &mut Frame) {
@@ -43,6 +49,26 @@ pub fn render(app: &App, frame: &mut Frame) {
     // The column palette overlays the results pane when open (it and the autocomplete popup are
     // mutually exclusive — opening the palette closes the popup). Drawn last so it sits on top.
     render_palette_popup(app, frame, chunks[0], chunks[1]);
+    // The facet popup overlays the results pane when open. Drawn last so it sits on top.
+    render_facet_popup(app, frame, chunks[0], chunks[1]);
+}
+
+/// Overlay the facet popup below the query bar, over the results pane, when one is open (P4.6).
+/// Sized to the stat/histogram line count (capped by the available height) and to a readable
+/// fraction of the width. No-op when no facet is open.
+fn render_facet_popup(app: &App, frame: &mut Frame, bar: Rect, results: Rect) {
+    let Some(facet) = app.facet() else {
+        return;
+    };
+    let height = (FACET_POPUP_ROWS + 2).min(results.height.max(1)); // +2 for the popup border
+    let width = popup_width(results.width);
+    let area = Rect {
+        x: bar.x,
+        y: bar.y.saturating_add(1),
+        width,
+        height,
+    };
+    render_facet(facet, frame, area);
 }
 
 /// Overlay the column palette below the query bar, over the results pane, when it is open. Sized to

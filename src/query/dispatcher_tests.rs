@@ -16,7 +16,7 @@ use crate::engine::types::{Cell, Column, Interruptible, QueryOutcome, Table};
 use crate::engine::{InterruptHandle, QueryEngine};
 use crate::query::dispatcher::Dispatcher;
 use crate::query::worker::spawn_worker;
-use crate::query::worker::types::QueryResponse;
+use crate::query::worker::types::{QueryResponse, RequestKind};
 use crate::schema::{ColumnMeta, ColumnType, Schema};
 
 fn schema() -> Schema {
@@ -67,6 +67,60 @@ fn dispatch_without_in_flight_does_not_interrupt() {
         callers.lock().unwrap().is_empty(),
         "no interrupt fires when nothing was in-flight"
     );
+}
+
+#[test]
+fn dispatch_facet_rides_its_own_lane_without_interrupt_or_main_bump() {
+    // A facet fetch (P4.6) is out of the main lane: it must not interrupt an in-flight main query,
+    // must not bump the main request_id, and rides its own monotonic facet id. Its request is tagged
+    // RequestKind::Facet with the column so the App routes it to the popup.
+    let engine = FakeEngine::new(schema()).with_default(QueryOutcome::Rows(one_row_table()));
+    let callers = Arc::new(Mutex::new(Vec::new()));
+    let recording = InterruptHandle::new(Arc::new(RecordingInterrupt {
+        inner: engine.interrupt_handle(),
+        callers: callers.clone(),
+    }));
+    let (req_tx, req_rx) = channel();
+    let mut dispatcher = Dispatcher::new(req_tx, recording);
+
+    // A main query is in-flight.
+    let main_id = dispatcher.dispatch("SELECT 1").unwrap();
+    assert_eq!(main_id, 1);
+    assert!(dispatcher.in_flight());
+
+    // A facet fetch rides its own lane: own id (starts at 1, independent), no interrupt, no main bump.
+    let facet_id = dispatcher
+        .dispatch_facet("SELECT min(id) FROM t", "id")
+        .unwrap();
+    assert_eq!(facet_id, 1, "facet lane is independent of the main lane");
+    assert_eq!(
+        dispatcher.latest_id(),
+        main_id,
+        "a facet fetch must not bump the main request_id"
+    );
+    assert!(
+        callers.lock().unwrap().is_empty(),
+        "dispatching a facet must not interrupt the in-flight main query"
+    );
+
+    // The request that went out is tagged Facet with the column.
+    let reqs: Vec<_> = std::iter::from_fn(|| req_rx.try_recv().ok()).collect();
+    let facet_req = reqs
+        .iter()
+        .find(|r| matches!(&r.kind, RequestKind::Facet { column } if column == "id"))
+        .expect("a Facet request for `id` was sent");
+    assert!(
+        facet_req.query.contains("min(id)"),
+        "got: {}",
+        facet_req.query
+    );
+
+    // A second facet fetch advances only the facet lane.
+    let facet_id2 = dispatcher
+        .dispatch_facet("SELECT min(id) FROM t", "id")
+        .unwrap();
+    assert_eq!(facet_id2, 2);
+    assert_eq!(dispatcher.latest_id(), main_id, "still no main bump");
 }
 
 #[test]

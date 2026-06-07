@@ -1,0 +1,29 @@
+---
+source: src/facets/facet_render_tests.rs
+assertion_line: 176
+expression: screen
+---
+"                                                                                "
+"┌ facet: status (txt) ───────────┐                                              "
+"│distinct: 3                     │                                              "
+"│nulls: 4                        │                                              "
+"│active  100     ################│                                              "
+"│archived  60    #########       │                                              "
+"│pending  20     ###             │                                              "
+"│                                │                                              "
+"│                                │                                              "
+"│                                │                                              "
+"└────────────────────────────────┘                                              "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "

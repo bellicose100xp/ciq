@@ -23,6 +23,7 @@ pub mod autocomplete;
 pub mod clipboard;
 pub mod engine;
 pub mod error;
+pub mod facets;
 pub mod grid;
 pub mod ingest;
 pub mod logging;

@@ -36,6 +36,8 @@ use crate::autocomplete::insertion::insert_suggestion;
 use crate::autocomplete::sql_keywords::OPERATORS;
 use crate::autocomplete::value_source::{ValueCache, build_distinct_sql_default};
 use crate::engine::InterruptHandle;
+use crate::facets::FacetState;
+use crate::facets::facet_query::build_facet_sql;
 use crate::palette::PaletteState;
 use crate::palette::query_emit::emit as emit_palette;
 use crate::query::debouncer::Debouncer;
@@ -76,6 +78,17 @@ pub enum AppPhase {
     Querying,
     /// The CSV could not be loaded. Terminal state; carries the message for the status line.
     LoadError(String),
+}
+
+/// What handling a key while the facet popup is open resolves to (P4.6): quit the app, consume the
+/// key (Esc closed the popup), or close the popup and fall through to normal routing.
+enum FacetKey {
+    /// Ctrl-C: quit the app.
+    Quit,
+    /// Esc: the popup closed; the key is fully handled.
+    Consumed,
+    /// Any other key: the popup closed, but the key should still route normally.
+    FallThrough,
 }
 
 /// Which surface currently has keyboard focus. Minimal in Phase 2 (only the query bar exists);
@@ -128,6 +141,11 @@ pub struct App {
     /// Whether the palette popup is currently open (P4.5). When open it intercepts keys (toggle /
     /// reorder / filter / emit) before the query-bar routing, like the autocomplete popup.
     palette_open: bool,
+    /// The instant-facet popup (P4.6, §6.5): the focused column + its parsed stats, filled
+    /// out-of-band by the worker. `None` when no facet is open. Opened by `f` on the focused grid
+    /// column; the SQL rides the same worker channel and the response routes here (not the grid) by
+    /// [`RequestKind::Facet`].
+    facet: Option<FacetState>,
 }
 
 impl App {
@@ -151,6 +169,7 @@ impl App {
             csv_summary: (None, true),
             palette: None,
             palette_open: false,
+            facet: None,
         }
     }
 
@@ -204,6 +223,16 @@ impl App {
         &self.autocomplete
     }
 
+    /// The open facet popup state, if any (for the render layer and tests).
+    pub fn facet(&self) -> Option<&FacetState> {
+        self.facet.as_ref()
+    }
+
+    /// Whether the facet popup is currently open.
+    pub fn is_facet_open(&self) -> bool {
+        self.facet.is_some()
+    }
+
     /// The loaded schema, if the engine has reached `Ready`.
     pub fn schema(&self) -> Option<&Schema> {
         self.schema.as_ref()
@@ -236,6 +265,16 @@ impl App {
         if self.palette_open {
             return self.handle_palette_key(&ev, now_ms);
         }
+        // The facet popup, when open, intercepts Esc (close) and Ctrl-C (quit) before the rest of
+        // routing — so Esc dismisses the popup rather than quitting. Any other key closes it and
+        // falls through to normal routing (e.g. arrows resume grid scrolling).
+        if self.facet.is_some() {
+            match self.handle_facet_key(&ev) {
+                FacetKey::Quit => return true,
+                FacetKey::Consumed => return false,
+                FacetKey::FallThrough => {} // popup closed; route the key normally below
+            }
+        }
         // Ctrl+K opens the column palette (when a schema is loaded). Checked before the popup /
         // quit routing so the chord is reachable from any non-palette state.
         if ev.mods.ctrl && matches!(ev.key, Key::Char('k') | Key::Char('K')) {
@@ -244,6 +283,11 @@ impl App {
         }
         if self.autocomplete.is_open() && self.handle_popup_key(&ev, now_ms) {
             return false; // the popup consumed the key
+        }
+        // `f` in the results pane opens a facet for the focused (leftmost visible) grid column.
+        if self.focus == Focus::Results && matches!(ev.key, Key::Char('f') | Key::Char('F')) {
+            self.open_facet();
+            return false;
         }
         // Ctrl-C / Esc quit from anywhere (Esc only reaches here when no popup is open).
         if ev.is_quit() {
@@ -254,6 +298,58 @@ impl App {
             Focus::Results => self.on_key_results(ev),
         }
         false
+    }
+
+    /// Handle a key while the facet popup is open: `Esc` closes it (consumed, no quit), `Ctrl-C`
+    /// quits, any other key dismisses the popup and falls through to normal routing (e.g. arrows
+    /// resume grid scrolling).
+    fn handle_facet_key(&mut self, ev: &KeyEvent) -> FacetKey {
+        if ev.mods.ctrl && matches!(ev.key, Key::Char('c') | Key::Char('C')) {
+            return FacetKey::Quit;
+        }
+        match ev.key {
+            Key::Esc => {
+                self.close_facet();
+                FacetKey::Consumed
+            }
+            _ => {
+                self.close_facet();
+                FacetKey::FallThrough
+            }
+        }
+    }
+
+    /// Open an instant facet for the focused grid column (P4.6, §6.5). The focused column is the
+    /// leftmost visible one (`h_col_offset`) of the current result; it must resolve to a real base
+    /// table column (the facet queries `t`), so a derived/expression column with no schema match is
+    /// a no-op. Dispatches the type-aware aggregate SQL through the worker (same channel/engine) and
+    /// shows a pending popup until the response lands. No-op without a result or a schema.
+    fn open_facet(&mut self) {
+        let Some(schema) = self.schema.as_ref() else {
+            return;
+        };
+        let Some(result) = self.result.as_ref() else {
+            return;
+        };
+        let Some(column) = result.rows.columns().get(self.h_col_offset) else {
+            return;
+        };
+        // Resolve the result column name to the base-table schema (the facet queries `t`); skip a
+        // derived column that isn't a real table column.
+        let Some(meta) = schema.column_ci(&column.name) else {
+            return;
+        };
+        let name = meta.name.clone();
+        let ty = meta.ty.clone();
+        let sql = build_facet_sql(&name, schema);
+        if self.dispatcher.dispatch_facet(sql, name.clone()).is_ok() {
+            self.facet = Some(FacetState::pending(name, ty));
+        }
+    }
+
+    /// Close the facet popup.
+    fn close_facet(&mut self) {
+        self.facet = None;
     }
 
     /// Open the column palette (P4.5/D3). No-op while loading / on a load error, or with no schema
@@ -570,6 +666,34 @@ impl App {
         } = &resp
         {
             return false; // a failed value fetch silently yields no candidates
+        }
+        // Facet fetches are also out of the main lane (P4.6): route a success to the open facet
+        // popup by its column (ignore one for a *different* column — a stale facet the user has since
+        // closed/replaced), never through the stale-discard gate. An error/cancel leaves the popup
+        // pending (it just shows "computing…"); the user can Esc out.
+        if let QueryResponse::ProcessedSuccess {
+            result,
+            kind: RequestKind::Facet { column },
+            ..
+        } = &resp
+        {
+            if let Some(facet) = self.facet.as_mut()
+                && facet.column() == column
+            {
+                facet.apply_result(&result.rows);
+            }
+            return false; // the facet popup filled; the grid is unchanged
+        }
+        if let QueryResponse::Error {
+            kind: RequestKind::Facet { .. },
+            ..
+        }
+        | QueryResponse::Cancelled {
+            kind: RequestKind::Facet { .. },
+            ..
+        } = &resp
+        {
+            return false; // a failed/superseded facet leaves the popup pending; Esc dismisses it
         }
         // A cancelled value fetch is also out of the main lane: drop it *before* the stale-discard
         // gate. Otherwise its value-lane id, drawn from a counter that overlaps the main `latest_id`,

@@ -34,6 +34,10 @@ pub struct Dispatcher {
     /// value fetch neither bumps the main `request_id` nor is interrupted by/interrupts the main
     /// query. Value responses are routed to the cache by [`RequestKind`], not by this id.
     value_seq: u64,
+    /// Monotonic id for facet fetches (P4.6), its own lane for the same reason as `value_seq`: a
+    /// facet aggregate neither bumps nor is interrupted by the main query, and its response routes
+    /// to the facet popup by [`RequestKind::Facet`] + column (not by this id).
+    facet_seq: u64,
 }
 
 impl Dispatcher {
@@ -44,6 +48,7 @@ impl Dispatcher {
             interrupt,
             state: QueryState::new(),
             value_seq: 0,
+            facet_seq: 0,
         }
     }
 
@@ -90,6 +95,25 @@ impl Dispatcher {
         self.value_seq += 1;
         let id = self.value_seq;
         self.request_tx.send(QueryRequest::value(sql, id, column))?;
+        Ok(id)
+    }
+
+    /// Dispatch a facet aggregate for `column` (P4.6) on the **same channel and engine** as the
+    /// main query (§6.5 — no second connection), but out of the main request lane: it does **not**
+    /// interrupt the in-flight grid query, does **not** bump the main `request_id`, and its response
+    /// routes to the [`FacetState`](crate::facets::FacetState) popup by
+    /// [`RequestKind::Facet`](crate::query::worker::types::RequestKind) + column rather than to the
+    /// grid. Returns the facet-fetch id (from the separate facet lane).
+    ///
+    /// Errors only if the worker's receiver has been dropped.
+    pub fn dispatch_facet(
+        &mut self,
+        sql: impl Into<String>,
+        column: impl Into<String>,
+    ) -> Result<u64, SendError<QueryRequest>> {
+        self.facet_seq += 1;
+        let id = self.facet_seq;
+        self.request_tx.send(QueryRequest::facet(sql, id, column))?;
         Ok(id)
     }
 

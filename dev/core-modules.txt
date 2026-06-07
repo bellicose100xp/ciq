@@ -73,6 +73,16 @@ src/output/emit.rs
 src/palette/palette_state.rs
 src/palette/query_emit.rs
 
+# Phase 4 (present now): instant facets (P4.6, §6.5) — the pure type-aware facet SQL builder, the
+# FacetState result-parse machine, and the pure format_facets line builder + histogram bar-width
+# math. A wrong SQL shape, a mis-parsed result, or wrong bar arithmetic silently corrupts the facet
+# popup, and all three are data-in/data-out, so they earn the hard floor. The thin render_facet blit
+# shares facet_render.rs but is fully exercised by the TestBackend snapshot + zero-area tests, so it
+# doesn't erode the floor (same seam treatment as the other *_render blits).
+src/facets/facet_query.rs
+src/facets/facet_state.rs
+src/facets/facet_render.rs
+
 # csv_config.rs (the minimal [csv] TOML loader) is a thin serde-parse-to-default seam — its real
 # behavior is covered by csv_config_tests, but the floor lives on the pure transform modules
 # above (judgment per the brief; the full config schema is Phase 5 / Q5).

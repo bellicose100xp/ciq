@@ -85,6 +85,32 @@ typed columns including a reserved-word column if you can, e.g. `order`):
    cursor-row reverse-video highlight, the checked-checkbox accent, and the dimmed type-badge column
    are all legible in both (the §4.7 polarity check).
 
+## Phase 4 — instant facets (P4.6)
+
+The headless suite proves the type-aware facet SQL (`build_facet_sql` goldens per column type), the
+result parse (`FacetState`), the histogram bar-width math, the `format_facets` lines, the popup's
+*logical* cells (80x24 `TestBackend` snapshot), and the full worker round-trip (the App dispatches
+the facet on the same channel, routes the response to the popup not the grid, on a real engine over
+a fixture). It does NOT prove the drawn popup glyphs, the bar color, on-screen placement, or the
+real `f`/`Esc` chords as the terminal delivers them. Confirm by hand (open a CSV with a
+low-cardinality text column like `region` and a numeric/date column like `amount`/`created_at`):
+
+1. **Open a facet.** Run a query so the grid has rows, press `Down` to focus the results pane, then
+   press `f`. A bordered "facet: <column> (<badge>)" popup appears under the query bar for the
+   leftmost visible column. Confirm it briefly shows "computing…" then fills (the worker round-trip).
+2. **Numeric/date summary.** With the focused column numeric or a date, confirm the popup shows
+   `min` / `max` / `distinct` / `nulls` lines, the values legible and the labels dimmed.
+3. **Text histogram.** Scroll the grid (`Right`) so a low-cardinality text column (e.g. `region`) is
+   leftmost, press `f`. Confirm the popup shows `distinct` / `nulls` then a `value  count |####` bar
+   per top value, the bars proportional (the most-frequent value has the longest bar) and the order
+   stable (highest count first).
+4. **Esc closes, does not quit.** Press `Esc` — the popup closes and the app stays running. (Esc
+   only quits when no popup is open.) Any other key (e.g. an arrow) also dismisses it and resumes
+   grid navigation.
+5. **Color polarity.** Repeat 2-3 in a light and a dark terminal. Confirm the popup border, the
+   accented stat values, the histogram bar color, and the dimmed labels are all legible in both (the
+   §4.7 polarity check).
+
 ## Phase 4 — output modes / OSC 52 clipboard (P4.8)
 
 The headless suite proves the emitted bytes of every format (`render_output` goldens) AND the full

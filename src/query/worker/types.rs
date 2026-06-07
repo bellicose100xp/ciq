@@ -33,6 +33,11 @@ pub enum RequestKind {
     /// A distinct-values fetch for value-completion; carries the column the values are for, so the
     /// response fills the cache under that key.
     Value { column: String },
+    /// An instant-facet aggregate (P4.6, §6.5) for the focused grid column. Like `Value`, it rides
+    /// the same channel/engine as the main query but its response routes to the
+    /// [`FacetState`](crate::facets::FacetState) popup (not the grid); the column it is for keys the
+    /// route so a stale facet for a *different* column is ignored.
+    Facet { column: String },
 }
 
 /// A request to run one SQL query, stamped with a monotonic `request_id` for stale-discard.
@@ -66,6 +71,17 @@ impl QueryRequest {
             query: query.into(),
             request_id,
             kind: RequestKind::Value {
+                column: column.into(),
+            },
+        }
+    }
+
+    /// A facet aggregate for `column` (P4.6) — same channel/engine, routed to the facet popup.
+    pub fn facet(query: impl Into<String>, request_id: u64, column: impl Into<String>) -> Self {
+        Self {
+            query: query.into(),
+            request_id,
+            kind: RequestKind::Facet {
                 column: column.into(),
             },
         }
