@@ -38,6 +38,22 @@ pub mod app {
             .fg(Color::Yellow)
             .add_modifier(Modifier::DIM)
     }
+
+    /// The large-result truncation banner ("showing first N rows…") pinned at the top of the
+    /// results pane when the grid is ciq-capped (P5.3). Accented so the cap reads at a glance, but
+    /// not error-styled (truncation is normal, not a failure).
+    pub fn truncation_banner() -> Style {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// The empty-state notice shown in the results pane when there is no grid — the "type a query"
+    /// hint or the "no rows match" result. Quiet, like the normal status, so it reads as a prompt
+    /// not an alert.
+    pub fn empty_state() -> Style {
+        Style::default().fg(Color::DarkGray)
+    }
 }
 
 /// Autocomplete popup colors and styles (`dev/PLAN.md` §5.1/§5.6).

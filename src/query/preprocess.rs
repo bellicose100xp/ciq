@@ -95,6 +95,21 @@ pub fn prepare_interactive(input: &str, limit: usize) -> Result<String, Preproce
     }
 }
 
+/// Whether [`prepare_interactive`] would apply ciq's viewport LIMIT wrap to `input` — i.e. the
+/// input is a runnable read-only query with **no top-level `LIMIT`** of its own, so the displayed
+/// result is capped by ciq (and a truncation banner is warranted when the row count hits the cap).
+///
+/// Returns `false` for rejected input (empty, multi-statement, non-read-only) and for a query that
+/// supplied its own `LIMIT` (its row count is the user's intent, not a ciq cap). Pure; shares the
+/// same lexer scan as `prepare_interactive`, so the two can never disagree about what counts as a
+/// top-level `LIMIT`.
+pub fn applies_viewport_limit(input: &str) -> bool {
+    prepare_interactive(input, usize::MAX).is_ok() && {
+        let tokens = tokenize(input);
+        !has_top_level_limit(input, &tokens)
+    }
+}
+
 /// The source SQL with comments preserved but any trailing top-level `;` (and everything that
 /// would be only whitespace after it) removed. We rebuild from the original byte span so the
 /// engine sees the user's exact text (formatting, comments) minus the statement terminator.

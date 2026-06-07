@@ -315,6 +315,37 @@ fn error_messages_are_stable_ascii() {
     }
 }
 
+// --- applies_viewport_limit (the truncation-banner signal) ---
+
+#[test]
+fn viewport_limit_applies_to_bare_select() {
+    use crate::query::preprocess::applies_viewport_limit;
+    assert!(applies_viewport_limit("SELECT * FROM t"));
+    assert!(applies_viewport_limit("SELECT a, b FROM t WHERE x = 1"));
+    assert!(applies_viewport_limit("SELECT * FROM t ORDER BY a DESC"));
+}
+
+#[test]
+fn viewport_limit_not_applied_when_user_limited() {
+    use crate::query::preprocess::applies_viewport_limit;
+    assert!(!applies_viewport_limit("SELECT * FROM t LIMIT 5"));
+    assert!(!applies_viewport_limit(
+        "SELECT * FROM t ORDER BY a DESC LIMIT 20"
+    ));
+    // A nested LIMIT in a subquery is NOT a top-level LIMIT — the outer result is still ciq-capped.
+    assert!(applies_viewport_limit(
+        "SELECT * FROM (SELECT * FROM t LIMIT 3) s"
+    ));
+}
+
+#[test]
+fn viewport_limit_not_applied_to_rejected_input() {
+    use crate::query::preprocess::applies_viewport_limit;
+    assert!(!applies_viewport_limit("")); // empty
+    assert!(!applies_viewport_limit("DROP TABLE t")); // not read-only
+    assert!(!applies_viewport_limit("SELECT 1; SELECT 2")); // multi-statement
+}
+
 proptest::proptest! {
     /// Total-function guarantee: `prepare_interactive` returns (never panics) for ANY input,
     /// including multi-byte UTF-8 and unbalanced quotes/parens/comments. The byte scanner must

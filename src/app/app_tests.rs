@@ -774,3 +774,5 @@ mod facet_tests;
 mod history_tests;
 #[path = "app_tests/palette_tests.rs"]
 mod palette_tests;
+#[path = "app_tests/polish_tests.rs"]
+mod polish_tests;

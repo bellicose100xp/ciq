@@ -214,33 +214,53 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
         AppPhase::Ready | AppPhase::Querying => {}
     }
 
-    match app.result() {
-        Some(result) => {
-            // The schema bar pins the top inner row (above the grid's sticky header). The grid
-            // gets the rows below it, so its body viewport shrinks by exactly this one row — the
-            // height math is just the reduced `grid_area.height` handed to `render_grid`.
-            let (bar_area, grid_area) = split_off_schema_bar(inner);
-
-            // Re-lay-out from the retained rows against the grid's (post-bar) viewport so a resize
-            // reflows without re-querying (§3.1). Column-granular h-scroll from the App's offset.
-            let view = GridView {
-                width: grid_area.width,
-                height: grid_area.height,
-                h_col_offset: app.h_col_offset(),
-                v_row_offset: app.v_row_offset(),
-            };
-            let grid = layout_grid(&result.rows, &view);
-            render_schema_bar(app, frame, bar_area, &grid);
-            grid_render::render_grid(frame, grid_area, &grid, app.v_row_offset());
-        }
-        None => {
-            let hint = Paragraph::new(Span::styled(
-                "type a SQL query above (e.g. SELECT * FROM t)",
-                theme::app::status(),
-            ));
-            frame.render_widget(hint, inner);
-        }
+    // An empty result (zero rows) or no result yet shows the empty-state line, never the grid.
+    if let Some(message) = app.empty_state() {
+        let p = Paragraph::new(Span::styled(message, theme::app::empty_state()));
+        frame.render_widget(p, inner);
+        return;
     }
+
+    if let Some(result) = app.result() {
+        // The truncation banner (when the grid is ciq-capped) pins the top inner row; the schema
+        // bar pins the next row (above the grid's sticky header). Each reserved row shrinks the
+        // grid's viewport by exactly that one row.
+        let banner = app.truncation_banner();
+        let (banner_area, below_banner) = split_off_banner(inner, banner.as_deref());
+        if let (Some(area), Some(text)) = (banner_area, banner) {
+            let p = Paragraph::new(Span::styled(text, theme::app::truncation_banner()));
+            frame.render_widget(p, area);
+        }
+        let (bar_area, grid_area) = split_off_schema_bar(below_banner);
+
+        // Re-lay-out from the retained rows against the grid's (post-bar) viewport so a resize
+        // reflows without re-querying (§3.1). Column-granular h-scroll from the App's offset.
+        let view = GridView {
+            width: grid_area.width,
+            height: grid_area.height,
+            h_col_offset: app.h_col_offset(),
+            v_row_offset: app.v_row_offset(),
+        };
+        let grid = layout_grid(&result.rows, &view);
+        render_schema_bar(app, frame, bar_area, &grid);
+        grid_render::render_grid(frame, grid_area, &grid, app.v_row_offset());
+    }
+}
+
+/// Reserve the top inner row for the truncation banner when one is present and there is room for
+/// both it and at least one grid row. Returns `(banner_area, remaining_area)`; the banner area is
+/// `None` when there is no banner or the pane is too short to spare a row.
+fn split_off_banner(inner: Rect, banner: Option<&str>) -> (Option<Rect>, Rect) {
+    if banner.is_none() || inner.height <= 1 {
+        return (None, inner);
+    }
+    let banner_area = Rect { height: 1, ..inner };
+    let rest = Rect {
+        y: inner.y.saturating_add(1),
+        height: inner.height.saturating_sub(1),
+        ..inner
+    };
+    (Some(banner_area), rest)
 }
 
 /// Split the results pane inner area into the one-row schema bar (top) and the grid area (the

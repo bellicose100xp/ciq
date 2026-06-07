@@ -27,6 +27,16 @@ src/grid/grid_layout.rs
 src/grid/col_width.rs
 src/app/editor.rs
 
+# Phase 2/5 (present now): DuckDB-error -> friendly-message mapping + the P5.3 did-you-mean (a
+# bounded edit-distance over the schema headers). Pure `&str -> String`, one golden row per known
+# error category — every branch is a real mapping case, so it earns the hard floor.
+src/query/error_enhance.rs
+
+# Phase 5 (present now): polish (P5.3) — the pure empty-state message picker and the truncation
+# banner formatter ("showing first N rows" when the grid is ciq-capped). Both data-in/data-out
+# (the App's row-count + cap flag in, a string out), so they earn the hard floor.
+src/app/polish.rs
+
 # Phase 3 (present now): the shared SQL lexer (D6) — neutral top-level module both `query` and
 # `autocomplete` consume; pure, total `tokenize(&str) -> Vec<Token>`.
 src/sql_lexer.rs

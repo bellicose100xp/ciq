@@ -150,6 +150,63 @@ fn schema_bar_and_summary_render_above_grid() {
 }
 
 #[test]
+fn zero_row_result_renders_no_rows_match() {
+    let mut a = app();
+    a.on_loaded("ready");
+    for c in "SELECT * FROM t WHERE id < 0".chars() {
+        a.on_key(KeyEvent::char(c), 0);
+    }
+    a.tick(150);
+    let id = a.latest_request_id();
+    // An empty result table (zero rows) — a genuine empty *result*.
+    let table = Table::new(vec![Column::new("id", ColumnType::Int, vec![])]);
+    let s = table.schema();
+    a.on_response(QueryResponse::ProcessedSuccess {
+        result: ProcessedResult::new(table, s, 0),
+        request_id: id,
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+    let screen = render(&a, 50, 8);
+    assert!(
+        screen.contains("no rows match"),
+        "zero-row empty-state, screen:\n{screen}"
+    );
+}
+
+#[test]
+fn capped_result_renders_truncation_banner() {
+    use crate::app::VIEWPORT_ROW_LIMIT;
+    // Keep the worker receiver alive so the dispatch succeeds and the ciq-capped flag is recorded
+    // (the banner is gated on a *successful* dispatch having applied ciq's viewport LIMIT — a
+    // dropped receiver fails the send and never records the flag).
+    let (tx, _rx) = std::sync::mpsc::channel();
+    let mut a = App::new(tx, InterruptHandle::noop());
+    a.on_loaded("ready");
+    for c in "SELECT * FROM t".chars() {
+        a.on_key(KeyEvent::char(c), 0);
+    }
+    a.on_key(KeyEvent::plain(Key::Esc), 0); // dismiss the autocomplete popup
+    a.tick(150);
+    let id = a.latest_request_id();
+    // A result at the viewport cap — the grid is ciq-truncated.
+    let cells: Vec<Cell> = (0..VIEWPORT_ROW_LIMIT as i64).map(Cell::Int).collect();
+    let table = Table::new(vec![Column::new("id", ColumnType::Int, cells)]);
+    let s = table.schema();
+    a.on_response(QueryResponse::ProcessedSuccess {
+        result: ProcessedResult::new(table, s, 0),
+        request_id: id,
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+    let screen = render(&a, 60, 12);
+    assert!(
+        screen.contains("showing first 1000 rows"),
+        "truncation banner, screen:\n{screen}"
+    );
+    // The grid still renders its header below the banner.
+    assert!(screen.contains("id"), "grid header, screen:\n{screen}");
+}
+
+#[test]
 fn load_error_phase_renders_error_text() {
     let mut a = app();
     a.on_load_error("permission denied");

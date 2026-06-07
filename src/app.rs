@@ -44,8 +44,8 @@ use crate::palette::PaletteState;
 use crate::palette::query_emit::emit as emit_palette;
 use crate::query::debouncer::Debouncer;
 use crate::query::dispatcher::Dispatcher;
-use crate::query::error_enhance::enhance;
-use crate::query::preprocess::{PreprocessError, prepare_interactive};
+use crate::query::error_enhance::{enhance, enhance_with_schema};
+use crate::query::preprocess::{PreprocessError, applies_viewport_limit, prepare_interactive};
 use crate::query::worker::types::{ProcessedResult, QueryRequest, QueryResponse, RequestKind};
 use crate::schema::Schema;
 use crate::sql_lexer::tokenize;
@@ -57,6 +57,7 @@ pub mod app_render;
 pub mod editor;
 pub mod event_loop;
 pub mod key;
+pub mod polish;
 
 pub use editor::Editor;
 pub use key::{Key, KeyEvent, KeyMods};
@@ -118,6 +119,14 @@ pub struct App {
     dispatcher: Dispatcher,
     /// The latest accepted successful result, if any (None until the first query lands).
     result: Option<ProcessedResult>,
+    /// Whether the most recently *dispatched* query had ciq's viewport `LIMIT` wrap applied (the
+    /// user supplied no `LIMIT` of their own). When the landed result's row count reaches that cap,
+    /// the grid is truncated and a banner is shown (P5.3). Recomputed on each dispatch; carried to
+    /// the response so a stale value never mislabels a result.
+    last_query_ciq_capped: bool,
+    /// Whether the *displayed* result was ciq-capped (the accepted response's query was wrapped).
+    /// Drives the truncation banner together with the result's row count.
+    result_ciq_capped: bool,
     /// Vertical row scroll offset into the result body.
     v_row_offset: usize,
     /// Horizontal column scroll offset (column-granular).
@@ -193,6 +202,8 @@ impl App {
             debouncer: Debouncer::new(),
             dispatcher: Dispatcher::new(request_tx, interrupt),
             result: None,
+            last_query_ciq_capped: false,
+            result_ciq_capped: false,
             v_row_offset: 0,
             h_col_offset: 0,
             status: "loading CSV…".to_string(),
@@ -324,6 +335,32 @@ impl App {
     /// and whether the first row is a header.
     pub fn csv_summary(&self) -> (Option<char>, bool) {
         self.csv_summary
+    }
+
+    /// The large-result truncation banner (P5.3), or `None` when the grid isn't ciq-capped. Shown
+    /// when ciq wrapped the query in its viewport `LIMIT` and the displayed row count reached the
+    /// cap — derived from state, no extra COUNT query (see [`polish::truncation_banner`]).
+    pub fn truncation_banner(&self) -> Option<String> {
+        let rows = self.result.as_ref()?.rows.row_count();
+        polish::truncation_banner(rows, VIEWPORT_ROW_LIMIT, self.result_ciq_capped)
+    }
+
+    /// The empty-state message for the results pane when there is no grid to draw (P5.3):
+    /// `Loading` while parsing, `ZeroRows` when a query matched nothing, `NoQueryYet` before the
+    /// first query. `None` when a populated result exists (the grid draws instead).
+    pub fn empty_state(&self) -> Option<&'static str> {
+        if matches!(self.phase, AppPhase::Loading) {
+            return Some(polish::empty_state(polish::EmptyKind::Loading));
+        }
+        match self.result.as_ref() {
+            Some(result) if result.rows.row_count() == 0 => {
+                Some(polish::empty_state(polish::EmptyKind::ZeroRows))
+            }
+            Some(_) => None, // a populated grid is drawn, not an empty-state message
+            // No result yet: the initial "type a query" hint. (A query that errored leaves the
+            // error in the status line and no grid; the neutral hint is the right pane content.)
+            None => Some(polish::empty_state(polish::EmptyKind::NoQueryYet)),
+        }
     }
 
     // --- event routing (headless: synthetic KeyEvents) ---
@@ -702,7 +739,10 @@ impl App {
     fn dispatch_current(&mut self) -> bool {
         let raw = self.editor.text().trim().to_string();
         if raw.is_empty() {
+            // Clearing the bar returns to the pre-first-query empty state (the "type a query" hint),
+            // not a zero-row *result* — reset the run flag so the empty-state picks the right line.
             self.result = None;
+            self.result_ciq_capped = false;
             self.v_row_offset = 0;
             self.h_col_offset = 0;
             self.status = "ready".to_string();
@@ -712,6 +752,10 @@ impl App {
         match prepare_interactive(&raw, VIEWPORT_ROW_LIMIT) {
             Ok(sql) => match self.dispatcher.dispatch(sql) {
                 Ok(_id) => {
+                    // Remember whether ciq wrapped this query in its viewport LIMIT (the user
+                    // supplied none), so a result hitting the cap can show a truncation banner
+                    // (P5.3) — derived from the raw query, no extra COUNT query.
+                    self.last_query_ciq_capped = applies_viewport_limit(&raw);
                     // Record the raw user query (not the LIMIT-wrapped SQL) in history — this is
                     // the felt "I ran this" moment, and only a query that passed the read-only
                     // single-statement guard reaches here (§7.6).
@@ -816,12 +860,18 @@ impl App {
                 let rows = result.rows.row_count();
                 self.status = format!("{rows} row{}", if rows == 1 { "" } else { "s" });
                 self.result = Some(result);
+                self.result_ciq_capped = self.last_query_ciq_capped;
                 self.v_row_offset = 0;
                 self.phase = AppPhase::Ready;
                 true
             }
             QueryResponse::Error { message, .. } => {
-                self.status = enhance(&message);
+                // Enhance against the loaded schema when present — an unknown column gets a local
+                // "did you mean?" suggestion (P5.3); no schema falls back to the plain mapping.
+                self.status = match self.schema.as_ref() {
+                    Some(schema) => enhance_with_schema(&message, schema),
+                    None => enhance(&message),
+                };
                 self.phase = AppPhase::Ready;
                 true
             }
