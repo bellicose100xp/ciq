@@ -124,7 +124,12 @@ fn is_semicolon(input: &str, t: &Token) -> bool {
 }
 
 /// Whether a token is "word-shaped" — an unquoted keyword or identifier. The leading-keyword
-/// check keys off the first such token (so a leading `(` or comment can't hide the SELECT/WITH).
+/// check keys off the first such token, stepping over any leading `Number`/`Operator`/`Punct`
+/// (e.g. a `(` for a parenthesized SELECT, or a stray leading `5`) so they can't hide the
+/// SELECT/WITH. Stepping over a leading non-word never weakens the read-only guard: the first
+/// real word is still required to be SELECT/WITH, so `5 INSERT INTO t` still exposes `INSERT` as
+/// the lead and is rejected, and the only newly-reachable shape (`<number> SELECT ...`) is invalid
+/// SQL that DuckDB rejects syntactically and cannot mutate the resident table.
 fn is_word(t: &Token) -> bool {
     matches!(t.kind, TokenKind::Keyword | TokenKind::Ident)
 }

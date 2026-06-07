@@ -236,6 +236,46 @@ fn stray_open_paren_does_not_smuggle_second_statement() {
     );
 }
 
+// ── lexer-refactor regression: a digit-leading lead token is stepped over ───────────────────
+// After the D6 lexer split (digit-leading words now lex as `Number`, not `Ident`), the
+// leading-word scan steps over a leading `Number`/`Operator`/`Punct` to find the first real word.
+// These cases pin the resulting outcomes so the behavior is not silently changed again, and prove
+// the guard stays closed: a leading number never lets a mutation or a second statement through.
+
+#[test]
+fn bare_number_is_rejected_as_empty() {
+    // A bare `5` lexes as a `Number` (not a word), so the leading-word scan finds no SELECT/WITH
+    // lead at all -> `Empty`. (Pre-D6 a digit-leading token lexed as a Word and this reported
+    // `NotReadOnly`; either rejection arm is correct — both refuse to run it. We pin the current
+    // arm so the change is no longer silent.)
+    assert_eq!(prepare_interactive("5", N), Err(PreprocessError::Empty));
+}
+
+#[test]
+fn leading_number_then_select_is_accepted_but_invalid_sql() {
+    // `5 SELECT 1` steps over the leading `5`, finds SELECT as the lead, so the grammar guard
+    // accepts and wraps it. The wrapped text is syntactically invalid SQL that DuckDB rejects (a
+    // parse error, never a mutation of the resident table) — the guard is not weakened.
+    assert_eq!(
+        prepare_interactive("5 SELECT 1", N).unwrap(),
+        wrapped("5 SELECT 1")
+    );
+}
+
+#[test]
+fn leading_number_then_dml_is_still_rejected() {
+    // The skipped leading `5` exposes the DML word as the lead, which still fails the SELECT/WITH
+    // test — a leading number can never smuggle a mutation past the read-only guard.
+    assert_eq!(
+        prepare_interactive("5 INSERT INTO t VALUES (1)", N),
+        Err(PreprocessError::NotReadOnly)
+    );
+    assert_eq!(
+        prepare_interactive("5 DROP TABLE t", N),
+        Err(PreprocessError::NotReadOnly)
+    );
+}
+
 #[test]
 fn never_panics_on_adversarial_input() {
     for q in [
