@@ -104,6 +104,14 @@ src/config/ai_config.rs
 src/config/history_config.rs
 src/config/theme_config.rs
 
+# Phase 5 (present now): query history (P5.2) — the pure ring state machine (add/dedupe-to-newest-
+# first/recall/popup-navigate/inline-cycle/fuzzy-filter over an in-memory Vec). A wrong dedupe, a
+# wrong navigation clamp, or a wrong filter silently corrupts recall, and all are data-in/data-out,
+# so it earns the hard floor. The on-disk `storage.rs` (the only I/O) is a tempdir-tested seam, the
+# pure `history_events.rs` key->action map is covered by its tests, and `history_render.rs` is a
+# TestBackend blit (same seam treatment as the other *_render blits) — all left off the floor.
+src/history/history_state.rs
+
 # config.rs itself (the top-level loader) is a thin serde-parse-to-default + filesystem/env seam
 # (load_config / config_path read $HOME) — its pure half (load_config_str) is covered by
 # config_tests, but the floor lives on the pure section modules above (same judgment as csv_config).

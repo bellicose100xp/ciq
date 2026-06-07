@@ -115,6 +115,18 @@ pub fn run(path: PathBuf, opts: CsvOpts) -> std::io::Result<()> {
     });
 
     let mut app = App::new(request_tx, InterruptHandle::noop());
+
+    // Wire query history from the `[history]` config section (P5.2). Loads + seeds the on-disk
+    // ring up front so prior queries are recallable immediately. The config read is the shell
+    // edge's filesystem touch (like the engine load); the App-level history behavior is headless.
+    let cfg = crate::config::load_config().config;
+    let hist = cfg.history();
+    let history_path = hist
+        .path()
+        .map(std::path::PathBuf::from)
+        .or_else(crate::history::storage::default_history_path);
+    app.configure_history(history_path, hist.max_entries(), hist.enabled());
+
     // The session's time origin. The one ambient clock read at this layer (the documented seam,
     // see module docs); everything downstream takes elapsed `u64` ms and stays deterministic.
     #[allow(clippy::disallowed_methods)]

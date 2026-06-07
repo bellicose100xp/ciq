@@ -192,6 +192,39 @@ pub mod facets {
     }
 }
 
+/// Query-history popup colors and styles (`dev/PLAN.md` §7.6).
+///
+/// The history popup overlays the query bar: a bordered, fuzzy-filterable list of prior SQL
+/// queries (newest first), the cursor row reverse-video, with a search needle in the title. It
+/// reuses the autocomplete/palette popup chrome, so the styles mirror [`palette`]. Color polarity
+/// (legibility light vs dark) is the §4.7 human-validated concern — centralizing here keeps it a
+/// single-file change.
+pub mod history {
+    use ratatui::style::{Color, Modifier, Style};
+
+    /// The popup border / frame.
+    pub fn border() -> Style {
+        Style::default().fg(Color::DarkGray)
+    }
+
+    /// A normal (unselected) history row's text.
+    pub fn item() -> Style {
+        Style::default()
+    }
+
+    /// The row under the cursor — reverse video so it stands out regardless of terminal theme.
+    pub fn selected() -> Style {
+        Style::default().add_modifier(Modifier::REVERSED)
+    }
+
+    /// The "(no matches)" line and the popup title / footer hint — dimmed context.
+    pub fn hint() -> Style {
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM)
+    }
+}
+
 /// Grid (results table) colors and styles.
 pub mod grid {
     use ratatui::style::{Color, Modifier, Style};

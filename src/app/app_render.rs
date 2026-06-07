@@ -19,6 +19,8 @@ use crate::app::{App, AppPhase};
 use crate::autocomplete::autocomplete_render::{MAX_VISIBLE_ROWS, render_popup};
 use crate::facets::facet_render::render_facet;
 use crate::grid::{GridFrame, GridView, grid_render, layout_grid};
+use crate::history::history_render::render_history;
+use crate::history::history_state::MAX_VISIBLE_HISTORY;
 use crate::palette::palette_render::{MAX_VISIBLE_ROWS as PALETTE_MAX_ROWS, render_palette};
 use crate::schema_bar;
 use crate::theme;
@@ -51,6 +53,28 @@ pub fn render(app: &App, frame: &mut Frame) {
     render_palette_popup(app, frame, chunks[0], chunks[1]);
     // The facet popup overlays the results pane when open. Drawn last so it sits on top.
     render_facet_popup(app, frame, chunks[0], chunks[1]);
+    // The history popup overlays the results pane when open (mutually exclusive with the palette /
+    // autocomplete popup — opening it closes them). Drawn last so it sits on top.
+    render_history_popup(app, frame, chunks[0], chunks[1]);
+}
+
+/// Overlay the history popup below the query bar, over the results pane, when open (P5.2). Sized to
+/// the filtered entry count (capped by the visible-row window and the available height) and to a
+/// readable fraction of the width. No-op when the popup is closed.
+fn render_history_popup(app: &App, frame: &mut Frame, bar: Rect, results: Rect) {
+    if !app.is_history_open() {
+        return;
+    }
+    let rows = (app.history().filtered_count().max(1) as u16).min(MAX_VISIBLE_HISTORY as u16);
+    let height = (rows + 2).min(results.height.max(1)); // +2 for the popup border
+    let width = popup_width(results.width);
+    let area = Rect {
+        x: bar.x,
+        y: bar.y.saturating_add(1),
+        width,
+        height,
+    };
+    render_history(app.history(), frame, area);
 }
 
 /// Overlay the facet popup below the query bar, over the results pane, when one is open (P4.6).

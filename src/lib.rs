@@ -26,6 +26,7 @@ pub mod engine;
 pub mod error;
 pub mod facets;
 pub mod grid;
+pub mod history;
 pub mod ingest;
 pub mod logging;
 pub mod output;

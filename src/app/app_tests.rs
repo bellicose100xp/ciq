@@ -768,5 +768,7 @@ fn cancelled_main_lane_response_still_clears_in_flight() {
 // so child modules would otherwise resolve against `src/app/`, not `src/app/app_tests/`.
 #[path = "app_tests/facet_tests.rs"]
 mod facet_tests;
+#[path = "app_tests/history_tests.rs"]
+mod history_tests;
 #[path = "app_tests/palette_tests.rs"]
 mod palette_tests;

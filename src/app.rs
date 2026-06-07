@@ -38,6 +38,8 @@ use crate::autocomplete::value_source::{ValueCache, build_distinct_sql_default};
 use crate::engine::InterruptHandle;
 use crate::facets::FacetState;
 use crate::facets::facet_query::build_facet_sql;
+use crate::history::history_events::{HistoryAction, map_key as map_history_key};
+use crate::history::{HistoryState, storage as history_storage};
 use crate::palette::PaletteState;
 use crate::palette::query_emit::emit as emit_palette;
 use crate::query::debouncer::Debouncer;
@@ -48,6 +50,7 @@ use crate::query::worker::types::{ProcessedResult, QueryRequest, QueryResponse, 
 use crate::schema::Schema;
 use crate::sql_lexer::tokenize;
 
+use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
 pub mod app_render;
@@ -146,6 +149,21 @@ pub struct App {
     /// column; the SQL rides the same worker channel and the response routes here (not the grid) by
     /// [`RequestKind::Facet`].
     facet: Option<FacetState>,
+    /// The query-history ring (P5.2, §7.6): prior SQL queries, newest first. Recorded on each
+    /// successful dispatch; recalled through the popup. In-memory always; persisted to disk when
+    /// [`history_path`](Self::history_path) is set + [`history_persist`](Self::history_persist).
+    history: HistoryState,
+    /// Whether the history popup is currently open (intercepts keys like the palette popup).
+    history_open: bool,
+    /// The on-disk history file path (from `[history] path`, or the XDG default). `None` = no
+    /// persistence wired (the in-memory ring still works). Tests always pass a tempdir path here,
+    /// never `$HOME`.
+    history_path: Option<PathBuf>,
+    /// The history entry cap (from `[history] max_entries`); bounds the on-disk file.
+    history_max: usize,
+    /// Whether on-disk history persistence is enabled (`[history] enabled`). When false, the ring
+    /// is session-only.
+    history_persist: bool,
 }
 
 impl App {
@@ -170,6 +188,11 @@ impl App {
             palette: None,
             palette_open: false,
             facet: None,
+            history: HistoryState::new(),
+            history_open: false,
+            history_path: None,
+            history_max: crate::config::history_config::DEFAULT_MAX_ENTRIES,
+            history_persist: false,
         }
     }
 
@@ -233,6 +256,31 @@ impl App {
         self.facet.is_some()
     }
 
+    /// The query-history ring (for the render layer and tests).
+    pub fn history(&self) -> &HistoryState {
+        &self.history
+    }
+
+    /// Whether the history popup is currently open.
+    pub fn is_history_open(&self) -> bool {
+        self.history_open
+    }
+
+    /// Configure history persistence (P5.2): the on-disk file path, the entry cap, and whether to
+    /// persist at all (from the `[history]` config section). Seeds the in-memory ring from the file
+    /// when persistence is enabled and a path is set. The event loop calls this once at startup
+    /// with the resolved config; tests pass a tempdir path so the suite never touches `$HOME`.
+    pub fn configure_history(&mut self, path: Option<PathBuf>, max_entries: usize, persist: bool) {
+        self.history_max = max_entries.max(1);
+        self.history_persist = persist;
+        self.history_path = path;
+        if self.history_persist
+            && let Some(p) = self.history_path.as_ref()
+        {
+            self.history = HistoryState::with_entries(history_storage::load(p));
+        }
+    }
+
     /// The loaded schema, if the engine has reached `Ready`.
     pub fn schema(&self) -> Option<&Schema> {
         self.schema.as_ref()
@@ -262,6 +310,9 @@ impl App {
     /// so Esc dismisses the popup rather than quitting (it only quits when no popup is open).
     /// `Ctrl+K` opens the palette from anywhere.
     pub fn on_key(&mut self, ev: KeyEvent, now_ms: u64) -> bool {
+        if self.history_open {
+            return self.handle_history_key(&ev, now_ms);
+        }
         if self.palette_open {
             return self.handle_palette_key(&ev, now_ms);
         }
@@ -279,6 +330,13 @@ impl App {
         // quit routing so the chord is reachable from any non-palette state.
         if ev.mods.ctrl && matches!(ev.key, Key::Char('k') | Key::Char('K')) {
             self.open_palette();
+            return false;
+        }
+        // Ctrl+R opens the query-history popup (the recall chord, §7.6). Reachable from any
+        // non-popup state, like Ctrl+K. Seeds the needle with the current bar text so the list
+        // pre-filters to similar prior queries.
+        if ev.mods.ctrl && matches!(ev.key, Key::Char('r') | Key::Char('R')) {
+            self.open_history();
             return false;
         }
         if self.autocomplete.is_open() && self.handle_popup_key(&ev, now_ms) {
@@ -603,7 +661,7 @@ impl App {
     /// Preprocess + dispatch the current query text. Empty input clears the result; a rejected
     /// grammar sets a status-line error and issues no engine call.
     fn dispatch_current(&mut self) -> bool {
-        let raw = self.editor.text().trim();
+        let raw = self.editor.text().trim().to_string();
         if raw.is_empty() {
             self.result = None;
             self.v_row_offset = 0;
@@ -612,9 +670,13 @@ impl App {
             self.phase = AppPhase::Ready;
             return false;
         }
-        match prepare_interactive(raw, VIEWPORT_ROW_LIMIT) {
+        match prepare_interactive(&raw, VIEWPORT_ROW_LIMIT) {
             Ok(sql) => match self.dispatcher.dispatch(sql) {
                 Ok(_id) => {
+                    // Record the raw user query (not the LIMIT-wrapped SQL) in history — this is
+                    // the felt "I ran this" moment, and only a query that passed the read-only
+                    // single-statement guard reaches here (§7.6).
+                    self.record_history(&raw);
                     self.phase = AppPhase::Querying;
                     self.status = "running…".to_string();
                     true
@@ -807,6 +869,79 @@ impl App {
         self.refresh_autocomplete();
         self.schedule(now_ms);
         Some(sql)
+    }
+
+    // --- query history (P5.2, §7.6) ---
+
+    /// Open the history popup (P5.2). No-op while loading / on a load error. Seeds the fuzzy needle
+    /// with the current bar text so the list pre-filters to similar prior queries (jiq's behavior).
+    /// Closes the other popups so overlays never stack.
+    fn open_history(&mut self) {
+        if matches!(self.phase, AppPhase::Loading | AppPhase::LoadError(_)) {
+            return;
+        }
+        self.autocomplete.close();
+        self.palette_open = false;
+        let seed = self.editor.text().to_string();
+        self.history.open(Some(&seed));
+        self.history_open = true;
+    }
+
+    /// Close the history popup without recalling.
+    fn close_history(&mut self) {
+        self.history.close();
+        self.history_open = false;
+    }
+
+    /// Handle a key while the history popup is open (P5.2). Returns whether the app should quit
+    /// (only `Ctrl+C` quits). The chord set is the pure [`map_history_key`] mapping:
+    ///  - `Up`/`Down` move the cursor through the filtered list;
+    ///  - a printable char appends to the fuzzy needle; `Backspace` pops it;
+    ///  - `Enter`/`Tab` recall the selected entry into the bar (-> the normal dispatch path) and
+    ///    close;
+    ///  - `Esc` closes without recalling.
+    fn handle_history_key(&mut self, ev: &KeyEvent, now_ms: u64) -> bool {
+        match map_history_key(ev) {
+            HistoryAction::Quit => return true,
+            HistoryAction::SelectNext => self.history.select_next(),
+            HistoryAction::SelectPrevious => self.history.select_previous(),
+            HistoryAction::Push(c) => self.history.push_needle(c),
+            HistoryAction::Pop => self.history.pop_needle(),
+            HistoryAction::Accept => self.recall_selected_history(now_ms),
+            HistoryAction::Close => self.close_history(),
+            HistoryAction::Ignore => {}
+        }
+        false
+    }
+
+    /// Recall the selected history entry into the query bar and close the popup. The recalled SQL
+    /// is dropped into the bar verbatim and scheduled through the **same** debounce + preprocess-
+    /// validate + dispatch path a typed query uses (§7.6) — so it goes through the read-only
+    /// single-statement guard like any other query, never a privileged path. No-op (just closes)
+    /// when nothing is selected.
+    fn recall_selected_history(&mut self, now_ms: u64) {
+        let recalled = self.history.selected_entry().map(str::to_string);
+        if let Some(sql) = recalled {
+            self.editor.set_text(&sql);
+            self.refresh_autocomplete();
+            self.schedule(now_ms);
+        }
+        self.close_history();
+    }
+
+    /// Record `query` in the history ring (in-memory, newest-first, deduped) and persist it to disk
+    /// when enabled. Called when a query is successfully dispatched (the felt "I ran this" moment),
+    /// so only real, accepted queries enter history. A blank query is ignored by the ring.
+    fn record_history(&mut self, query: &str) {
+        if !self.history.add(query) {
+            return; // blank or already-newest: nothing to persist either
+        }
+        if self.history_persist
+            && let Some(path) = self.history_path.as_ref()
+            && let Err(e) = history_storage::add(path, query, self.history_max)
+        {
+            log::warn!("failed to persist history entry: {e}");
+        }
     }
 
     // --- load state machine (P2.11) ---

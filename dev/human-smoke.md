@@ -126,3 +126,27 @@ this only confirms the terminal actually honors it. Confirm by hand:
 2. **Over SSH / multiplexer.** Repeat 1 inside `tmux`/`ssh` if you use one — OSC 52 is the path that
    carries the clipboard across the wire, so confirm the paste still lands (the terminal/multiplexer
    may need OSC 52 forwarding enabled).
+
+## Phase 5 — query history popup (P5.2)
+
+The headless suite proves the history ring (add/dedupe/recall/navigate/filter), the on-disk
+round-trip (against a tempdir), the pure key->action map, and the popup blit (TestBackend snapshot).
+What a real terminal must confirm is the §4.7 residue — true-terminal glyphs/placement, the cursor
+reverse-video color, the real `Ctrl+R` chord, and color polarity. Confirm by hand:
+
+1. **Open the popup.** With a few queries run, press `Ctrl+R`. A bordered "history (N)" popup appears
+   under the query bar, listing prior queries newest-first, the top row highlighted (reverse-video).
+2. **Navigate + recall.** Press `Down`/`Up` to move the highlight; confirm it tracks and the window
+   scrolls once you pass the bottom. Press `Enter` on an entry — the popup closes and that SQL drops
+   into the query bar, and the grid updates (it fired through the normal debounce/dispatch path).
+3. **Filter.** Reopen (`Ctrl+R`) and type a few chars — confirm the title shows the needle + a
+   `(matched/total)` count and the list narrows to fuzzy-matching entries; a non-matching needle
+   shows the dimmed "(no matches)" line. `Backspace` widens it again.
+4. **Esc closes, Ctrl-C quits.** `Esc` closes the popup without recalling (the bar is unchanged) and
+   the app stays running; `Ctrl+C` from the popup quits.
+5. **Persistence across sessions.** Run a query, quit, relaunch on the same file — confirm `Ctrl+R`
+   shows the query from the prior session (it was written to the on-disk history file). If you set
+   `[history] enabled = false` in `~/.config/ciq/config.toml`, confirm history is session-only (the
+   file is not written).
+6. **Color polarity.** Repeat 1-3 in a light and a dark terminal — confirm the popup border, the
+   highlighted row, and the dimmed title/no-matches line are all legible in both (the §4.7 check).
