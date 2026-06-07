@@ -15,6 +15,7 @@ use crate::engine::types::{Cell, QueryOutcome};
 use crate::engine::{CsvOpts, QueryEngine};
 use crate::error::EngineError;
 use crate::ingest::{merge, sniff_bytes};
+use crate::sql_ident::quote_ident;
 
 /// Resolve the effective ingest opts the way `main::resolve_opts` does for a default invocation
 /// (no CLI flags, no config): sniff the file's bytes and merge the sniffed layer in. This is the
@@ -94,6 +95,61 @@ fn q3_all_text_header_survives_default_load() {
     match engine.query("SELECT count(*) AS n FROM t") {
         QueryOutcome::Rows(t) => assert_eq!(t.columns()[0].cells[0], Cell::Int(3)),
         other => panic!("expected Rows, got {other:?}"),
+    }
+}
+
+/// Q3's other half: a column whose raw name *needs* quoting — a reserved word (`order`, `select`)
+/// and a special-char name (`Total ($)`) — survives verbatim into the schema AND can actually be
+/// queried back through the real engine using the shared [`quote_ident`] escaper. The earlier Q3
+/// fixtures only proved DuckDB's dedup and raw-name survival; this proves the *emit-time quoting*
+/// claim end-to-end: the generated `SELECT "order", "Total ($)" ...` runs and returns the data,
+/// where the bare (unquoted) form would be a syntax error against the reserved word. Closes the
+/// P5.5 "a column name needing quoting actually round-tripping through a real query" gap.
+#[test]
+fn q3_quoting_required_column_names_round_trip_through_a_real_query() {
+    let engine = DuckdbEngine::open(&fixture_path("quoted_names.csv"), &CsvOpts::default())
+        .expect("load fixture with quoting-required header names");
+
+    // Raw names survive verbatim (Q3: no slugify, no rename).
+    let names: Vec<&str> = engine
+        .schema()
+        .columns()
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["order", "Total ($)", "select"]);
+
+    // A bare (unquoted) reference to the reserved word `order` is a syntax error — the very reason
+    // Q3 quotes on emit. Proven so the round-trip below isn't vacuously true.
+    match engine.query("SELECT order FROM t") {
+        QueryOutcome::Error { .. } => {}
+        other => panic!("expected a syntax Error for the unquoted reserved word, got {other:?}"),
+    }
+
+    // The quoted form — exactly what every ciq emitter builds via `quote_ident` — runs.
+    let sql = format!(
+        "SELECT {}, {}, {} FROM t WHERE {} = 1",
+        quote_ident("order"),
+        quote_ident("Total ($)"),
+        quote_ident("select"),
+        quote_ident("order"),
+    );
+    assert_eq!(
+        sql,
+        r#"SELECT "order", "Total ($)", "select" FROM t WHERE "order" = 1"#
+    );
+    match engine.query(&sql) {
+        QueryOutcome::Rows(t) => {
+            assert_eq!(
+                t.row_count(),
+                1,
+                "the quoted query should match row order=1"
+            );
+            assert_eq!(t.columns()[0].cells[0], Cell::Int(1)); // "order"
+            assert_eq!(t.columns()[1].cells[0], Cell::Float(9.99)); // "Total ($)"
+            assert_eq!(t.columns()[2].cells[0], Cell::Text("a".to_string())); // "select"
+        }
+        other => panic!("expected Rows from the quoted query, got {other:?}"),
     }
 }
 

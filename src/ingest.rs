@@ -21,10 +21,12 @@
 //! `dev/DECISIONS.md`:
 //!  - **Q3** column-name policy: keep raw header names; auto-double-quote on emit (via the shared
 //!    [`crate::sql_ident`]); lean on DuckDB for duplicate/empty header dedup.
-//!  - **Q7** ragged-row policy: lean on DuckDB's default (error on a ragged row) — surfaced as a
-//!    clean `EngineError::Load`, never a panic.
-//!  - **Q12** empty-vs-NULL: follow DuckDB's default (unquoted empty -> NULL, quoted `""` -> empty
-//!    string); `null_string` is the user lever.
+//!  - **Q7** ragged-row policy: lean on DuckDB's detector — under default auto-detect a ragged
+//!    file degrades to a single text column (no error), and under an explicit delimiter a short
+//!    row is a clean `EngineError::Load`. Both paths are fail-safe: never a panic, never silent
+//!    corruption.
+//!  - **Q12** empty-vs-NULL: follow DuckDB's default — *every* empty field (unquoted `,,` OR
+//!    quoted `,"",`) ingests as SQL NULL; `null_string` is the user lever to keep empties as `''`.
 
 pub mod csv_config;
 pub mod csv_opts;
