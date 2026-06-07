@@ -23,9 +23,11 @@ pub mod autocomplete;
 pub mod engine;
 pub mod error;
 pub mod grid;
+pub mod ingest;
 pub mod logging;
 pub mod query;
 pub mod schema;
+pub mod sql_ident;
 pub mod sql_lexer;
 pub mod theme;
 

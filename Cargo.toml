@@ -29,6 +29,12 @@ ratatui = "0.29"
 log = "0.4"
 env_logger = "0.11"
 
+# TOML config parsing — the minimal `[csv]` ingest-override section (PLAN.md §6.6). The full
+# config schema (Q5) is a Phase 5 deliverable; this is the `[csv]`-only loader that supplies
+# the `config` input to `ingest::csv_opts::merge`.
+toml = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+
 [dev-dependencies]
 # Snapshot testing (render buffers, generated SQL, schema goldens).
 insta = "1.40"

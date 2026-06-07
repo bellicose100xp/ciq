@@ -24,6 +24,7 @@ use duckdb::{Connection, InterruptHandle as DuckInterruptHandle};
 use crate::engine::types::{Cell, Column, InterruptHandle, Interruptible, QueryOutcome, Table};
 use crate::engine::{CsvOpts, QueryEngine};
 use crate::error::EngineError;
+use crate::ingest::to_read_csv_sql;
 use crate::schema::{ColumnMeta, ColumnType, Schema};
 
 /// Default cap on DuckDB's per-query thread fan-out (A2). Bounded so rapid keystrokes on a
@@ -46,18 +47,19 @@ impl DuckdbEngine {
         Self::open_and_load(path, opts)
     }
 
-    fn open_and_load(path: &Path, _opts: &CsvOpts) -> Result<Self, EngineError> {
+    fn open_and_load(path: &Path, opts: &CsvOpts) -> Result<Self, EngineError> {
         let conn = Connection::open_in_memory().map_err(EngineError::Duckdb)?;
         conn.execute_batch(&format!("SET threads = {DEFAULT_THREADS};"))
             .map_err(EngineError::Duckdb)?;
 
         let path_str = path.to_string_lossy();
-        // sample_size = -1 scans the whole file for type inference (correctness over a fast
-        // guess — paid once). CsvOpts overrides (delimiter/header/types) wire in later.
-        let create = format!(
-            "CREATE TABLE {TABLE} AS SELECT * FROM read_csv_auto('{}', sample_size = -1);",
-            escape_sql_literal(&path_str)
-        );
+        // The `read_csv(...)` source is built by the ingest layer from the effective `CsvOpts`.
+        // With the default (all-`None`) opts this is `read_csv_auto('<path>', sample_size = -1)`,
+        // byte-identical to the pre-ingest hardcoded form — so the whole-file type scan (the
+        // `created_at -> DATE` golden) and the A1 interrupt guard stay green. Overrides
+        // (delimiter/header/types/all_varchar/date_format) flow through `to_read_csv_sql`.
+        let source = to_read_csv_sql(opts, &path_str);
+        let create = format!("CREATE TABLE {TABLE} AS SELECT * FROM {source};");
         conn.execute_batch(&create).map_err(|e| EngineError::Load {
             path: path_str.to_string(),
             source: e,
@@ -257,9 +259,4 @@ fn map_type_str(s: &str) -> ColumnType {
         "VARCHAR" | "CHAR" | "TEXT" | "STRING" => ColumnType::Text,
         _ => ColumnType::Other(s.to_string()),
     }
-}
-
-/// Escape a single-quoted SQL string literal (double any embedded single quotes).
-fn escape_sql_literal(s: &str) -> String {
-    s.replace('\'', "''")
 }

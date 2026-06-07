@@ -18,6 +18,11 @@ pub use duckdb_engine::DuckdbEngine;
 pub use fake_engine::FakeEngine;
 pub use types::{Cell, Column, InterruptHandle, QueryOutcome, Table};
 
+/// CSV ingest / dialect options. The struct now lives in [`crate::ingest::csv_opts`] (it grew the
+/// full R5 override set + the `merge`/`to_read_csv_sql` machinery there); re-exported here so the
+/// long-standing `crate::engine::CsvOpts` path used across the trait and tests keeps compiling.
+pub use crate::ingest::CsvOpts;
+
 use std::path::Path;
 
 use crate::error::EngineError;
@@ -56,16 +61,6 @@ pub trait QueryEngine: Send {
     /// A cheap, `Send + Sync`, cloneable handle the dispatcher holds to interrupt the
     /// in-flight query from its own thread (§0/D4).
     fn interrupt_handle(&self) -> InterruptHandle;
-}
-
-/// CSV ingest / dialect options (delimiter, quote, header, type overrides, …).
-///
-/// P1.3 placeholder: the full field set + CLI/config wiring lands in the ingest phase
-/// (PLAN.md §6.6 / R5 — add `types`/`all_varchar`/`date_format`, unify `sniff_rows` with
-/// `sample_size`). `Default` = "let DuckDB auto-detect everything", which is the common path.
-#[derive(Debug, Clone, Default)]
-pub struct CsvOpts {
-    // Fields added in the ingest phase. Keep `Default` meaningful (full auto-detect).
 }
 
 #[cfg(test)]

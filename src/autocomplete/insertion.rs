@@ -8,8 +8,8 @@
 //!    keyword (`order`, `select`) or contains spaces / characters that aren't a bare identifier is
 //!    auto-quoted as `"order"` so the inserted text re-lexes as a `QuotedIdent`, never a keyword.
 //!    A `"` inside the name is doubled (`we"ird` -> `"we""ird"`), the SQL-standard escape — the
-//!    same rule [`value_source::quote_ident`](crate::autocomplete::value_source::quote_ident)
-//!    applies to emitted SQL, kept consistent here.
+//!    same shared [`sql_ident::quote_ident`](crate::sql_ident::quote_ident) every emitter uses,
+//!    kept consistent here.
 //!  - **`Value` suggestions are quoted as string literals** for text/temporal columns (`'active'`),
 //!    so completing `WHERE status = ` then `a` inserts `'active'`. Numeric values are inserted bare.
 //!  - **jiq's `needs_leading_dot` is dropped** — there is no SQL analog (jq path completion needed
@@ -22,10 +22,10 @@
 //! generator, which are all byte-indexed); the App converts its character cursor at the seam.
 
 use crate::schema::ColumnType;
-use crate::sql_lexer::{TokenKind, is_reserved_keyword, tokenize};
+use crate::sql_ident::{quote_ident_if_needed, single_quote_literal};
+use crate::sql_lexer::{TokenKind, tokenize};
 
 use super::autocomplete_state::{Suggestion, SuggestionType};
-use super::value_source::quote_ident;
 
 /// Replace the partial token at `cursor` (a byte offset into `text`) with `suggestion`, returning
 /// the new text and the new byte cursor (positioned just after the inserted text).
@@ -65,32 +65,6 @@ pub fn render_insert_text(s: &Suggestion) -> String {
     }
 }
 
-/// Double-quote `name` iff it would not re-lex as a bare `Ident` — i.e. it collides with a SQL
-/// keyword, is empty, or contains a character outside `[A-Za-z0-9_]` (or starts with a digit).
-/// Otherwise return it verbatim. A bare `*` (the all-columns wildcard) is never quoted.
-fn quote_ident_if_needed(name: &str) -> String {
-    if name == "*" || (!needs_quoting(name) && !is_reserved_keyword(name)) {
-        name.to_string()
-    } else {
-        // Reuse the one double-quote escaper (the same `""`-doubling rule the emitted distinct-value
-        // SQL uses), so inserted identifiers and generated SQL can never drift apart (D6 DRY rule).
-        quote_ident(name)
-    }
-}
-
-/// Whether `name` is *not* a bare SQL identifier (so it must be double-quoted to be safe): empty,
-/// leading digit, or any char outside `[A-Za-z0-9_]`.
-fn needs_quoting(name: &str) -> bool {
-    let mut chars = name.chars();
-    match chars.next() {
-        None => true,
-        Some(c) if !(c.is_ascii_alphabetic() || c == '_') => true,
-        _ => name
-            .chars()
-            .any(|c| !(c.is_ascii_alphanumeric() || c == '_')),
-    }
-}
-
 /// Quote a value for insertion: a single-quoted string literal (doubling any embedded `'`) for
 /// text/temporal columns and unknown-type values, bare for numeric/boolean columns — **except** a
 /// non-finite float (`inf`/`-inf`/`NaN`, as `f64::to_string` renders them), which DuckDB does not
@@ -104,7 +78,7 @@ fn quote_value(value: &str, ty: Option<&ColumnType>) -> String {
     if bare {
         value.to_string()
     } else {
-        single_quote(value)
+        single_quote_literal(value)
     }
 }
 
@@ -114,20 +88,6 @@ fn quote_value(value: &str, ty: Option<&ColumnType>) -> String {
 /// non-finite `f64` is not.
 fn is_bare_literal(value: &str) -> bool {
     !value.parse::<f64>().is_ok_and(|f| !f.is_finite())
-}
-
-/// Wrap `s` in single quotes, doubling any embedded `'` (SQL-standard string escape).
-fn single_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('\'');
-    for ch in s.chars() {
-        if ch == '\'' {
-            out.push('\'');
-        }
-        out.push(ch);
-    }
-    out.push('\'');
-    out
 }
 
 /// The largest char boundary of `text` that is `<= byte`. `str::floor_char_boundary` is unstable,

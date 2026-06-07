@@ -19,27 +19,16 @@
 
 use std::collections::BTreeMap;
 
+/// Re-export the shared identifier escaper from its neutral top-level home ([`crate::sql_ident`]).
+/// Kept re-exported here so existing `value_source::quote_ident` callers compile unchanged; the
+/// single implementation now lives in `sql_ident.rs` so `ingest`/`palette`/`facets` share it
+/// without importing `autocomplete` (the §0/D2 anti-coupling rule).
+pub use crate::sql_ident::quote_ident;
+
 /// Per-column cap on distinct values fetched/cached — the **per-column** cap, mirroring jiq's
 /// `MAX_VALUES_PER_PATH` (`value_collector.rs:14`), **not** the global `MAX_GLOBAL_STRING_VALUES`
 /// (S3 / §5.5 cap reconciliation). Bounds the value-suggestion list and the cache size.
 pub const MAX_VALUES_PER_PATH: usize = 10_000;
-
-/// Quote a SQL identifier for safe interpolation into emitted SQL: wrap in double quotes and
-/// escape any embedded `"` by doubling it (the SQL standard `""` escape). So `order` -> `"order"`
-/// and `we"ird` -> `"we""ird"`. This is what keeps a column named after a reserved word, or one
-/// containing a quote, from breaking or smuggling into the generated query.
-pub fn quote_ident(col: &str) -> String {
-    let mut out = String::with_capacity(col.len() + 2);
-    out.push('"');
-    for ch in col.chars() {
-        if ch == '"' {
-            out.push('"');
-        }
-        out.push(ch);
-    }
-    out.push('"');
-    out
-}
 
 /// Build the distinct-value query for `col`, capped at `cap` rows, frequency-ordered.
 ///

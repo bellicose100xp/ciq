@@ -43,6 +43,18 @@ src/autocomplete/candidates.rs
 # when an identifier is quoted, when a value is a string literal), so it earns the hard floor.
 src/autocomplete/insertion.rs
 
+# Phase 4 (present now): CSV ingest — the pure sniffer over bytes, the CsvOpts merge precedence +
+# read_csv SQL builder, and the shared SQL identifier/literal quoting. All data-in/data-out: a
+# wrong delimiter guess, a wrong precedence pick, or a mis-escaped identifier is a real behavior
+# bug, so they earn the hard floor.
+src/ingest/sniff.rs
+src/ingest/csv_opts.rs
+src/sql_ident.rs
+
+# csv_config.rs (the minimal [csv] TOML loader) is a thin serde-parse-to-default seam — its real
+# behavior is covered by csv_config_tests, but the floor lives on the pure transform modules
+# above (judgment per the brief; the full config schema is Phase 5 / Q5).
+#
 # sql_keywords.rs is static data (keyword/function/operator tables) — const-sanity-tested but
 # largely branchless, so it is left off the hard floor (judgment per the brief).
 #
