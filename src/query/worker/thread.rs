@@ -118,7 +118,7 @@ fn handle_request(engine: &dyn QueryEngine, request: QueryRequest) -> QueryRespo
             request_id,
             kind,
         },
-        QueryOutcome::Cancelled => QueryResponse::Cancelled { request_id },
+        QueryOutcome::Cancelled => QueryResponse::Cancelled { request_id, kind },
     }
 }
 

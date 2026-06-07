@@ -123,8 +123,11 @@ pub enum QueryResponse {
         request_id: u64,
         kind: RequestKind,
     },
-    /// The query was interrupted (superseded). The App discards it by `request_id`.
-    Cancelled { request_id: u64 },
+    /// The query was interrupted (superseded). Carries the request [`RequestKind`] so the App can
+    /// route a cancelled **value** fetch out of the main request lane *before* the stale-discard
+    /// gate — symmetric with `ProcessedSuccess`/`Error`. Without it, a value-lane id colliding with
+    /// the main `latest_id` would wrongly `accept()` and desync the in-flight bookkeeping (§0/D4).
+    Cancelled { request_id: u64, kind: RequestKind },
 }
 
 impl QueryResponse {
@@ -133,7 +136,7 @@ impl QueryResponse {
         match self {
             QueryResponse::ProcessedSuccess { request_id, .. } => *request_id,
             QueryResponse::Error { request_id, .. } => *request_id,
-            QueryResponse::Cancelled { request_id } => *request_id,
+            QueryResponse::Cancelled { request_id, .. } => *request_id,
         }
     }
 }

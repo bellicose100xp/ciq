@@ -10,7 +10,7 @@ use crate::engine::fake_engine::FakeEngine;
 use crate::engine::types::{Cell, Column, InterruptHandle, Interruptible, QueryOutcome, Table};
 use crate::engine::{CsvOpts, QueryEngine};
 use crate::query::worker::spawn_worker;
-use crate::query::worker::types::{QueryRequest, QueryResponse};
+use crate::query::worker::types::{QueryRequest, QueryResponse, RequestKind};
 use crate::schema::{ColumnMeta, ColumnType, Schema};
 
 fn schema() -> Schema {
@@ -102,7 +102,14 @@ fn cancelled_outcome_becomes_cancelled_response() {
     handle_to_interrupt.interrupt();
     req_tx.send(QueryRequest::new("SELECT 1", 3)).unwrap();
     match resp_rx.recv().unwrap() {
-        QueryResponse::Cancelled { request_id } => assert_eq!(request_id, 3),
+        QueryResponse::Cancelled { request_id, kind } => {
+            assert_eq!(request_id, 3);
+            assert_eq!(
+                kind,
+                RequestKind::Main,
+                "the request kind rides the Cancelled arm"
+            );
+        }
         other => panic!("expected Cancelled, got {other:?}"),
     }
 

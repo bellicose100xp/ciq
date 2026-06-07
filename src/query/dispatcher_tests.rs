@@ -100,7 +100,7 @@ fn second_dispatch_interrupts_first_from_dispatcher_thread() {
     // id=1 unblocks (interrupted) and comes back Cancelled — stale, so the App drains it.
     let r1 = resp_rx.recv().unwrap();
     assert!(
-        matches!(r1, QueryResponse::Cancelled { request_id: 1 }),
+        matches!(r1, QueryResponse::Cancelled { request_id: 1, .. }),
         "id=1 should come back Cancelled, got {r1:?}"
     );
     assert!(

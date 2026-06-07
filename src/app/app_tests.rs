@@ -213,7 +213,10 @@ fn cancelled_response_shows_nothing() {
     type_str(&mut app, "SELECT 1", 0);
     app.tick(150);
     let id = app.latest_request_id();
-    assert!(!app.on_response(QueryResponse::Cancelled { request_id: id }));
+    assert!(!app.on_response(QueryResponse::Cancelled {
+        request_id: id,
+        kind: RequestKind::Main,
+    }));
     assert!(app.result().is_none());
 }
 
@@ -694,4 +697,67 @@ fn cached_column_does_not_refetch_values() {
         any
     };
     assert!(!refetched, "a cached column must not be re-fetched");
+}
+
+// --- value-lane / main-lane id collision (the kind-routed Cancelled fix) ---
+
+#[test]
+fn cancelled_value_lane_response_does_not_clear_in_flight_on_id_collision() {
+    // The two id spaces overlap (main `latest_id` and `value_seq` both start at 0), so a value-lane
+    // Cancelled can carry an id numerically equal to the current main `latest_id`. Routing the
+    // Cancelled by its `kind` (Value) BEFORE the stale-discard gate must keep it out of the main
+    // lane — otherwise `accept(1)` would wrongly clear `in_flight` while main query id=1 still runs.
+    let (mut app, _rx) = loaded_app();
+    type_str(&mut app, "SELECT * FROM t", 0);
+    app.tick(150);
+    let id = app.latest_request_id();
+    assert_eq!(id, 1);
+    assert!(app.is_query_in_flight(), "main query is in-flight");
+
+    // A value fetch was interrupted; it comes back Cancelled with the colliding value-lane id=1.
+    let changed = app.on_response(QueryResponse::Cancelled {
+        request_id: id,
+        kind: RequestKind::Value {
+            column: "status".into(),
+        },
+    });
+    assert!(!changed, "a value Cancelled never changes the visible grid");
+    assert!(
+        app.is_query_in_flight(),
+        "a value-lane Cancelled must NOT clear the main in-flight gate (D4)"
+    );
+    assert!(app.result().is_none(), "no result is touched");
+
+    // The real main result for id=1 still accepts and surfaces normally afterwards.
+    let applied = app.on_response(QueryResponse::ProcessedSuccess {
+        result: two_row_result(),
+        request_id: id,
+        kind: RequestKind::Main,
+    });
+    assert!(applied);
+    assert!(
+        !app.is_query_in_flight(),
+        "the genuine main response clears the gate"
+    );
+    assert_eq!(app.result().unwrap().rows.row_count(), 2);
+}
+
+#[test]
+fn cancelled_main_lane_response_still_clears_in_flight() {
+    // The symmetric control: a *main*-lane Cancelled for the current id goes through the gate and
+    // clears in-flight as before (no regression to the main cancellation path).
+    let (mut app, _rx) = loaded_app();
+    type_str(&mut app, "SELECT * FROM t", 0);
+    app.tick(150);
+    let id = app.latest_request_id();
+    assert!(app.is_query_in_flight());
+    let changed = app.on_response(QueryResponse::Cancelled {
+        request_id: id,
+        kind: RequestKind::Main,
+    });
+    assert!(!changed, "a Cancelled shows nothing");
+    assert!(
+        !app.is_query_in_flight(),
+        "a main-lane Cancelled for the latest id accepts and clears in-flight"
+    );
 }

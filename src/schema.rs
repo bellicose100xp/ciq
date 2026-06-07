@@ -72,9 +72,28 @@ impl Schema {
         self.columns.iter().find(|c| c.name == name)
     }
 
+    /// Look up a column case-insensitively, falling back from an exact match. DuckDB resolves
+    /// unquoted identifiers case-insensitively, so a query referencing `STATUS` against a `status`
+    /// header is valid SQL; the autocomplete value path resolves columns through this so the
+    /// distinct-value fetch/lookup keys off the canonical header spelling regardless of the casing
+    /// the user typed. An exact match is preferred so distinct same-name-different-case headers
+    /// (a degenerate but possible CSV) resolve to the one actually written.
+    pub fn column_ci(&self, name: &str) -> Option<&ColumnMeta> {
+        self.column(name).or_else(|| {
+            self.columns
+                .iter()
+                .find(|c| c.name.eq_ignore_ascii_case(name))
+        })
+    }
+
     /// The column type for `name`, if present.
     pub fn column_type(&self, name: &str) -> Option<&ColumnType> {
         self.column(name).map(|c| &c.ty)
+    }
+
+    /// The column type for `name`, resolved case-insensitively (see [`column_ci`](Self::column_ci)).
+    pub fn column_type_ci(&self, name: &str) -> Option<&ColumnType> {
+        self.column_ci(name).map(|c| &c.ty)
     }
 
     /// Column names in table order — the candidate source for autocomplete / palette.

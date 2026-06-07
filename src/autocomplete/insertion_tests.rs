@@ -139,6 +139,31 @@ fn value_with_embedded_apostrophe_is_escaped() {
     assert_eq!(out, "WHERE name = 'O''Brien'");
 }
 
+#[test]
+fn finite_float_value_inserts_bare() {
+    // An ordinary float value on a Float column stays a bare numeric literal.
+    let q = "WHERE amount = ";
+    let (out, _) = insert_suggestion(q, q.len(), &value("3.14", ColumnType::Float));
+    assert_eq!(out, "WHERE amount = 3.14");
+    // `-0` (from `f64::to_string` of -0.0) is a valid bare numeric literal too.
+    let (out, _) = insert_suggestion(q, q.len(), &value("-0", ColumnType::Float));
+    assert_eq!(out, "WHERE amount = -0");
+}
+
+#[test]
+fn non_finite_float_value_is_quoted_not_bare() {
+    // `inf`/`-inf`/`NaN` (as `f64::to_string` renders them) are NOT valid bare DuckDB literals —
+    // they must fall back to a quoted literal that DuckDB casts against the DOUBLE column, so the
+    // completed query stays valid instead of erroring with a "column not found".
+    let q = "WHERE amount = ";
+    let (out, _) = insert_suggestion(q, q.len(), &value("inf", ColumnType::Float));
+    assert_eq!(out, "WHERE amount = 'inf'");
+    let (out, _) = insert_suggestion(q, q.len(), &value("-inf", ColumnType::Float));
+    assert_eq!(out, "WHERE amount = '-inf'");
+    let (out, _) = insert_suggestion(q, q.len(), &value("NaN", ColumnType::Float));
+    assert_eq!(out, "WHERE amount = 'NaN'");
+}
+
 // --- robustness ---
 
 #[test]

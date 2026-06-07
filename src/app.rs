@@ -175,6 +175,12 @@ impl App {
         self.dispatcher.latest_id()
     }
 
+    /// Whether the dispatcher believes a main query is in-flight (the D4 interrupt gate). Read-only;
+    /// exposed so tests can assert a value-lane response never desyncs this bookkeeping.
+    pub fn is_query_in_flight(&self) -> bool {
+        self.dispatcher.in_flight()
+    }
+
     /// The autocomplete popup state (for the render layer and tests).
     pub fn autocomplete(&self) -> &AutocompleteState {
         &self.autocomplete
@@ -305,18 +311,24 @@ impl App {
         self.autocomplete.open_with(suggestions);
     }
 
-    /// The column whose distinct values should be fetched now: `Some(col)` when the cursor is in a
-    /// `ColumnValue` context for a column present in `schema` and not already in the value cache;
+    /// The column whose distinct values should be fetched now: `Some(canonical_name)` when the
+    /// cursor is in a `ColumnValue` context for a column present in `schema` and not already cached;
     /// `None` otherwise (no value position, unknown column, or already cached).
+    ///
+    /// The detected column text keeps the user's casing (`STATUS`), but DuckDB resolves unquoted
+    /// identifiers case-insensitively, so we resolve to the canonical header spelling (`status`)
+    /// and key the fetch + cache by it — keeping the fetch key, the cache key, and the candidate
+    /// generator's lookup all in lockstep (see [`Schema::column_ci`]).
     fn value_column_to_fetch(&self, query: &str, cursor: usize, schema: &Schema) -> Option<String> {
         let tokens = tokenize(query);
         let CursorContext::ColumnValue { col, .. } = detect_context(query, &tokens, cursor) else {
             return None;
         };
-        if schema.column(&col).is_some() && !self.value_cache.contains(&col) {
-            Some(col)
-        } else {
+        let canonical = &schema.column_ci(&col)?.name;
+        if self.value_cache.contains(canonical) {
             None
+        } else {
+            Some(canonical.clone())
         }
     }
 
@@ -447,6 +459,16 @@ impl App {
         } = &resp
         {
             return false; // a failed value fetch silently yields no candidates
+        }
+        // A cancelled value fetch is also out of the main lane: drop it *before* the stale-discard
+        // gate. Otherwise its value-lane id, drawn from a counter that overlaps the main `latest_id`,
+        // could collide and wrongly clear `in_flight` while a real main query is still running (D4).
+        if let QueryResponse::Cancelled {
+            kind: RequestKind::Value { .. },
+            ..
+        } = &resp
+        {
+            return false; // the value popup simply gets no candidates this round
         }
 
         let id = resp.request_id();

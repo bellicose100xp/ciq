@@ -82,11 +82,17 @@ fn gather_for_context(
         // position after `col `), so the full table is offered in canonical order.
         CursorContext::ComparisonOp { .. } => operator_suggestions(operators),
         // Distinct values of the column, from the cache, fuzzy-filtered by the partial. A cache miss
-        // yields an empty list (the worker fills it for the next keystroke — P3.7).
+        // yields an empty list (the worker fills it for the next keystroke — P3.7). The detected
+        // column keeps the user's casing; resolve it to the canonical header spelling (DuckDB is
+        // case-insensitive for unquoted idents) so the type hint and the cache key match the fetch.
         CursorContext::ColumnValue { col, partial, .. } => {
-            let field_type = schema.column_type(col).cloned();
+            let canonical = schema
+                .column_ci(col)
+                .map(|c| c.name.as_str())
+                .unwrap_or(col);
+            let field_type = schema.column_type_ci(col).cloned();
             let out = values
-                .get(col)
+                .get(canonical)
                 .unwrap_or(&[])
                 .iter()
                 .map(|v| {

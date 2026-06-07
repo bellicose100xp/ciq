@@ -25,6 +25,7 @@ use crate::schema::ColumnType;
 use crate::sql_lexer::{TokenKind, is_reserved_keyword, tokenize};
 
 use super::autocomplete_state::{Suggestion, SuggestionType};
+use super::value_source::quote_ident;
 
 /// Replace the partial token at `cursor` (a byte offset into `text`) with `suggestion`, returning
 /// the new text and the new byte cursor (positioned just after the inserted text).
@@ -71,7 +72,9 @@ fn quote_ident_if_needed(name: &str) -> String {
     if name == "*" || (!needs_quoting(name) && !is_reserved_keyword(name)) {
         name.to_string()
     } else {
-        double_quote(name)
+        // Reuse the one double-quote escaper (the same `""`-doubling rule the emitted distinct-value
+        // SQL uses), so inserted identifiers and generated SQL can never drift apart (D6 DRY rule).
+        quote_ident(name)
     }
 }
 
@@ -88,33 +91,29 @@ fn needs_quoting(name: &str) -> bool {
     }
 }
 
-/// Wrap `s` in double quotes, doubling any embedded `"` (SQL-standard escape). Shared rule with
-/// [`value_source::quote_ident`](crate::autocomplete::value_source::quote_ident).
-fn double_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for ch in s.chars() {
-        if ch == '"' {
-            out.push('"');
-        }
-        out.push(ch);
-    }
-    out.push('"');
-    out
-}
-
 /// Quote a value for insertion: a single-quoted string literal (doubling any embedded `'`) for
-/// text/temporal columns and unknown-type values, bare for numeric/boolean columns.
+/// text/temporal columns and unknown-type values, bare for numeric/boolean columns — **except** a
+/// non-finite float (`inf`/`-inf`/`NaN`, as `f64::to_string` renders them), which DuckDB does not
+/// accept as a bare literal (it parses bare `inf` as a column reference). Such a value falls back
+/// to a quoted literal, which DuckDB casts against the column's DOUBLE type (`= 'Infinity'`).
 fn quote_value(value: &str, ty: Option<&ColumnType>) -> String {
     let bare = matches!(
         ty,
         Some(ColumnType::Int | ColumnType::Float | ColumnType::Bool)
-    );
+    ) && is_bare_literal(value);
     if bare {
         value.to_string()
     } else {
         single_quote(value)
     }
+}
+
+/// Whether `value` is safe to emit as a bare numeric/boolean literal — i.e. it is not a non-finite
+/// float rendering (`inf`/`-inf`/`NaN`/`+inf`), which DuckDB rejects as a bare literal. A finite
+/// numeric/boolean rendering (`42`, `3.14`, `-0`, `true`) is safe; anything that parses as a
+/// non-finite `f64` is not.
+fn is_bare_literal(value: &str) -> bool {
+    !value.parse::<f64>().is_ok_and(|f| !f.is_finite())
 }
 
 /// Wrap `s` in single quotes, doubling any embedded `'` (SQL-standard string escape).

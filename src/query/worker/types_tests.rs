@@ -65,7 +65,10 @@ fn response_request_id_for_each_variant() {
         request_id: 6,
         kind: RequestKind::Main,
     };
-    let cancelled = QueryResponse::Cancelled { request_id: 7 };
+    let cancelled = QueryResponse::Cancelled {
+        request_id: 7,
+        kind: RequestKind::Main,
+    };
 
     assert_eq!(success.request_id(), 5);
     assert_eq!(error.request_id(), 6);
@@ -99,7 +102,10 @@ fn exhaustive_match_over_all_response_variants() {
             request_id: 2,
             kind: RequestKind::Main,
         },
-        QueryResponse::Cancelled { request_id: 3 },
+        QueryResponse::Cancelled {
+            request_id: 3,
+            kind: RequestKind::Main,
+        },
     ] {
         let label = match resp {
             QueryResponse::ProcessedSuccess {
@@ -113,7 +119,7 @@ fn exhaustive_match_over_all_response_variants() {
                 request_id,
                 ..
             } => format!("error:{request_id}:{message}"),
-            QueryResponse::Cancelled { request_id } => format!("cancelled:{request_id}"),
+            QueryResponse::Cancelled { request_id, .. } => format!("cancelled:{request_id}"),
         };
         assert!(!label.is_empty());
     }

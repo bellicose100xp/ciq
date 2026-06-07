@@ -220,6 +220,50 @@ fn quoted_ident_column_value_mode() {
     assert_eq!(texts(&s), vec!["1", "2"]);
 }
 
+#[test]
+fn value_mode_resolves_column_case_insensitively() {
+    // DuckDB resolves unquoted identifiers case-insensitively, so `STATUS` against a `status`
+    // header is valid SQL — and its seeded distinct values must still surface, typed by `status`.
+    let s = suggest("SELECT * FROM t WHERE STATUS = '");
+    assert_eq!(texts(&s), vec!["active", "archived", "pending"]);
+    assert!(s.iter().all(|x| x.field_type == Some(ColumnType::Text)));
+    // A mixed-case reference resolves the same way.
+    let s2 = suggest("SELECT * FROM t WHERE Status = 'a");
+    assert_eq!(texts(&s2), vec!["active", "archived"]);
+}
+
+// ── completed predicate / IS -> clause keywords, not columns ────────────────────────────────────
+
+#[test]
+fn completed_predicate_offers_clause_keywords_not_columns() {
+    // After a complete `col = value`, the popup must offer connector/clause keywords, never a list
+    // of schema columns (which can't legally follow a finished predicate).
+    let s = suggest("SELECT * FROM t WHERE status = 'active' ");
+    let t = texts(&s);
+    assert!(t.contains(&"AND"));
+    assert!(t.contains(&"ORDER BY"));
+    assert!(
+        !t.contains(&"amount"),
+        "no columns after a complete predicate: {t:?}"
+    );
+    assert!(
+        s.iter()
+            .all(|x| x.suggestion_type == SuggestionType::Keyword)
+    );
+}
+
+#[test]
+fn after_is_offers_clause_keywords_not_columns() {
+    // After a typed `IS`, only NULL/NOT NULL are legal — the position offers keywords, not columns.
+    let s = suggest("SELECT * FROM t WHERE status IS ");
+    let t = texts(&s);
+    assert!(!t.contains(&"amount"), "no columns after IS: {t:?}");
+    assert!(
+        s.iter()
+            .all(|x| x.suggestion_type == SuggestionType::Keyword)
+    );
+}
+
 // ── §5.4 row: GroupOrderList ────────────────────────────────────────────────────────────────────
 
 #[test]

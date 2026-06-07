@@ -233,7 +233,7 @@ fn cancel_surfaces_only_latest_result() {
 
     // id=1 returns Cancelled (interrupted) — the App must discard it (stale), showing nothing.
     let r1 = resp_rx.recv().unwrap();
-    assert!(matches!(r1, QueryResponse::Cancelled { request_id: 1 }));
+    assert!(matches!(r1, QueryResponse::Cancelled { request_id: 1, .. }));
     assert!(
         !app.on_response(r1),
         "stale Cancelled{{1}} must not surface"
