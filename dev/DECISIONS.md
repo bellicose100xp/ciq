@@ -178,12 +178,78 @@ These were real inconsistencies the audit confirmed, but they have an obviously-
 
 ## Deferred to implementation (decide at CSV-ingest time, Phases 2/4 — NOT now)
 
-These carry real correctness weight but do not gate Phase 1. Each gets decided **with a default and fixture tests** when we build ingest. Tracked here so they are not forgotten.
+These carried real correctness weight but did not gate Phase 1. **All four are now RESOLVED in P4.7** (see the Q3/Q7/Q12 + CsvOpts entries below). The original deferral notes:
 
-- **Q3 — Column-name normalization policy.** Default: keep raw header names, auto-`"quote"` on emit when they contain spaces/special chars/reserved words; document DuckDB quoting. Open: dedupe/slugify policy for duplicate/empty headers.
-- **Q7 — Ragged-row policy** (rows with wrong column count). Default: lean on DuckDB's detector; decide error-vs-pad-vs-skip during impl, fixture-tested.
-- **Q12 — Empty-cell vs SQL NULL semantics.** Default: render NULL distinctly from empty string; ingest empties per DuckDB default; `null_string` knob is the user lever. Must be decided + fixture-tested before launch (affects `WHERE col IS NULL` vs `= ''`).
-- **CsvOpts ↔ CLI-flag inventory.** §6.6's struct (`delimiter, quote, escape, header, null_string, sample_size`) must be expanded to cover R5's required overrides: add `types` (`--types`), `all_varchar` (`--all-varchar`), `date_format` (`--date-format`); unify `--sniff-rows` with the existing `sample_size` under one name. Final field/flag/config-key names decided when the config schema (Q5) is frozen.
+- **Q3 — Column-name normalization policy.** Default: keep raw header names, auto-`"quote"` on emit when they contain spaces/special chars/reserved words; document DuckDB quoting. Open: dedupe/slugify policy for duplicate/empty headers. → **RESOLVED, see Q3 below.**
+- **Q7 — Ragged-row policy** (rows with wrong column count). Default: lean on DuckDB's detector; decide error-vs-pad-vs-skip during impl, fixture-tested. → **RESOLVED, see Q7 below.**
+- **Q12 — Empty-cell vs SQL NULL semantics.** Default: render NULL distinctly from empty string; ingest empties per DuckDB default; `null_string` knob is the user lever. Must be decided + fixture-tested before launch (affects `WHERE col IS NULL` vs `= ''`). → **RESOLVED, see Q12 below.**
+- **CsvOpts ↔ CLI-flag inventory.** §6.6's struct (`delimiter, quote, escape, header, null_string, sample_size`) must be expanded to cover R5's required overrides: add `types` (`--types`), `all_varchar` (`--all-varchar`), `date_format` (`--date-format`); unify `--sniff-rows` with the existing `sample_size` under one name. → **RESOLVED, see "CsvOpts inventory" below.**
+
+---
+
+## Q3 — Column-name policy (RESOLVED 2026-06-07, P4.7)
+
+**Status:** RESOLVED + fixture-tested against real `duckdb 1.10503.1`.
+**Decision:** ciq keeps **raw** header names verbatim (no slugify, no case-fold) and auto-double-quotes an identifier **on emit** only when it isn't a bare `[A-Za-z_][A-Za-z0-9_]*` identifier (spaces, special chars, leading digit, empty) or collides with a reserved keyword; embedded `"` is escaped by doubling (`"` → `""`). For **duplicate / empty** headers, ciq **leans on DuckDB's own dedup** rather than inventing one.
+
+**Why (ciq's merits):** raw-but-quoted is the least-surprising policy — the user sees the column exactly as their file names it, and autocomplete offers the raw name; quoting is an emit-time concern, not a rename. Re-inventing dedup would just duplicate (and risk diverging from) what DuckDB already does deterministically.
+
+**Implementation:** one shared escaper — **`src/sql_ident.rs`** (`quote_ident`, `quote_ident_if_needed`, `single_quote_literal`, `is_reserved_keyword`) — promoted out of `autocomplete/value_source.rs` to a neutral top-level home so `ingest` / `palette` / `facets` share it without importing `autocomplete` (the §0/D2 anti-coupling rule). The reserved-word check delegates to `sql_lexer::is_reserved_keyword` (the single keyword table), so "what the lexer re-reads as a keyword" and "what gets quoted on emit" can never drift. `value_source::quote_ident` and `insertion.rs` now re-use it (the old duplicated `quote_ident_if_needed` / `needs_quoting` / `single_quote` were deleted — DRY).
+
+**Observed DuckDB dedup (fixture-pinned, `tests/fixtures/dup_empty_header.csv`, headers `id,name,,name,`):** DuckDB 1.10503.1 produces `["id", "name", "column2", "name_1", "column4"]` — the duplicate `name` is suffixed `name_1`, and the two empty headers become positional `column2` / `column4`. Pinned by `ingest_semantics_tests::q3_duplicate_and_empty_headers_are_deduped_by_duckdb`; a bump that changes the scheme turns the build red.
+
+---
+
+## Q7 — Ragged-row policy (RESOLVED 2026-06-07, P4.7)
+
+**Status:** RESOLVED + fixture-tested against real `duckdb 1.10503.1`.
+**Decision:** lean on **DuckDB's detector**; ciq adds no `null_padding` / `ignore_errors` / skip by default. Both observed paths are **fail-safe — never a panic, never silent corruption** — which is the property that matters:
+- **Under default auto-detect**, a ragged file degrades gracefully: DuckDB's sniffer can't agree on a delimiter, so it parses each line as a **single text column** (no error, every line preserved as one field).
+- **Under an explicit delimiter** (`--delim`, so DuckDB commits to N columns), a short row makes the strict sniffer reject the file — surfaced as a clean `EngineError::Load`. The DuckDB error message itself names the escape hatches (`null_padding=true`, `ignore_errors=true`) a future flag can opt into.
+
+**Why (ciq's merits):** DuckDB's detector is the best of the three benchmarked engines; re-implementing ragged-row handling would duplicate it and risk diverging. The two fail-safe outcomes (graceful single-column degrade vs clean error) are both acceptable launch behavior — no data is silently dropped or mis-parsed. A `--null-padding` / `--ignore-errors` opt-in is a clean future addition (the `read_csv` args already exist), not a launch requirement.
+
+**Fixtures (`tests/fixtures/ragged.csv`):** `q7_ragged_under_auto_detect_degrades_to_single_column_no_panic` (default → one column, 3 rows, no panic) and `q7_ragged_with_explicit_delimiter_is_a_clean_load_error_not_a_panic` (`--delim ,` → `EngineError::Load`, no panic).
+
+---
+
+## Q12 — Empty-cell vs SQL NULL semantics (RESOLVED 2026-06-07, P4.7)
+
+**Status:** RESOLVED + fixture-tested against real `duckdb 1.10503.1`. **Corrects a common misconception** carried in earlier draft wording.
+**Decision:** follow **DuckDB's default**, which is: **every empty CSV field — whether unquoted (`,,`) OR quoted-empty (`,"",`) — ingests as SQL `NULL`.** DuckDB does **not** distinguish quoted-empty from unquoted-empty by default (a frequently-assumed-but-wrong belief; the earlier deferral note implied a quoted `""` would stay an empty string — it does not). The **`null_string` knob (`--null-string`)** is the user lever: set it to a sentinel that does not appear in the data, and empty fields stay **empty strings** (`''`) rather than NULL — so `WHERE col = ''` then matches them and `WHERE col IS NULL` matches none.
+
+**Query-semantics consequence (the thing that matters):** under the default, `WHERE col IS NULL` returns every empty-field row and `WHERE col = ''` returns none (because `NULL = ''` evaluates to NULL, not true). The grid still renders `Cell::Null` distinctly from `Cell::Text("")` (a pure rendering distinction, P2.6) — but under the default ingest there are no empty-string cells to render unless the user sets `null_string`.
+
+**Why (ciq's merits):** matching DuckDB's default keeps ciq's SQL semantics identical to "what DuckDB would do" — no surprise translation layer, which is the whole reason DuckDB (exact dialect) was chosen. Exposing `null_string` as the single lever (rather than inventing a ciq-specific empty-vs-NULL toggle) keeps the override surface aligned with `read_csv`.
+
+**Fixtures (`tests/fixtures/empty_vs_null.csv`, an unquoted-empty + a quoted-empty + a value row):** `q12_default_ingests_every_empty_field_as_null` (both empty forms → NULL; `= ''` matches none) and `q12_null_string_lever_makes_empty_distinct_from_null` (`null_string='\N'` → empty fields stay `''`, `IS NULL` matches none).
+
+---
+
+## CsvOpts inventory + ingest precedence (RESOLVED 2026-06-07, P4.7)
+
+**Status:** RESOLVED. Closes the R5-flag ↔ §6.6-struct reconciliation.
+**Decision — the `CsvOpts` field / CLI-flag / `read_csv` arg set (all fields `Option`, `None` = defer):**
+
+| field | CLI flag | `read_csv(...)` arg |
+|---|---|---|
+| `delimiter` | `--delim` | `delim='<c>'` |
+| `quote` | `--quote` | `quote='<c>'` |
+| `escape` | `--escape` | `escape='<c>'` |
+| `header` | `--header` / `--no-header` | `header=true|false` |
+| `null_string` | `--null-string` | `nullstr='<s>'` |
+| `sample_size` | `--sample-size` (alias `--sniff-rows`) | `sample_size=<n>` |
+| `types` | `--types 'a=VARCHAR,b=DECIMAL(12,2)'` | `types={'a':'VARCHAR',...}` |
+| `all_varchar` | `--all-varchar` | `all_varchar=true` |
+| `date_format` | `--date-format '%d/%m/%Y'` | `dateformat='<f>'` |
+
+`--sniff-rows` is **unified into `--sample-size`** (one name; `--sniff-rows` kept as a clap alias). The three R5 net-new fields (`types`, `all_varchar`, `date_format`) are added.
+
+**Precedence (pure `merge(config, cli, sniffed) -> CsvOpts`, field-by-field):** **CLI > config > sniffed > DuckDB auto-detect**. `to_read_csv_sql(opts, path)` emits `read_csv_auto('<path>', sample_size = -1)` when all-`None` (byte-identical to the pre-ingest default, so the engine's `created_at -> DATE` golden + A1 guard stay green) and the explicit `read_csv('<path>', auto_detect = true, <args>)` form when any override is set (`auto_detect=true` keeps DuckDB's sniffer on for the un-overridden fields). `types` is normalized (last-write-wins, sorted by column name) so emit is byte-stable regardless of input order.
+
+**Config layer:** a **minimal `[csv]`-only** TOML loader (`ingest/csv_config.rs`, reusing jiq's parse-to-default-on-error pattern) supplies the `config` input. The **full config schema (Q5) stays Phase 5** — locking it now invites churn; this loader will be subsumed by the Phase 5 config module. `deny_unknown_fields` on the `[csv]` section catches typo'd keys.
+
+**Implementation:** `src/ingest/{csv_opts,sniff,csv_config}.rs` (+ `ingest/ingest_semantics_tests.rs` for the engine-coupled Q3/Q7/Q12 fixtures). `CsvOpts` moved out of `engine.rs` into `ingest/csv_opts.rs`, re-exported as `crate::engine::CsvOpts` so existing callers compile unchanged. The engine's `open_and_load` now builds its `CREATE TABLE … read_csv(…)` via `to_read_csv_sql` (the hardcoded `read_csv_auto` is gone).
 
 ---
 
