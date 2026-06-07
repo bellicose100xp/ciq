@@ -22,6 +22,7 @@ use crate::autocomplete::value_source::ValueCache;
 use crate::engine::duckdb_engine::TABLE;
 use crate::schema::Schema;
 use crate::sql_lexer::tokenize;
+use crate::text_match::is_subsequence;
 
 use super::autocomplete_state::{Suggestion, SuggestionType};
 
@@ -198,7 +199,9 @@ fn rank_and_cap(candidates: Vec<Suggestion>, partial: &str) -> Vec<Suggestion> {
 }
 
 /// The match tier of `text` against the already-lowercased `needle`, or `None` if no match.
-/// Lower is better: `0` exact, `1` prefix, `2` subsequence.
+/// Lower is better: `0` exact, `1` prefix, `2` subsequence. The subsequence check is the shared
+/// [`crate::text_match::is_subsequence`] — the same rule the palette filter uses, so the two fuzzy
+/// matchers cannot drift.
 fn match_tier(text: &str, needle: &str) -> Option<u8> {
     let hay = text.to_ascii_lowercase();
     if hay == needle {
@@ -210,23 +213,6 @@ fn match_tier(text: &str, needle: &str) -> Option<u8> {
     } else {
         None
     }
-}
-
-/// Whether `needle` is a (not-necessarily-contiguous) subsequence of `hay`, in order. Both are
-/// already lowercased. Empty `needle` is vacuously a subsequence, but `rank_and_cap` handles the
-/// empty-partial case before calling here.
-fn is_subsequence(hay: &str, needle: &str) -> bool {
-    let mut needle_chars = needle.chars().peekable();
-    for hc in hay.chars() {
-        match needle_chars.peek() {
-            None => return true,
-            Some(&nc) if nc == hc => {
-                needle_chars.next();
-            }
-            _ => {}
-        }
-    }
-    needle_chars.peek().is_none()
 }
 
 #[cfg(test)]

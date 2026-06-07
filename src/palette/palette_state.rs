@@ -20,6 +20,7 @@
 //! (the App offers a soft "Replace?"). No SQL parsing anywhere.
 
 use crate::schema::{ColumnType, Schema};
+use crate::text_match::is_subsequence;
 
 /// One column the palette can pick: its name (verbatim header text) and sniffed [`ColumnType`].
 /// A lightweight owned snapshot of a [`crate::schema::ColumnMeta`] so the palette state is
@@ -210,8 +211,9 @@ impl PaletteState {
 
     /// The indices (into [`all_columns`](Self::all_columns)) of the columns matching the current
     /// needle, in table order. An empty needle matches every column. The match is a
-    /// case-insensitive subsequence (the same in-house rule the autocomplete ranker uses), so a
-    /// needle never reorders the universe — it only filters it (the determinism stable-order rule).
+    /// case-insensitive subsequence (the shared [`crate::text_match::is_subsequence`] — the same
+    /// rule the autocomplete ranker uses), so a needle never reorders the universe — it only filters
+    /// it (the determinism stable-order rule).
     pub fn filtered_indices(&self) -> Vec<usize> {
         if self.needle.is_empty() {
             return (0..self.all_columns.len()).collect();
@@ -353,23 +355,6 @@ impl PaletteState {
             self.cursor = len - 1;
         }
     }
-}
-
-/// Whether `needle` is a (not-necessarily-contiguous) subsequence of `hay`, in order. Both already
-/// lowercased. The same rule the autocomplete ranker uses (`candidates::is_subsequence`),
-/// re-expressed here so the palette does not import the autocomplete module just to filter.
-fn is_subsequence(hay: &str, needle: &str) -> bool {
-    let mut needle_chars = needle.chars().peekable();
-    for hc in hay.chars() {
-        match needle_chars.peek() {
-            None => return true,
-            Some(&nc) if nc == hc => {
-                needle_chars.next();
-            }
-            _ => {}
-        }
-    }
-    needle_chars.peek().is_none()
 }
 
 #[cfg(test)]

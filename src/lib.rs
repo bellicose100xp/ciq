@@ -34,6 +34,7 @@ pub mod schema;
 pub mod schema_bar;
 pub mod sql_ident;
 pub mod sql_lexer;
+pub mod text_match;
 pub mod theme;
 
 // The headless harness uses dev-only deps (`tempfile`) and is currently consumed only by
