@@ -27,6 +27,7 @@ pub mod grid;
 pub mod ingest;
 pub mod logging;
 pub mod output;
+pub mod palette;
 pub mod query;
 pub mod schema;
 pub mod schema_bar;

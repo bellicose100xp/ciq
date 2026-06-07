@@ -64,6 +64,15 @@ src/schema_bar.rs
 # distinction), so it earns the hard floor.
 src/output/emit.rs
 
+# Phase 4 (present now): the column palette generated-state core (D3) — the pure
+# toggle/reorder/filter/predicate/ownership state machine, and the pure `emit(state) -> String`
+# query builder (both identifier and facet-value quoting surfaces). The emitted byte format is a
+# stable identity surface (the ownership byte-compare relies on it) and a mis-quoted identifier or
+# value corrupts the generated query, so both earn the hard floor. The `palette_render` blit is
+# left off (a TestBackend snapshot seam, like `autocomplete_render`).
+src/palette/palette_state.rs
+src/palette/query_emit.rs
+
 # csv_config.rs (the minimal [csv] TOML loader) is a thin serde-parse-to-default seam — its real
 # behavior is covered by csv_config_tests, but the floor lives on the pure transform modules
 # above (judgment per the brief; the full config schema is Phase 5 / Q5).
