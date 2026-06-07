@@ -52,6 +52,39 @@ active column or the literal delimiter glyph as a real terminal renders them. Co
    delimiter for your file; a TSV shows `delim \t`). Confirm it is legible in a light and a dark
    terminal (the §4.7 polarity check).
 
+## Phase 4 — column palette (P4.2-P4.5)
+
+The headless suite proves the palette's generated SQL (`emit` goldens for both quoting surfaces),
+the toggle/reorder/filter/ownership state machine, the ownership byte-compare, and the popup's
+*logical* cells (80x24 `TestBackend` snapshot — which checkboxes / column names / right-aligned type
+badges land where). It does NOT prove the drawn popup glyphs, the real `Space`/arrow chords as the
+terminal delivers them, or the Replace-transition feel. Confirm by hand (open a CSV with a few
+typed columns including a reserved-word column if you can, e.g. `order`):
+
+1. **Open + checkboxes.** Press `Ctrl+K`. A bordered "columns" popup appears under the query bar
+   listing every column with a `[ ]` checkbox and a right-aligned type badge (`int`/`txt`/`date`/…).
+   Confirm the badges are legible and the box does not overflow the screen edge.
+2. **Space toggles.** Move the cursor (Up/Down) to a column and press `Space`. Confirm the checkbox
+   flips to `[x]` (accented/bold so the selection set reads at a glance) and `Space` again clears it.
+3. **Typing filters.** Type a few letters. Confirm the list narrows to columns matching (fuzzy), the
+   popup title shows the needle (`columns: <needle>`), and the **query bar stays untouched** (typing
+   filters the palette, it does not edit the bar). `Backspace` widens the list again.
+4. **Left/Right reorder.** Check two columns, move the cursor onto a checked one, and press
+   `Left`/`Right`. Confirm its position in the eventual projection moves earlier/later (verify via
+   step 5's emitted `SELECT`).
+5. **Enter emits.** Press `Enter`. Confirm the popup closes, the bar fills with the generated
+   `SELECT <picked cols> FROM t LIMIT n` (picked columns in your selection order; a reserved-word
+   column appears quoted as `"order"`), and the grid updates to that query within a debounce tick.
+6. **Esc closes, does not quit.** Reopen with `Ctrl+K`, press `Esc` — the popup closes and the app
+   stays running. (Esc only quits when no popup/palette is open.)
+7. **Replace transition (the UX cliff to eyeball).** Hand-type a query with a WHERE, e.g.
+   `SELECT id FROM t WHERE region='EU'`, then open the palette and emit/replace. Confirm accepting
+   Replace **discards the WHERE** and snaps the bar to the palette's generated query (correct-by-
+   construction per §0/D3, but verify it reads as a deliberate replace, not a silent data loss).
+8. **Color polarity.** Repeat 1-2 in a light and a dark terminal. Confirm the popup border, the
+   cursor-row reverse-video highlight, the checked-checkbox accent, and the dimmed type-badge column
+   are all legible in both (the §4.7 polarity check).
+
 ## Phase 4 — output modes / OSC 52 clipboard (P4.8)
 
 The headless suite proves the emitted bytes of every format (`render_output` goldens) AND the full

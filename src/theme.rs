@@ -103,6 +103,52 @@ pub mod schema_bar {
     }
 }
 
+/// Column-palette popup colors and styles (`dev/PLAN.md` §6.2, `dev/DECISIONS.md` D3).
+///
+/// The palette overlays the query bar: a bordered, fuzzy-filterable list of every column, each row
+/// a checkbox + the column name + a right-aligned type badge. It reuses the autocomplete popup
+/// chrome (border + selected reverse-video + dimmed type hint), so the styles mirror
+/// [`autocomplete`]; the checked-checkbox accent is the palette-specific addition. Color polarity
+/// (legibility light vs dark) is the §4.7 human-validated concern — centralizing here keeps it a
+/// single-file change.
+pub mod palette {
+    use ratatui::style::{Color, Modifier, Style};
+
+    /// The popup border / frame.
+    pub fn border() -> Style {
+        Style::default().fg(Color::DarkGray)
+    }
+
+    /// A normal (unselected) column row's text.
+    pub fn item() -> Style {
+        Style::default()
+    }
+
+    /// The row under the cursor — reverse video so it stands out regardless of terminal theme.
+    pub fn selected() -> Style {
+        Style::default().add_modifier(Modifier::REVERSED)
+    }
+
+    /// A checked column's checkbox glyph — accented + bold so the selection set reads at a glance.
+    pub fn checked() -> Style {
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// The right-aligned type badge (`int`/`txt`/…) — dimmed as secondary metadata.
+    pub fn type_hint() -> Style {
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM)
+    }
+
+    /// The popup title / footer hint line (the chord legend) — dimmed context.
+    pub fn hint() -> Style {
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM)
+    }
+}
+
 /// Grid (results table) colors and styles.
 pub mod grid {
     use ratatui::style::{Color, Modifier, Style};

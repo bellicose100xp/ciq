@@ -16,8 +16,9 @@
 //!  - [`query_emit`] — pure `emit(&PaletteState) -> String` (the canonical `SELECT`, both quoting
 //!    surfaces, the `LIMIT min(k,N)` rule). Named `query_emit` (not `emit.rs`) to avoid colliding
 //!    with `output/emit.rs` (§0/D3).
-//!  - `palette_render` (P4.5) — the thin blit reusing the autocomplete popup chrome.
+//!  - [`palette_render`] — the thin blit reusing the autocomplete popup chrome.
 
+pub mod palette_render;
 pub mod palette_state;
 pub mod query_emit;
 

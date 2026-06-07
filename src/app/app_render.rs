@@ -18,6 +18,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use crate::app::{App, AppPhase};
 use crate::autocomplete::autocomplete_render::{MAX_VISIBLE_ROWS, render_popup};
 use crate::grid::{GridFrame, GridView, grid_render, layout_grid};
+use crate::palette::palette_render::{MAX_VISIBLE_ROWS as PALETTE_MAX_ROWS, render_palette};
 use crate::schema_bar;
 use crate::theme;
 
@@ -39,6 +40,31 @@ pub fn render(app: &App, frame: &mut Frame) {
     // The autocomplete popup overlays the results pane, anchored under the query bar (drawn last
     // so it sits on top). Headless: still just cells in the TestBackend buffer.
     render_autocomplete(app, frame, chunks[0], chunks[1]);
+    // The column palette overlays the results pane when open (it and the autocomplete popup are
+    // mutually exclusive — opening the palette closes the popup). Drawn last so it sits on top.
+    render_palette_popup(app, frame, chunks[0], chunks[1]);
+}
+
+/// Overlay the column palette below the query bar, over the results pane, when it is open. Sized to
+/// the column count (capped by the palette's visible-row window and the available height) and to a
+/// readable fraction of the width. No-op when the palette is closed.
+fn render_palette_popup(app: &App, frame: &mut Frame, bar: Rect, results: Rect) {
+    if !app.is_palette_open() {
+        return;
+    }
+    let Some(palette) = app.palette() else {
+        return;
+    };
+    let rows = (palette.all_columns().len() as u16).clamp(1, PALETTE_MAX_ROWS);
+    let height = (rows + 2).min(results.height.max(1)); // +2 for the popup border
+    let width = popup_width(results.width);
+    let area = Rect {
+        x: bar.x,
+        y: bar.y.saturating_add(1),
+        width,
+        height,
+    };
+    render_palette(palette, frame, area);
 }
 
 /// Overlay the autocomplete popup directly below the query bar, over the results pane. Sized to

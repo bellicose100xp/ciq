@@ -226,10 +226,22 @@ impl App {
     /// text changes. `now_ms` is the synthetic/real time stamp for the debouncer (never a wall
     /// clock read inside this fn). Returns `true` if the app should quit.
     ///
-    /// When the autocomplete popup is open it intercepts Tab/Enter (accept), Up/Down (move
-    /// selection), and Esc (dismiss) *before* the focus routing — so Esc dismisses the popup
-    /// rather than quitting (it only quits when no popup is open).
+    /// When the column palette is open it intercepts ALL keys (toggle / reorder / filter / emit /
+    /// close) *first* — so Esc closes the palette and Ctrl-C still quits, but typing filters
+    /// columns rather than editing the bar. When the autocomplete popup is open it then intercepts
+    /// Tab/Enter (accept), Up/Down (move selection), and Esc (dismiss) before the focus routing —
+    /// so Esc dismisses the popup rather than quitting (it only quits when no popup is open).
+    /// `Ctrl+K` opens the palette from anywhere.
     pub fn on_key(&mut self, ev: KeyEvent, now_ms: u64) -> bool {
+        if self.palette_open {
+            return self.handle_palette_key(&ev, now_ms);
+        }
+        // Ctrl+K opens the column palette (when a schema is loaded). Checked before the popup /
+        // quit routing so the chord is reachable from any non-palette state.
+        if ev.mods.ctrl && matches!(ev.key, Key::Char('k') | Key::Char('K')) {
+            self.open_palette();
+            return false;
+        }
         if self.autocomplete.is_open() && self.handle_popup_key(&ev, now_ms) {
             return false; // the popup consumed the key
         }
@@ -242,6 +254,81 @@ impl App {
             Focus::Results => self.on_key_results(ev),
         }
         false
+    }
+
+    /// Open the column palette (P4.5/D3). No-op while loading / on a load error, or with no schema
+    /// (nothing to pick). Closes the autocomplete popup so the two overlays never stack. The
+    /// palette keeps whatever selection/needle state it already had (so reopening resumes where the
+    /// user left off).
+    fn open_palette(&mut self) {
+        if self.palette.is_none()
+            || matches!(self.phase, AppPhase::Loading | AppPhase::LoadError(_))
+        {
+            return;
+        }
+        self.autocomplete.close();
+        self.palette_open = true;
+    }
+
+    /// Close the palette popup without emitting.
+    fn close_palette(&mut self) {
+        self.palette_open = false;
+    }
+
+    /// Handle a key while the palette is open (P4.5). Returns whether the app should quit (only
+    /// `Ctrl+C` quits from here; `Esc` closes the palette). The keys, mirroring the §6.2 chord set:
+    ///  - `Space` toggles the column under the cursor (checked <-> unchecked);
+    ///  - `Up`/`Down` move the cursor through the filtered list;
+    ///  - `Left`/`Right` reorder the cursor's checked column earlier/later in the projection;
+    ///  - a printable char appends to the fuzzy needle; `Backspace` pops it;
+    ///  - `Enter` emits the palette's query into the bar (-> debouncer -> worker) and closes;
+    ///  - `Esc` closes without emitting.
+    fn handle_palette_key(&mut self, ev: &KeyEvent, now_ms: u64) -> bool {
+        if ev.mods.ctrl && matches!(ev.key, Key::Char('c') | Key::Char('C')) {
+            return true; // Ctrl-C still quits
+        }
+        let Some(palette) = self.palette.as_mut() else {
+            self.palette_open = false;
+            return false;
+        };
+        match &ev.key {
+            Key::Esc => self.close_palette(),
+            Key::Enter => self.emit_palette_query(now_ms),
+            Key::Char(' ') => palette.toggle_cursor(),
+            Key::Up => palette.cursor_up(),
+            Key::Down => palette.cursor_down(),
+            Key::Left => {
+                if let Some(i) = palette.cursor_column_index() {
+                    palette.move_selection_up(i);
+                }
+            }
+            Key::Right => {
+                if let Some(i) = palette.cursor_column_index() {
+                    palette.move_selection_down(i);
+                }
+            }
+            Key::Char(c) => palette.push_needle(*c),
+            Key::Backspace => palette.pop_needle(),
+            _ => {}
+        }
+        false
+    }
+
+    /// Emit the palette's generated query into the bar, record it as palette-owned, schedule it
+    /// (-> debouncer -> worker, the normal path), and close the palette. The single point where a
+    /// palette `Enter` reaches the engine — through exactly the same dispatch path a typed query
+    /// uses, so there is no second engine entry.
+    fn emit_palette_query(&mut self, now_ms: u64) {
+        let Some(palette) = self.palette.as_mut() else {
+            self.palette_open = false;
+            return;
+        };
+        let sql = emit_palette(palette);
+        palette.record_emitted(&sql);
+        self.editor.set_text(&sql);
+        self.refresh_autocomplete();
+        self.close_palette();
+        self.schedule(now_ms);
     }
 
     /// Handle a key while the popup is open. Returns `true` if the popup consumed it (so the

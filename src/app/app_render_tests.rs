@@ -204,3 +204,21 @@ fn open_popup_overlays_the_screen() {
         "popup candidate overlaid, screen:\n{screen}"
     );
 }
+
+#[test]
+fn open_palette_overlays_columns_with_checkboxes() {
+    use crate::schema::{ColumnMeta, Schema};
+    let mut a = app();
+    a.set_schema(Schema::new(vec![
+        ColumnMeta::new("id", ColumnType::Int),
+        ColumnMeta::new("status", ColumnType::Text),
+    ]));
+    a.on_loaded("ready");
+    // Ctrl+K opens the column palette; it overlays the results area with checkbox rows.
+    a.on_key(KeyEvent::new(Key::Char('k'), crate::app::KeyMods::CTRL), 0);
+    assert!(a.is_palette_open());
+    let screen = render(&a, 40, 12);
+    assert!(screen.contains("[ ]"), "checkbox rows, screen:\n{screen}");
+    assert!(screen.contains("status"), "column row, screen:\n{screen}");
+    assert!(screen.contains("columns"), "title, screen:\n{screen}");
+}
