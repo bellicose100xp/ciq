@@ -1,0 +1,11 @@
+# Shell-exempt allowlist (dev/PLAN.md §0/D5, §4.7).
+#
+# The ONLY files permitted to carry a `// ciq:shell-exempt` marker — the small, frozen,
+# human-validated TUI surface that cannot be exercised headlessly (real-terminal paint,
+# raw-mode input, clipboard/OSC52, resize). CI (dev/ci/check-shell-exempt.sh) fails if the
+# marker appears on any file NOT listed here, so the human surface cannot silently grow.
+#
+# One repo-relative path per line; blank lines and `#` comments ignored.
+#
+# Empty at Phase 1 — no terminal-edge files exist yet. Entries are added (with the §4.7 row
+# they correspond to) as the crossterm flush, clipboard, and paint shims land in Phase 2+.

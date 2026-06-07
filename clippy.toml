@@ -1,0 +1,14 @@
+# Determinism guard (dev/PLAN.md §0/D5, §4.4): ban ambient wall-clock / RNG in library logic.
+# A flaky test gives a false fix signal and breaks the AI build->test->fix loop, so time must
+# enter logic as a `u64` parameter (the debouncer's time-as-parameter design) and randomness
+# must be explicitly seeded. The only legitimate callers are the named seam wrappers.
+#
+# Enforced by the existing `cargo clippy ... -D warnings` invocation (no separate CI gate —
+# it rides the lint gate). When a seam wrapper genuinely needs the clock, allow it locally
+# with `#[allow(clippy::disallowed_methods)]` and a comment naming why it's a seam.
+disallowed-methods = [
+    { path = "std::time::Instant::now", reason = "nondeterministic clock; thread a u64 timestamp through instead (see debouncer seam)" },
+    { path = "std::time::SystemTime::now", reason = "nondeterministic clock; thread a u64 timestamp through instead" },
+    { path = "rand::random", reason = "unseeded RNG breaks determinism; use an explicit seed" },
+    { path = "rand::thread_rng", reason = "unseeded RNG breaks determinism; use an explicit seed" },
+]

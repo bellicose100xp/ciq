@@ -42,7 +42,9 @@ These are not repeated per-task; they apply to **every** task that writes Rust:
 
 ---
 
-## Phase 1 — Scaffold + headless harness + QueryEngine wrapper + parse-once  ·  Status: TODO  ·  **HARD GATE for all later phases**
+## Phase 1 — Scaffold + headless harness + QueryEngine wrapper + parse-once  ·  Status: **DONE** ✅  ·  was: HARD GATE for all later phases
+
+> **Phase 1 exit met (2026-06-07):** all P1.1–P1.9 DONE; `cargo test --all-features -- --test-threads=1` green (46 tests) with no TTY; fmt + clippy (incl. determinism gate) clean; release builds clean; tiered-coverage + shell-containment gates locally verified. Human-validation: none (no interactive surface yet). **Phase 2 (vertical slice) is unblocked.** Caveat: CI workflow is authored + locally proven but won't *execute* until a GitHub remote exists.
 
 > The testability prerequisite. Nothing in Phase 2+ starts until P1 exits green. Stands up the crate, the engine trait + real impl, the `src/schema/` module, the headless harness, and the 4 CI gates + D5 tiered coverage.
 
@@ -55,8 +57,8 @@ These are not repeated per-task; they apply to **every** task that writes Rust:
 | P1.5 | `src/engine/fake_engine.rs` — deterministic in-memory `FakeEngine` (no DuckDB) | P1.3 | **DONE** | Implements `QueryEngine` over canned outcomes (default + exact-match overrides); counting hooks (`load_count`/`query_count`/`distinct_count`); models interrupt -> `Cancelled`; no-terminal-IO self-test. 7 tests (34 total). |
 | P1.6 | `src/harness/` — `EngineHarness` (load fixture, fire SQL, assert `QueryOutcome`) | P1.4, P1.5 | **DONE** | `EngineHarness::from_csv`/`open`; no-TTY self-test (`TERM` unset); deterministic. `harness` mod is `#[cfg(test)]` (uses dev-dep `tempfile`); promote behind a `testutil` feature when `tests/` E2E needs it. |
 | P1.7 | `AppHarness` minimal stub (renders `App` to `ratatui::TestBackend`; `now_ms` synthetic-clock seam) | P1.6 | **DONE** | Minimal `App` (Loading/Ready phase + status) renders a bordered placeholder; `AppHarness::screen()` returns serialized buffer; deterministic render; no-TTY self-test; `advance(ms)` seam for P2 debouncer. Added `ratatui = "0.29"`. 46 tests. |
-| P1.8 | CI: 4 gates (`test --test-threads=1` / `tarpaulin` / `fmt` / `clippy -D warnings`) + `clippy.toml` `disallowed-methods` riding clippy ([§0/D5](#), S1) | P1.1 | TODO | All 4 jobs green on clean checkout. A planted `Instant::now()` in a lib module fails clippy. No build job, no binary gate, no "7th gate". |
-| P1.9 | CI: D5 tiered coverage — pure-core **branch** floor (hard) + project-wide 95% **warn-only** + shell-marker containment (hard) | P1.8, P1.2, P1.3 | TODO | Core allowlist defined (paths from P1.2/P1.3 onward); tarpaulin branch coverage verified working (else documented as line-only with a flagged gap); a `// ciq:shell-exempt` marker on a non-allowlisted file fails CI; project-wide <95% warns but passes. |
+| P1.8 | CI: 4 gates (`test --test-threads=1` / `tarpaulin` / `fmt` / `clippy -D warnings`) + `clippy.toml` `disallowed-methods` riding clippy ([§0/D5](#), S1) | P1.1 | **DONE** | `.github/workflows/ci.yml` (test/lint/shell-containment/coverage jobs); `clippy.toml` bans Instant/SystemTime::now + rand. **Verified locally**: planted `SystemTime::now()` in a lib module fails clippy; removed → clean. No build job, no binary gate, no "7th gate". (CI can't *run* until a GitHub remote exists, but every gate's logic is locally proven.) |
+| P1.9 | CI: D5 tiered coverage — pure-core **line** floor (hard) + project-wide 95% **warn-only** + shell-marker containment (hard) | P1.8, P1.2, P1.3 | **DONE** | `dev/core-modules.txt` allowlist (schema + engine/types now; grows per phase); `dev/ci/core-floor.sh` (HARD, **verified** passes ≥floor / fails <floor exit 1), `coverage-warn.sh` (WARN-only, exit 0), `check-shell-exempt.sh` + `dev/shell-exempt.txt` (HARD, **verified** fires on planted marker). Gates on **line** rate not branch — tarpaulin branch support is weak (D5 risk #1); documented, switch to branch when trustworthy. |
 
 **Phase 1 exit:** all P1 tasks `DONE`; `cargo test --all-features -- --test-threads=1` green with no TTY; the 4 CI gates + tiered coverage green. **Human-validation: none** (no interactive surface yet).
 

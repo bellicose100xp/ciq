@@ -1,0 +1,27 @@
+# Pure-core module allowlist (dev/PLAN.md §0/D5).
+#
+# The HARD coverage-floor tier: pure, data-in/data-out modules where "cover every branch" and
+# "write a real behavior test" are the same act — so a hard floor here is free of the
+# test-padding failure mode and is the highest-value place to harden (a wrong SQL-context
+# silently corrupts every autocomplete suggestion).
+#
+# One repo-relative path prefix per line (matches files whose cobertura filename starts with
+# it); blank lines and `#` comments ignored. Grows as pure-core modules land per phase.
+#
+# Phase 1 (present now): schema model + types.
+src/schema.rs
+src/schema/types.rs
+src/engine/types.rs
+
+# Phase 2+ (added as they land): SQL preprocess, query_state stale-discard,
+# grid layout/col_width math.
+# src/query/preprocess.rs
+# src/query/query_state.rs
+# src/grid/grid_layout.rs
+# src/grid/col_width.rs
+
+# Phase 3+ (added as they land): autocomplete lexer/context/candidates/keywords.
+# src/autocomplete/sql_lexer.rs
+# src/autocomplete/clause_context.rs
+# src/autocomplete/candidates.rs
+# src/autocomplete/sql_keywords.rs
