@@ -1,0 +1,39 @@
+# Rust build artifacts
+/target/
+
+# Rust backup files
+**/*.rs.bk
+
+# macOS
+.DS_Store
+
+# Vim swap files
+*.swp
+*.swo
+*~
+
+# Editor directories
+.vscode/
+.idea/
+.kiro/
+
+# Test artifacts
+*.profraw
+*.profdata
+
+# Coverage artifacts
+coverage/
+*.lcov
+lcov.info
+coverage_output.log
+llvm_cov_output.log
+
+# Insta pending snapshots
+*.snap.new
+
+# Claude Code runtime
+.claude/scheduled_tasks.lock
+.claude/worktrees/
+
+# Local benchmark / scratch data
+/*.csv
