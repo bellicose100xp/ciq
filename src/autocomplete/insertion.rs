@@ -21,8 +21,7 @@
 //! `insertion_tests`). It works in **byte** offsets (matching the lexer / detector / candidate
 //! generator, which are all byte-indexed); the App converts its character cursor at the seam.
 
-use crate::schema::ColumnType;
-use crate::sql_ident::{quote_ident_if_needed, single_quote_literal};
+use crate::sql_ident::{quote_ident_if_needed, render_typed_value};
 use crate::sql_lexer::{TokenKind, tokenize};
 
 use super::autocomplete_state::{Suggestion, SuggestionType};
@@ -59,35 +58,18 @@ pub fn insert_suggestion(text: &str, cursor: usize, suggestion: &Suggestion) -> 
 ///  - everything else (keywords, operators, functions, plain columns) -> verbatim.
 pub fn render_insert_text(s: &Suggestion) -> String {
     match s.suggestion_type {
+        // The all-columns wildcard `*` is offered as a `Field` in the SELECT-list context and
+        // inserts bare (it is the wildcard token, not an identifier). Any other field name is
+        // identifier-quoted as needed — so a real column whose name happens to contain `*` would
+        // still be quoted by `quote_ident_if_needed`; only the literal lone `*` wildcard is bare.
+        SuggestionType::Field if s.text == "*" => "*".to_string(),
         SuggestionType::Field => quote_ident_if_needed(&s.text),
-        SuggestionType::Value => quote_value(&s.text, s.field_type.as_ref()),
+        // A value suggestion is rendered bare for a numeric/bool column with a bare-safe value and
+        // single-quoted otherwise — via the one shared [`render_typed_value`], so insertion and the
+        // palette emitter apply the exact same bare-vs-quote rule (no drift).
+        SuggestionType::Value => render_typed_value(&s.text, s.field_type.as_ref()),
         _ => s.text.clone(),
     }
-}
-
-/// Quote a value for insertion: a single-quoted string literal (doubling any embedded `'`) for
-/// text/temporal columns and unknown-type values, bare for numeric/boolean columns — **except** a
-/// non-finite float (`inf`/`-inf`/`NaN`, as `f64::to_string` renders them), which DuckDB does not
-/// accept as a bare literal (it parses bare `inf` as a column reference). Such a value falls back
-/// to a quoted literal, which DuckDB casts against the column's DOUBLE type (`= 'Infinity'`).
-fn quote_value(value: &str, ty: Option<&ColumnType>) -> String {
-    let bare = matches!(
-        ty,
-        Some(ColumnType::Int | ColumnType::Float | ColumnType::Bool)
-    ) && is_bare_literal(value);
-    if bare {
-        value.to_string()
-    } else {
-        single_quote_literal(value)
-    }
-}
-
-/// Whether `value` is safe to emit as a bare numeric/boolean literal — i.e. it is not a non-finite
-/// float rendering (`inf`/`-inf`/`NaN`/`+inf`), which DuckDB rejects as a bare literal. A finite
-/// numeric/boolean rendering (`42`, `3.14`, `-0`, `true`) is safe; anything that parses as a
-/// non-finite `f64` is not.
-fn is_bare_literal(value: &str) -> bool {
-    !value.parse::<f64>().is_ok_and(|f| !f.is_finite())
 }
 
 /// The largest char boundary of `text` that is `<= byte`. `str::floor_char_boundary` is unstable,

@@ -35,14 +35,19 @@ pub fn quote_ident(col: &str) -> String {
 
 /// Quote `name` only if it would not re-lex as a bare identifier — i.e. it is empty, starts
 /// with a digit, contains a char outside `[A-Za-z0-9_]`, or collides with a reserved keyword.
-/// A bare `*` (the all-columns wildcard) is never quoted. Otherwise returns it verbatim.
+/// Otherwise returns it verbatim.
 ///
 /// This is the Q3 emit policy: raw names pass through untouched; only names that *need*
 /// quoting get it, so common identifiers stay readable in the generated SQL. The
 /// reserved-word check defers to [`crate::sql_lexer::is_reserved_keyword`] so "what the lexer
 /// would re-read as a keyword" and "what gets quoted on emit" stay in lockstep (one table).
+///
+/// Note this is *identifier* quoting: a column literally named `*` is quoted as `"*"` (the literal
+/// column), NOT left bare. The emitter's own all-columns wildcard is the literal string `*` built
+/// directly by its caller ([`crate::palette::query_emit`]'s empty-selection path), which never
+/// routes a real column name through here — so there is no live wildcard caller to exempt.
 pub fn quote_ident_if_needed(name: &str) -> String {
-    if name == "*" || (!needs_quoting(name) && !is_reserved_keyword(name)) {
+    if !needs_quoting(name) && !is_reserved_keyword(name) {
         name.to_string()
     } else {
         quote_ident(name)
@@ -85,6 +90,42 @@ pub fn single_quote_literal(s: &str) -> String {
     }
     out.push('\'');
     out
+}
+
+/// Whether `value` is safe to emit as a **bare** numeric/boolean literal: a `true`/`false` boolean,
+/// or a finite number. Any non-numeric text, the empty string, or a non-finite float rendering
+/// (`inf`/`-inf`/`NaN`) is **not** bare-safe (DuckDB would read it as an identifier), so the caller
+/// single-quotes it instead.
+///
+/// The single bare-vs-quote predicate shared by every value emitter ([`crate::palette::query_emit`]
+/// and [`crate::autocomplete::insertion`]) — so the "is this value safe bare?" decision can no more
+/// drift between them than the escapers above can. (It deliberately uses the *stricter* of the two
+/// historical copies: only a boolean or finite number is bare; everything else is quoted.)
+pub fn is_bare_literal(value: &str) -> bool {
+    if value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("false") {
+        return true;
+    }
+    value.parse::<f64>().is_ok_and(|f| f.is_finite())
+}
+
+/// Render a predicate/insert value with column-type-correct quoting — the single value renderer
+/// both emitters share. A numeric (`Int`/`Float`) or `Bool` column whose value is a safe
+/// [`is_bare_literal`] emits **bare** (`amount > 5` stays `5`); everything else — a text/temporal/
+/// `Other` column, an absent type (`None`), or a numeric column with a non-bare-safe value (a typo,
+/// a non-finite float) — single-quotes the value via [`single_quote_literal`]. Quoting a value that
+/// "should" be bare is always safe (DuckDB casts the string literal to the column type); emitting a
+/// bare token that isn't a real literal is the only unsafe direction, which this never does.
+pub fn render_typed_value(value: &str, ty: Option<&crate::schema::ColumnType>) -> String {
+    use crate::schema::ColumnType;
+    let bare = matches!(
+        ty,
+        Some(ColumnType::Int | ColumnType::Float | ColumnType::Bool)
+    ) && is_bare_literal(value);
+    if bare {
+        value.to_string()
+    } else {
+        single_quote_literal(value)
+    }
 }
 
 #[cfg(test)]

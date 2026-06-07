@@ -21,8 +21,7 @@
 //! projection order, so reordering the selection reorders the emitted `SELECT` list.
 
 use crate::engine::duckdb_engine::TABLE;
-use crate::schema::ColumnType;
-use crate::sql_ident::{quote_ident_if_needed, single_quote_literal};
+use crate::sql_ident::{quote_ident_if_needed, render_typed_value, single_quote_literal};
 
 use super::palette_state::{PaletteState, Predicate, PredicateOp};
 
@@ -90,7 +89,9 @@ fn conjunction(predicates: &[Predicate]) -> String {
 /// is meaningless, so it is treated as a presence test) — but the public API only constructs
 /// value-less predicates via `Predicate::null_test`, which the App restricts to `Eq`/`Neq`.
 /// A value predicate renders `col <op> <quoted-value>`, the value bare for numeric/bool columns and
-/// single-quoted for text/temporal (and unknown) columns.
+/// single-quoted for text/temporal (and unknown) columns — **except** a `LIKE`/`NOT LIKE` pattern,
+/// which is always a string literal regardless of the column's type (so `code LIKE 5` on a numeric
+/// column emits `code LIKE '5'`, the intended string match, not a bare numeric).
 fn render_predicate(p: &Predicate) -> String {
     let col = quote_ident_if_needed(&p.column);
     match &p.value {
@@ -104,7 +105,12 @@ fn render_predicate(p: &Predicate) -> String {
         }
         Some(value) => {
             let op = op_sql(p.op);
-            let rendered = render_value(value, &p.ty);
+            let rendered = if matches!(p.op, PredicateOp::Like) {
+                // A LIKE pattern is always a string literal, independent of the column type.
+                single_quote_literal(value)
+            } else {
+                render_typed_value(value, Some(&p.ty))
+            };
             format!("{col} {op} {rendered}")
         }
     }
@@ -121,35 +127,6 @@ fn op_sql(op: PredicateOp) -> &'static str {
         PredicateOp::Ge => ">=",
         PredicateOp::Like => "LIKE",
     }
-}
-
-/// Render a predicate value with column-type-correct quoting (quoting surface (b)):
-///  - numeric (`Int`/`Float`) and `Bool` columns -> **bare** when the value is a safe bare literal
-///    (a finite number / a boolean), so `amount > 5` stays `5`, not `'5'`;
-///  - text, temporal (`Date`/`Timestamp`), and `Other` columns -> **single-quoted** string literal
-///    with embedded `'` doubled (`O'Brien` -> `'O''Brien'`, `2024-01-01` -> `'2024-01-01'`);
-///  - a numeric/bool column whose value is **not** a safe bare literal (e.g. a non-numeric typo, or
-///    a non-finite float) also falls back to a quoted literal so the emitted SQL never injects an
-///    unquoted token DuckDB would read as an identifier.
-fn render_value(value: &str, ty: &ColumnType) -> String {
-    let bare = matches!(ty, ColumnType::Int | ColumnType::Float | ColumnType::Bool)
-        && is_bare_literal(value);
-    if bare {
-        value.to_string()
-    } else {
-        single_quote_literal(value)
-    }
-}
-
-/// Whether `value` is safe to emit as a bare numeric/boolean literal: a `true`/`false` boolean, or
-/// a finite number. A non-finite float rendering (`inf`/`NaN`) or any non-numeric text is **not**
-/// bare-safe (DuckDB would read it as an identifier), so it falls back to a quoted literal — the
-/// same rule [`crate::autocomplete::insertion`] applies on value insert, kept consistent.
-fn is_bare_literal(value: &str) -> bool {
-    if value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("false") {
-        return true;
-    }
-    value.parse::<f64>().is_ok_and(|f| f.is_finite())
 }
 
 #[cfg(test)]

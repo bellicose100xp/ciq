@@ -64,6 +64,8 @@ fn keyword_suggestion_inserts_verbatim() {
 
 #[test]
 fn star_field_inserts_unquoted() {
+    // The SELECT-list all-columns wildcard `*` inserts bare (it is the wildcard token, not an
+    // identifier) — distinct from a real column whose name contains special chars, which quotes.
     let q = "SELECT ";
     let (out, _) = insert_suggestion(q, q.len(), &field("*"));
     assert_eq!(out, "SELECT *");
@@ -162,6 +164,21 @@ fn non_finite_float_value_is_quoted_not_bare() {
     assert_eq!(out, "WHERE amount = '-inf'");
     let (out, _) = insert_suggestion(q, q.len(), &value("NaN", ColumnType::Float));
     assert_eq!(out, "WHERE amount = 'NaN'");
+}
+
+#[test]
+fn non_numeric_value_on_numeric_column_is_quoted_not_bare() {
+    // The shared `is_bare_literal` rule (consolidated into `sql_ident`): a non-numeric value on a
+    // numeric column is single-quoted, never emitted as a bare identifier token. This pins the
+    // bare-vs-quote predicate to the same (safe) rule the palette emitter uses — the two no longer
+    // diverge. `hello`/`""`/`0x1F` are all non-numeric -> quoted.
+    let q = "WHERE amount = ";
+    let (out, _) = insert_suggestion(q, q.len(), &value("hello", ColumnType::Int));
+    assert_eq!(out, "WHERE amount = 'hello'");
+    let (out, _) = insert_suggestion(q, q.len(), &value("0x1F", ColumnType::Int));
+    assert_eq!(out, "WHERE amount = '0x1F'");
+    let (out, _) = insert_suggestion(q, q.len(), &value("", ColumnType::Int));
+    assert_eq!(out, "WHERE amount = ''");
 }
 
 // --- robustness ---

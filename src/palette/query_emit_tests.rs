@@ -78,6 +78,18 @@ fn projection_escapes_embedded_double_quote() {
     assert_eq!(emit(&s), "SELECT \"we\"\"ird\" FROM t LIMIT 1000");
 }
 
+#[test]
+fn projection_quotes_a_column_literally_named_star() {
+    // A column whose header is exactly `*` must project as the quoted literal `"*"`, NOT a bare `*`
+    // that DuckDB would silently widen to all columns (the projection-contract divergence).
+    let mut s = state_with(vec![
+        ColumnRef::new("*", ColumnType::Text),
+        ColumnRef::new("name", ColumnType::Text),
+    ]);
+    s.toggle(0); // check only the `*` column
+    assert_eq!(emit(&s), "SELECT \"*\" FROM t LIMIT 1000");
+}
+
 // ── (b) facet-predicate value quoting/escaping ────────────────────────────────────────────────
 
 #[test]
@@ -219,6 +231,20 @@ fn predicate_like_renders_string_literal() {
         emit(&s),
         "SELECT * FROM t WHERE name LIKE '%acme%' LIMIT 1000"
     );
+}
+
+#[test]
+fn predicate_like_on_numeric_column_quotes_the_pattern() {
+    // A LIKE pattern is ALWAYS a string literal, regardless of column type — so `code LIKE 5` on a
+    // numeric column emits `code LIKE '5'` (the intended string match), not a bare numeric `5`.
+    let mut s = state_with(cols());
+    s.add_predicate(Predicate::new(
+        "id",
+        ColumnType::Int,
+        PredicateOp::Like,
+        "5",
+    ));
+    assert_eq!(emit(&s), "SELECT * FROM t WHERE id LIKE '5' LIMIT 1000");
 }
 
 #[test]
