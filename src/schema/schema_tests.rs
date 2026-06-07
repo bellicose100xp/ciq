@@ -66,3 +66,15 @@ fn names_are_verbatim_not_quoted() {
     let s = Schema::new(vec![ColumnMeta::new("Total ($)", ColumnType::Float)]);
     assert_eq!(s.column("Total ($)").unwrap().name, "Total ($)");
 }
+
+#[test]
+fn columns_slice_is_table_order() {
+    // The full ColumnMeta slice (consumed by grid layout / schema bar) is returned in
+    // construction (CSV column) order.
+    let s = sample();
+    let cols = s.columns();
+    assert_eq!(cols.len(), 4);
+    assert_eq!(cols[0], ColumnMeta::new("id", ColumnType::Int));
+    assert_eq!(cols[3], ColumnMeta::new("status", ColumnType::Text));
+    assert!(Schema::default().columns().is_empty());
+}

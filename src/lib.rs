@@ -21,6 +21,7 @@
 pub mod app;
 pub mod engine;
 pub mod error;
+pub mod grid;
 pub mod logging;
 pub mod query;
 pub mod schema;

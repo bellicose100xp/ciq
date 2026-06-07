@@ -254,6 +254,27 @@ fn never_panics_on_adversarial_input() {
     }
 }
 
+#[test]
+fn error_messages_are_stable_ascii() {
+    // The status-line text for each rejection arm (consumed by the App's error line).
+    assert_eq!(PreprocessError::Empty.message(), "empty query");
+    assert_eq!(
+        PreprocessError::MultipleStatements.message(),
+        "single statement only"
+    );
+    assert_eq!(
+        PreprocessError::NotReadOnly.message(),
+        "read-only SELECT queries only"
+    );
+    for e in [
+        PreprocessError::Empty,
+        PreprocessError::MultipleStatements,
+        PreprocessError::NotReadOnly,
+    ] {
+        assert!(e.message().is_ascii());
+    }
+}
+
 proptest::proptest! {
     /// Total-function guarantee: `prepare_interactive` returns (never panics) for ANY input,
     /// including multi-byte UTF-8 and unbalanced quotes/parens/comments. The byte scanner must
