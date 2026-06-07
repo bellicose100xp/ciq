@@ -165,6 +165,54 @@ fn unknown_csv_key_falls_back_to_default_with_warning() {
     assert_eq!(r.config, Config::default());
 }
 
+// Every known section validates its own keys (the module-doc contract) — not just [csv]. A typo'd
+// key in [general]/[theme]/[ai]/[history] fails the parse -> safe defaults + a warning, so the user
+// gets a signal instead of the feature silently running on the default.
+
+#[test]
+fn unknown_general_key_falls_back_to_default_with_warning() {
+    let r = load_config_str("[general]\nrowlimit = 250\n"); // should be row_limit
+    assert!(r.warning.is_some());
+    assert_eq!(r.config, Config::default());
+}
+
+#[test]
+fn unknown_theme_key_falls_back_to_default_with_warning() {
+    // A stray top-level [theme] key is rejected; the [theme.overrides] map stays open.
+    let r = load_config_str("[theme]\nmod = \"dark\"\n"); // should be mode
+    assert!(r.warning.is_some());
+    assert_eq!(r.config, Config::default());
+}
+
+#[test]
+fn theme_overrides_map_still_accepts_arbitrary_inner_keys() {
+    // deny_unknown_fields rejects unknown [theme] keys but never the open overrides map.
+    let c = cfg("[theme.overrides]\n\"some.future.surface\" = \"Cyan\"\n");
+    assert_eq!(c.theme().override_for("some.future.surface"), Some("Cyan"));
+}
+
+#[test]
+fn unknown_history_key_falls_back_to_default_with_warning() {
+    let r = load_config_str("[history]\nmax_entry = 50\n"); // should be max_entries
+    assert!(r.warning.is_some());
+    assert_eq!(r.config, Config::default());
+}
+
+#[test]
+fn raw_api_key_in_ai_section_is_rejected_with_warning() {
+    // Secret hygiene: a user who mistypes `api_key_env` as `api_key` and pastes a real secret gets
+    // a warning that the key is being ignored, rather than the secret silently sitting at rest in a
+    // plaintext config. (The key is only ever read from the env var regardless — this is the
+    // defensive signal, not a credential path.)
+    let r = load_config_str("[ai]\nenabled = true\napi_key = \"sk-SECRET\"\n");
+    assert!(
+        r.warning.is_some(),
+        "a raw api_key in [ai] must surface a warning"
+    );
+    assert_eq!(r.config, Config::default());
+    assert!(!r.config.ai().is_active());
+}
+
 #[test]
 fn malformed_toml_falls_back_to_default_with_warning() {
     let r = load_config_str("this = = not valid");

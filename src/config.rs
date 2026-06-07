@@ -24,9 +24,12 @@
 //! path from env vars and is the only filesystem touch; tests never invoke it.
 //!
 //! **Forward-compat by construction:** unknown *top-level* tables are tolerated (a future
-//! `[export]` block won't break an older binary), while each known section validates its own keys.
-//! A parse error never blocks startup — it falls back to defaults and surfaces a warning (jiq's
-//! parse-to-default-on-error pattern).
+//! `[export]` block won't break an older binary), while each known section validates its own keys
+//! (every section carries `deny_unknown_fields`). A typo'd key in any known section therefore
+//! surfaces a warning instead of being silently dropped — which for `[ai]` is secret hygiene: a
+//! stray `api_key = "sk-…"` (a natural mistake for `api_key_env`) is rejected and warned about
+//! rather than left at rest in a plaintext config. A parse error never blocks startup — it falls
+//! back to defaults and surfaces a warning (jiq's parse-to-default-on-error pattern).
 
 use serde::Deserialize;
 

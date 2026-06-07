@@ -30,10 +30,13 @@ pub enum ThemeMode {
 /// The `[theme]` section: the polarity mode plus a forward-compat override map.
 ///
 /// `overrides` is a `surface.role = "Color"` map (e.g. `grid.header = "Cyan"`) the renderer can
-/// resolve later; unknown surfaces/roles are simply ignored (forward-compat), and the values are
-/// validated where they are consumed, not here — this section stays a pure data carrier.
+/// resolve later; unknown surfaces/roles inside that map are simply ignored (forward-compat), and
+/// the values are validated where they are consumed, not here — this section stays a pure data
+/// carrier. `deny_unknown_fields` (matching the other sections) rejects an unknown *top-level*
+/// `[theme]` key — e.g. a `mod` typo — without touching the deliberately open `[theme.overrides]`
+/// map, whose arbitrary inner keys are still accepted.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ThemeConfig {
     /// Light/dark adaptation mode.
     pub mode: ThemeMode,

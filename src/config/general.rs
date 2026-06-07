@@ -16,14 +16,16 @@ pub const DEFAULT_ROW_LIMIT: usize = 1000;
 /// The `[general]` section: cross-cutting engine defaults the rest of ciq reads as plain data.
 ///
 /// `threads` and `memory_limit` map onto DuckDB `SET` pragmas the engine applies at load (the
-/// `SET threads=<n>` lever validated by the A1/A2 spike, `dev/ASSUMPTIONS.md`). `None` means
-/// "leave DuckDB's own default" — ciq never forces a bound the user didn't ask for.
+/// `SET threads=<n>` lever validated by the A1/A2 spike, `dev/ASSUMPTIONS.md`). For `threads`,
+/// `None` means the engine's bounded default (`DEFAULT_THREADS`, the A2 cap); for `memory_limit`,
+/// `None` leaves DuckDB's own default. The accessors return the raw `Option`; the engine
+/// (`DuckdbEngine::open_with`) folds in the thread default and applies `memory_limit` only when set.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct GeneralConfig {
     /// Default interactive `LIMIT N` (the viewport cap). `None` -> [`DEFAULT_ROW_LIMIT`].
     pub row_limit: Option<usize>,
-    /// DuckDB worker-thread bound (`SET threads=<n>`). `None` -> DuckDB's own default.
+    /// DuckDB worker-thread bound (`SET threads=<n>`). `None` -> the engine's bounded default.
     pub threads: Option<u32>,
     /// DuckDB memory cap as a DuckDB size string (e.g. `"4GB"`, `"512MB"`) applied as
     /// `SET memory_limit='<s>'`. `None` -> DuckDB's own default. Validated by DuckDB at load — a
@@ -41,7 +43,7 @@ impl GeneralConfig {
             .unwrap_or(DEFAULT_ROW_LIMIT)
     }
 
-    /// The configured DuckDB thread bound, if any (`None` = leave DuckDB's default).
+    /// The configured DuckDB thread bound, if any (`None` = the engine applies its bounded default).
     pub fn threads(&self) -> Option<u32> {
         self.threads
     }

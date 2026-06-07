@@ -18,7 +18,7 @@ pub const DEFAULT_MAX_ENTRIES: usize = 1000;
 /// in-session ring always works even when `enabled = false` — `false` only disables the on-disk
 /// read/write (the same "session-only" fallback jiq uses when a save fails).
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct HistoryConfig {
     /// Whether to persist history to disk. `false` keeps history session-only (in-memory ring
     /// still works). Default `true`.

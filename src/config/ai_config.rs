@@ -31,8 +31,15 @@ pub enum AiProviderType {
 /// **No secret lives here.** `api_key_env` names an environment variable (e.g.
 /// `ANTHROPIC_API_KEY`); the provider reads the key from the environment at call time. A config
 /// file with `provider = "none"` (or no `[ai]` block) leaves the feature off.
+///
+/// `deny_unknown_fields` (matching `[csv]`) is load-bearing for secret hygiene: a user who
+/// mistakes `api_key_env` for `api_key` and writes `api_key = "sk-…"` here gets a parse error ->
+/// the "invalid config, using defaults" warning, rather than the secret being silently dropped and
+/// left at rest in a plaintext config while the tool reports everything is fine. The key is still
+/// only ever read from the environment (the secret was never usable from the file), so this is
+/// defensive UX, not a credential path.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct AiConfig {
     /// Whether the AI NL->SQL feature is enabled. Even with a provider configured, `false` keeps
     /// it off (the explicit master switch).
