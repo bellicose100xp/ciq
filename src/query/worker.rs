@@ -9,6 +9,8 @@
 //! Conventions (jiq-inherited): no `mod.rs`; submodules declared here; tests in separate
 //! `{name}_tests.rs` wired via `#[path]` inside each submodule file.
 
+pub mod thread;
 pub mod types;
 
+pub use thread::spawn_worker;
 pub use types::{ProcessedResult, QueryRequest, QueryResponse};
