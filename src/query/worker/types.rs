@@ -19,6 +19,22 @@
 use crate::engine::Table;
 use crate::schema::Schema;
 
+/// What a [`QueryRequest`] is *for* — which routes its response when it comes back (§5.5, P3.7).
+///
+/// A value-completion fetch and the main grid query share the **same worker channel and engine**
+/// (autocomplete never opens its own connection — §5.5), but their responses go to different
+/// places: a `Main` result becomes the visible grid, a `Value` result fills the
+/// [`ValueCache`](crate::autocomplete::value_source::ValueCache) for the popup. The kind rides on
+/// the request and is echoed back on the response so the App routes by it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RequestKind {
+    /// The main interactive grid query (the visible result).
+    Main,
+    /// A distinct-values fetch for value-completion; carries the column the values are for, so the
+    /// response fills the cache under that key.
+    Value { column: String },
+}
+
 /// A request to run one SQL query, stamped with a monotonic `request_id` for stale-discard.
 ///
 /// No `cancel_token`: cancellation is out-of-band (§0/D4) — the dispatcher interrupts the
@@ -30,13 +46,28 @@ pub struct QueryRequest {
     pub query: String,
     /// Monotonic id; the dispatcher discards any response whose id isn't the latest issued.
     pub request_id: u64,
+    /// What the request is for — routes its response (main grid vs value cache).
+    pub kind: RequestKind,
 }
 
 impl QueryRequest {
+    /// A main grid query (the common path).
     pub fn new(query: impl Into<String>, request_id: u64) -> Self {
         Self {
             query: query.into(),
             request_id,
+            kind: RequestKind::Main,
+        }
+    }
+
+    /// A value-completion fetch for `column` (P3.7) — same channel/engine, routed to the cache.
+    pub fn value(query: impl Into<String>, request_id: u64, column: impl Into<String>) -> Self {
+        Self {
+            query: query.into(),
+            request_id,
+            kind: RequestKind::Value {
+                column: column.into(),
+            },
         }
     }
 }
@@ -78,14 +109,20 @@ impl ProcessedResult {
 /// response if a newer query has superseded it).
 #[derive(Debug, Clone)]
 pub enum QueryResponse {
-    /// The query succeeded; carries the processed result and its `request_id`.
+    /// The query succeeded; carries the processed result, its `request_id`, and the request
+    /// [`RequestKind`] so the App routes it (main grid vs value cache).
     ProcessedSuccess {
         result: ProcessedResult,
         request_id: u64,
+        kind: RequestKind,
     },
     /// The query failed (invalid SQL, or the engine panicked while running it — caught
     /// per-request and reported under that query's `request_id`).
-    Error { message: String, request_id: u64 },
+    Error {
+        message: String,
+        request_id: u64,
+        kind: RequestKind,
+    },
     /// The query was interrupted (superseded). The App discards it by `request_id`.
     Cancelled { request_id: u64 },
 }

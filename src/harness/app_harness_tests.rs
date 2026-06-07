@@ -80,6 +80,7 @@ fn renders_populated_grid_with_header_and_rows() {
     h.respond(QueryResponse::ProcessedSuccess {
         result: two_row_result(),
         request_id: id,
+        kind: crate::query::worker::types::RequestKind::Main,
     });
     let screen = h.screen();
     // Header column names + the body cell values + the "2 rows" status all render.
@@ -305,6 +306,76 @@ fn query_typed_during_load_reaches_engine_on_ready() {
     let resp = resp_rx.recv().unwrap();
     app.on_response(resp);
     assert_eq!(query_count.load(Ordering::SeqCst), 1);
+
+    drop(app);
+    worker.join().unwrap();
+}
+
+// --- value-completion through the real worker channel (P3.7), end-to-end ---
+
+/// Type `WHERE region = 'a`, let the App dispatch a distinct-values fetch on the SAME worker
+/// channel, have the engine answer it, and assert the cache fills and the popup suggests the
+/// quoted value — proving autocomplete never opens its own connection (§5.5). Deterministic,
+/// headless: a real `spawn_worker` over a `FakeEngine` whose value query returns a fixed set.
+#[test]
+fn value_completion_round_trips_through_the_worker() {
+    use crate::autocomplete::value_source::build_distinct_sql_default;
+
+    // The engine answers the exact distinct-values SQL the App emits with a fixed column of
+    // distinct `region` values (column 0 holds the values, as build_distinct_sql produces).
+    let distinct_sql = build_distinct_sql_default("region");
+    let region_values = Table::new(vec![Column::new(
+        "region",
+        ColumnType::Text,
+        vec![Cell::Text("apac".into()), Cell::Text("amer".into())],
+    )]);
+    let engine = FakeEngine::new(schema())
+        .with_default(QueryOutcome::Rows(two_row_table()))
+        .with_response(distinct_sql, QueryOutcome::Rows(region_values));
+    let interrupt = engine.interrupt_handle();
+
+    let (req_tx, req_rx) = channel();
+    let (resp_tx, resp_rx) = channel();
+    let worker = spawn_worker(Box::new(engine), req_rx, resp_tx);
+
+    let mut app = App::new(req_tx, interrupt);
+    app.set_schema(schema());
+    app.on_loaded("ready");
+
+    // Enter a value literal after `region =`; the App fires a Value fetch on the worker channel.
+    for (i, c) in "SELECT * FROM t WHERE region = 'a".chars().enumerate() {
+        app.on_key(KeyEvent::char(c), i as u64);
+    }
+
+    // The worker answers the value fetch (and only that — no main query is in flight). Route it.
+    let resp = resp_rx.recv().unwrap();
+    assert!(
+        matches!(&resp, QueryResponse::ProcessedSuccess { kind, .. }
+            if matches!(kind, crate::query::worker::types::RequestKind::Value { column } if column == "region")),
+        "the worker answered a Value fetch for `region`, got {resp:?}"
+    );
+    app.on_response(resp);
+
+    // The cache filled and the popup now offers the quoted value `'apac'` (fuzzy-filtered by `a`).
+    assert!(app.value_cache().contains("region"));
+    assert!(app.autocomplete().is_open());
+    let texts: Vec<&str> = app
+        .autocomplete()
+        .suggestions()
+        .iter()
+        .map(|s| s.text.as_str())
+        .collect();
+    assert!(
+        texts.contains(&"apac") || texts.contains(&"amer"),
+        "expected region values, got {texts:?}"
+    );
+    // Accept inserts a single-quoted string literal (the value is a text column).
+    app.on_key(KeyEvent::plain(Key::Tab), 0);
+    assert!(
+        app.query().contains("region = '") && app.query().ends_with('\''),
+        "accepted value is a quoted string literal, got: {}",
+        app.query()
+    );
 
     drop(app);
     worker.join().unwrap();

@@ -30,6 +30,10 @@ pub struct Dispatcher {
     request_tx: Sender<QueryRequest>,
     interrupt: InterruptHandle,
     state: QueryState,
+    /// Monotonic id for value-completion fetches (P3.7), separate from the main `state` lane so a
+    /// value fetch neither bumps the main `request_id` nor is interrupted by/interrupts the main
+    /// query. Value responses are routed to the cache by [`RequestKind`], not by this id.
+    value_seq: u64,
 }
 
 impl Dispatcher {
@@ -39,6 +43,7 @@ impl Dispatcher {
             request_tx,
             interrupt,
             state: QueryState::new(),
+            value_seq: 0,
         }
     }
 
@@ -67,6 +72,25 @@ impl Dispatcher {
         let request_id = self.state.issue();
         self.request_tx.send(QueryRequest::new(query, request_id))?;
         Ok(request_id)
+    }
+
+    /// Dispatch a value-completion fetch for `column` (P3.7) on the **same channel and engine** as
+    /// the main query (autocomplete never opens its own connection — §5.5), but out of the main
+    /// request lane: it does **not** interrupt the in-flight grid query, does **not** bump the main
+    /// `request_id`, and its response is routed to the value cache by
+    /// [`RequestKind::Value`](crate::query::worker::types::RequestKind) rather than shown as the
+    /// grid. Returns the value-fetch id (from the separate value lane).
+    ///
+    /// Errors only if the worker's receiver has been dropped.
+    pub fn dispatch_value(
+        &mut self,
+        sql: impl Into<String>,
+        column: impl Into<String>,
+    ) -> Result<u64, SendError<QueryRequest>> {
+        self.value_seq += 1;
+        let id = self.value_seq;
+        self.request_tx.send(QueryRequest::value(sql, id, column))?;
+        Ok(id)
     }
 
     /// Whether an arriving response id should be surfaced (it is the latest issued) or dropped

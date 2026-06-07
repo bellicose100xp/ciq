@@ -16,6 +16,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::app::{App, AppPhase};
+use crate::autocomplete::autocomplete_render::{MAX_VISIBLE_ROWS, render_popup};
 use crate::grid::{GridView, grid_render, layout_grid};
 use crate::theme;
 
@@ -34,6 +35,37 @@ pub fn render(app: &App, frame: &mut Frame) {
     render_query_bar(app, frame, chunks[0]);
     render_results(app, frame, chunks[1]);
     render_status(app, frame, chunks[2]);
+    // The autocomplete popup overlays the results pane, anchored under the query bar (drawn last
+    // so it sits on top). Headless: still just cells in the TestBackend buffer.
+    render_autocomplete(app, frame, chunks[0], chunks[1]);
+}
+
+/// Overlay the autocomplete popup directly below the query bar, over the results pane. Sized to
+/// the candidate count (capped by [`MAX_VISIBLE_ROWS`] and the available height) and to a readable
+/// fraction of the width. No-op when the popup is closed (handled inside `render_popup`).
+fn render_autocomplete(app: &App, frame: &mut Frame, bar: Rect, results: Rect) {
+    let state = app.autocomplete();
+    if !state.is_open() {
+        return;
+    }
+    let rows = (state.len() as u16).min(MAX_VISIBLE_ROWS);
+    let height = (rows + 2).min(results.height.max(1)); // +2 for the popup border
+    let width = popup_width(results.width);
+    let area = Rect {
+        x: bar.x,
+        y: bar.y.saturating_add(1),
+        width,
+        height,
+    };
+    render_popup(state, frame, area);
+}
+
+/// The popup width: a readable fraction of the pane width, clamped so it neither overflows nor
+/// shrinks below a usable minimum.
+fn popup_width(pane_width: u16) -> u16 {
+    const MIN: u16 = 16;
+    const MAX: u16 = 40;
+    pane_width.clamp(MIN.min(pane_width.max(1)), MAX.min(pane_width.max(1)))
 }
 
 /// The query bar: a prompt glyph followed by the current query text.

@@ -13,4 +13,4 @@ pub mod thread;
 pub mod types;
 
 pub use thread::spawn_worker;
-pub use types::{ProcessedResult, QueryRequest, QueryResponse};
+pub use types::{ProcessedResult, QueryRequest, QueryResponse, RequestKind};

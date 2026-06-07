@@ -2,7 +2,7 @@
 //! `QueryResponse` variants (the contract the App's dispatch loop relies on being total).
 
 use crate::engine::types::{Cell, Column, Table};
-use crate::query::worker::types::{ProcessedResult, QueryRequest, QueryResponse};
+use crate::query::worker::types::{ProcessedResult, QueryRequest, QueryResponse, RequestKind};
 use crate::schema::{ColumnMeta, ColumnType, Schema};
 
 fn sample_table() -> Table {
@@ -58,10 +58,12 @@ fn response_request_id_for_each_variant() {
     let success = QueryResponse::ProcessedSuccess {
         result: sample_processed(),
         request_id: 5,
+        kind: RequestKind::Main,
     };
     let error = QueryResponse::Error {
         message: "bad sql".into(),
         request_id: 6,
+        kind: RequestKind::Main,
     };
     let cancelled = QueryResponse::Cancelled { request_id: 7 };
 
@@ -77,6 +79,7 @@ fn error_response_carries_the_querys_real_id() {
     let resp = QueryResponse::Error {
         message: "query panicked: boom".into(),
         request_id: 42,
+        kind: RequestKind::Main,
     };
     assert_eq!(resp.request_id(), 42);
 }
@@ -89,21 +92,26 @@ fn exhaustive_match_over_all_response_variants() {
         QueryResponse::ProcessedSuccess {
             result: sample_processed(),
             request_id: 1,
+            kind: RequestKind::Main,
         },
         QueryResponse::Error {
             message: "x".into(),
             request_id: 2,
+            kind: RequestKind::Main,
         },
         QueryResponse::Cancelled { request_id: 3 },
     ] {
         let label = match resp {
-            QueryResponse::ProcessedSuccess { result, request_id } => {
+            QueryResponse::ProcessedSuccess {
+                result, request_id, ..
+            } => {
                 assert_eq!(result.rows.row_count(), 2);
                 format!("success:{request_id}")
             }
             QueryResponse::Error {
                 message,
                 request_id,
+                ..
             } => format!("error:{request_id}:{message}"),
             QueryResponse::Cancelled { request_id } => format!("cancelled:{request_id}"),
         };

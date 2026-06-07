@@ -66,6 +66,7 @@ fn populated_grid_renders_header_body_and_null_glyph() {
     a.on_response(QueryResponse::ProcessedSuccess {
         result: result(),
         request_id: id,
+        kind: crate::query::worker::types::RequestKind::Main,
     });
     let screen = render(&a, 40, 10);
     assert!(screen.contains("id"), "header id, screen:\n{screen}");
@@ -106,4 +107,27 @@ fn render_does_not_panic_on_tiny_viewport() {
     for (w, h) in [(1, 1), (2, 2), (3, 3), (1, 8), (8, 1)] {
         let _ = render(&app(), w, h);
     }
+}
+
+#[test]
+fn open_popup_overlays_the_screen() {
+    use crate::schema::{ColumnMeta, Schema};
+    let mut a = app();
+    a.set_schema(Schema::new(vec![
+        ColumnMeta::new("status", ColumnType::Text),
+        ColumnMeta::new("amount", ColumnType::Float),
+    ]));
+    a.on_loaded("ready");
+    // Typing in the SELECT list opens the popup; it must paint over the results area.
+    for c in "SELECT st".chars() {
+        a.on_key(KeyEvent::char(c), 0);
+    }
+    assert!(a.autocomplete().is_open());
+    let screen = render(&a, 40, 12);
+    // The query text in the bar and the popup candidate both render.
+    assert!(screen.contains("SELECT st"), "query bar, screen:\n{screen}");
+    assert!(
+        screen.contains("status"),
+        "popup candidate overlaid, screen:\n{screen}"
+    );
 }

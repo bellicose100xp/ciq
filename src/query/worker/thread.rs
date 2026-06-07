@@ -78,12 +78,14 @@ fn worker_loop(
 ) {
     while let Ok(request) = request_rx.recv() {
         let request_id = request.request_id;
+        let kind = request.kind.clone();
         // Catch a per-request panic so one bad query reports an error for its id and the loop
         // keeps serving the next request, rather than tearing down the worker.
         let response = panic::catch_unwind(AssertUnwindSafe(|| handle_request(engine, request)))
             .unwrap_or_else(|payload| QueryResponse::Error {
                 message: format!("query panicked: {}", panic_message(&payload)),
                 request_id,
+                kind,
             });
         if response_tx.send(response).is_err() {
             break; // App dropped the receiver; nothing left to serve.
@@ -91,9 +93,16 @@ fn worker_loop(
     }
 }
 
-/// Run one request and map its [`QueryOutcome`] to a [`QueryResponse`].
+/// Run one request and map its [`QueryOutcome`] to a [`QueryResponse`]. The request's
+/// [`RequestKind`](super::types::RequestKind) is echoed onto the response so the App routes it
+/// (main grid vs value cache, P3.7); the worker runs both kinds identically through `engine.query`
+/// — autocomplete never opens its own connection (§5.5).
 fn handle_request(engine: &dyn QueryEngine, request: QueryRequest) -> QueryResponse {
-    let QueryRequest { query, request_id } = request;
+    let QueryRequest {
+        query,
+        request_id,
+        kind,
+    } = request;
     let (outcome, elapsed_ms) = timed(|| engine.query(&query));
     match outcome {
         QueryOutcome::Rows(table) => {
@@ -101,11 +110,13 @@ fn handle_request(engine: &dyn QueryEngine, request: QueryRequest) -> QueryRespo
             QueryResponse::ProcessedSuccess {
                 result: ProcessedResult::new(table, schema, elapsed_ms),
                 request_id,
+                kind,
             }
         }
         QueryOutcome::Error { message, .. } => QueryResponse::Error {
             message,
             request_id,
+            kind,
         },
         QueryOutcome::Cancelled => QueryResponse::Cancelled { request_id },
     }

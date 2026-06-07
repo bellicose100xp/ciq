@@ -44,7 +44,9 @@ fn rows_outcome_becomes_processed_success() {
         .unwrap();
     let resp = resp_rx.recv().unwrap();
     match resp {
-        QueryResponse::ProcessedSuccess { result, request_id } => {
+        QueryResponse::ProcessedSuccess {
+            result, request_id, ..
+        } => {
             assert_eq!(request_id, 1);
             assert_eq!(result.rows.row_count(), 2);
             assert_eq!(result.rows.col_count(), 2);
@@ -75,6 +77,7 @@ fn error_outcome_becomes_error_response() {
         QueryResponse::Error {
             message,
             request_id,
+            ..
         } => {
             assert_eq!(request_id, 9);
             assert!(message.contains("Parser Error"));

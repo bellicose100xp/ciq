@@ -29,12 +29,20 @@
 
 use ratatui::Frame;
 
+use crate::autocomplete::autocomplete_state::AutocompleteState;
+use crate::autocomplete::candidates::get_suggestions;
+use crate::autocomplete::clause_context::{CursorContext, detect_context};
+use crate::autocomplete::insertion::insert_suggestion;
+use crate::autocomplete::sql_keywords::OPERATORS;
+use crate::autocomplete::value_source::{ValueCache, build_distinct_sql_default};
 use crate::engine::InterruptHandle;
 use crate::query::debouncer::Debouncer;
 use crate::query::dispatcher::Dispatcher;
 use crate::query::error_enhance::enhance;
 use crate::query::preprocess::{PreprocessError, prepare_interactive};
-use crate::query::worker::types::{ProcessedResult, QueryRequest, QueryResponse};
+use crate::query::worker::types::{ProcessedResult, QueryRequest, QueryResponse, RequestKind};
+use crate::schema::Schema;
+use crate::sql_lexer::tokenize;
 
 use std::sync::mpsc::Sender;
 
@@ -96,6 +104,15 @@ pub struct App {
     status: String,
     /// Whether the user edited the query while still `Loading`, so we must fire once `Ready`.
     pending_query_on_ready: bool,
+    /// The loaded table schema — the candidate source for autocomplete. `None` until the engine
+    /// reaches `Ready` ([`on_loaded`](Self::on_loaded) installs it). Without it the popup stays
+    /// closed (no schema = no column/value candidates to ground completion in).
+    schema: Option<Schema>,
+    /// The autocomplete popup state machine (P3.6) — recomputed on each query-bar edit.
+    autocomplete: AutocompleteState,
+    /// Distinct-value cache for value-completion (P3.7), filled out-of-band by the worker; read as
+    /// plain data by the candidate generator. The App never queries the engine for values itself.
+    value_cache: ValueCache,
 }
 
 impl App {
@@ -113,6 +130,9 @@ impl App {
             h_col_offset: 0,
             status: "loading CSV…".to_string(),
             pending_query_on_ready: false,
+            schema: None,
+            autocomplete: AutocompleteState::new(),
+            value_cache: ValueCache::new(),
         }
     }
 
@@ -155,13 +175,35 @@ impl App {
         self.dispatcher.latest_id()
     }
 
+    /// The autocomplete popup state (for the render layer and tests).
+    pub fn autocomplete(&self) -> &AutocompleteState {
+        &self.autocomplete
+    }
+
+    /// The loaded schema, if the engine has reached `Ready`.
+    pub fn schema(&self) -> Option<&Schema> {
+        self.schema.as_ref()
+    }
+
+    /// The distinct-value cache (for tests asserting value-completion wiring).
+    pub fn value_cache(&self) -> &ValueCache {
+        &self.value_cache
+    }
+
     // --- event routing (headless: synthetic KeyEvents) ---
 
     /// Route one key event to the focused surface, scheduling a debounced query when the query
     /// text changes. `now_ms` is the synthetic/real time stamp for the debouncer (never a wall
     /// clock read inside this fn). Returns `true` if the app should quit.
+    ///
+    /// When the autocomplete popup is open it intercepts Tab/Enter (accept), Up/Down (move
+    /// selection), and Esc (dismiss) *before* the focus routing — so Esc dismisses the popup
+    /// rather than quitting (it only quits when no popup is open).
     pub fn on_key(&mut self, ev: KeyEvent, now_ms: u64) -> bool {
-        // Ctrl-C / Esc quit from anywhere.
+        if self.autocomplete.is_open() && self.handle_popup_key(&ev, now_ms) {
+            return false; // the popup consumed the key
+        }
+        // Ctrl-C / Esc quit from anywhere (Esc only reaches here when no popup is open).
         if ev.is_quit() {
             return true;
         }
@@ -170,6 +212,48 @@ impl App {
             Focus::Results => self.on_key_results(ev),
         }
         false
+    }
+
+    /// Handle a key while the popup is open. Returns `true` if the popup consumed it (so the
+    /// caller stops routing). Tab/Enter accept the selection; Up/Down move it; Esc dismisses; any
+    /// other key falls through (e.g. typing keeps editing and recomputes the popup).
+    fn handle_popup_key(&mut self, ev: &KeyEvent, now_ms: u64) -> bool {
+        match ev.key {
+            Key::Tab | Key::Enter => {
+                self.accept_suggestion(now_ms);
+                true
+            }
+            Key::Down => {
+                self.autocomplete.select_next();
+                true
+            }
+            Key::Up => {
+                self.autocomplete.select_prev();
+                true
+            }
+            Key::Esc => {
+                self.autocomplete.close();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Insert the selected suggestion into the query at the cursor and dismiss the popup. The
+    /// popup stays closed after an explicit accept (it does not re-open on the just-completed
+    /// token); the next edit recomputes it for the new context. Closes without inserting if there
+    /// is nothing selected.
+    fn accept_suggestion(&mut self, now_ms: u64) {
+        let Some(suggestion) = self.autocomplete.selected_suggestion().cloned() else {
+            self.autocomplete.close();
+            return;
+        };
+        let (new_text, new_cursor) =
+            insert_suggestion(self.editor.text(), self.editor.cursor_byte(), &suggestion);
+        self.editor.set_text_with_byte_cursor(new_text, new_cursor);
+        self.autocomplete.close();
+        // The inserted text changed the query — schedule the debounced grid query for it.
+        self.schedule(now_ms);
     }
 
     fn on_key_query_bar(&mut self, ev: KeyEvent, now_ms: u64) {
@@ -189,9 +273,50 @@ impl App {
             Key::Down => self.focus = Focus::Results, // hand off navigation to the grid
             _ => {}
         }
+        // Recompute autocomplete on any edit/cursor move (the popup tracks the cursor context).
+        self.refresh_autocomplete();
         // Only (re)schedule a query when the text actually changed — pure cursor moves don't.
         if self.editor.text() != before {
             self.schedule(now_ms);
+        }
+    }
+
+    /// Recompute the autocomplete popup from the current query + cursor against the loaded schema,
+    /// and (P3.7) fetch distinct values through the worker when the cursor is in a value position
+    /// for a column not yet cached. Closes the popup when there is no schema (still loading) or no
+    /// candidate applies. Pure except for the out-of-band value fetch.
+    fn refresh_autocomplete(&mut self) {
+        let Some(schema) = self.schema.as_ref() else {
+            self.autocomplete.close();
+            return;
+        };
+        let query = self.editor.text();
+        let cursor = self.editor.cursor_byte();
+
+        // If the cursor is in a value position for an uncached, known column, fetch its distinct
+        // values through the worker (same channel/engine — autocomplete never opens its own
+        // connection, §5.5). The popup fills in once the response lands.
+        if let Some(col) = self.value_column_to_fetch(query, cursor, schema) {
+            let sql = build_distinct_sql_default(&col);
+            let _ = self.dispatcher.dispatch_value(sql, col);
+        }
+
+        let suggestions = get_suggestions(query, cursor, schema, OPERATORS, &self.value_cache);
+        self.autocomplete.open_with(suggestions);
+    }
+
+    /// The column whose distinct values should be fetched now: `Some(col)` when the cursor is in a
+    /// `ColumnValue` context for a column present in `schema` and not already in the value cache;
+    /// `None` otherwise (no value position, unknown column, or already cached).
+    fn value_column_to_fetch(&self, query: &str, cursor: usize, schema: &Schema) -> Option<String> {
+        let tokens = tokenize(query);
+        let CursorContext::ColumnValue { col, .. } = detect_context(query, &tokens, cursor) else {
+            return None;
+        };
+        if schema.column(&col).is_some() && !self.value_cache.contains(&col) {
+            Some(col)
+        } else {
+            None
         }
     }
 
@@ -296,11 +421,34 @@ impl App {
 
     // --- response handling (stale-discard + state update) ---
 
-    /// Apply a [`QueryResponse`] from the worker. Stale responses (an older `request_id`) are
-    /// dropped before touching result state (§0/D4). A per-request engine panic arrives as
-    /// `Error` under that query's id and is stale-discarded like any other response. Returns
-    /// `true` if the visible state changed.
+    /// Apply a [`QueryResponse`] from the worker. A **value-completion** response (P3.7) is routed
+    /// to the [`ValueCache`] and never touches the grid; a **main** response goes through the
+    /// stale-discard gate (§0/D4) — an older `request_id` is dropped before touching result state.
+    /// A per-request engine panic arrives as `Error` under that query's id and is handled the same
+    /// way. Returns `true` if the visible state changed.
     pub fn on_response(&mut self, resp: QueryResponse) -> bool {
+        // Value fetches are out of the main request lane: route them to the cache without the
+        // stale-discard gate (their ids live in a separate value lane), then refresh the popup so
+        // the just-fetched values appear.
+        if let QueryResponse::ProcessedSuccess {
+            result,
+            kind: RequestKind::Value { column },
+            ..
+        } = &resp
+        {
+            let values = distinct_values(&result.rows);
+            self.value_cache.insert(column.clone(), values);
+            self.refresh_autocomplete();
+            return false; // value cache filled; the grid is unchanged
+        }
+        if let QueryResponse::Error {
+            kind: RequestKind::Value { .. },
+            ..
+        } = &resp
+        {
+            return false; // a failed value fetch silently yields no candidates
+        }
+
         let id = resp.request_id();
         if !self.dispatcher.accept(id) {
             return false; // stale: a newer query superseded this one
@@ -327,6 +475,13 @@ impl App {
     /// no-op placeholder — see [`Dispatcher::set_interrupt`]).
     pub fn set_interrupt(&mut self, interrupt: InterruptHandle) {
         self.dispatcher.set_interrupt(interrupt);
+    }
+
+    /// Install the loaded table schema (the autocomplete candidate source). The event loop calls
+    /// this on load completion with the engine's schema, before [`on_loaded`](Self::on_loaded).
+    /// Until it is set, the popup stays closed (no schema = nothing to ground completion in).
+    pub fn set_schema(&mut self, schema: Schema) {
+        self.schema = Some(schema);
     }
 
     // --- load state machine (P2.11) ---
@@ -358,6 +513,21 @@ impl App {
     pub fn render(&self, frame: &mut Frame) {
         app_render::render(self, frame);
     }
+}
+
+/// Extract the distinct value strings from a value-fetch result table — the **first** column (the
+/// `build_distinct_sql` shape is `SELECT "<col>", count(*) ...`, so column 0 holds the values, in
+/// the frequency order the query produced). NULLs are already filtered by the query; any that slip
+/// through render as the empty string and are skipped (a NULL is not a completable value).
+fn distinct_values(table: &crate::engine::Table) -> Vec<String> {
+    let Some(col) = table.columns().first() else {
+        return Vec::new();
+    };
+    col.cells
+        .iter()
+        .filter(|c| !c.is_null())
+        .map(|c| c.display())
+        .collect()
 }
 
 #[cfg(test)]

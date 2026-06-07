@@ -22,7 +22,8 @@ use ratatui::backend::TestBackend;
 
 use crate::app::{App, Key, KeyEvent};
 use crate::engine::InterruptHandle;
-use crate::query::worker::types::{QueryRequest, QueryResponse};
+use crate::query::worker::types::{QueryRequest, QueryResponse, RequestKind};
+use crate::schema::Schema;
 
 /// A headless driver for `App`: owns the app, an in-memory terminal, the request receiver, and a
 /// synthetic clock.
@@ -102,6 +103,18 @@ impl AppHarness {
         self.app.on_loaded(summary)
     }
 
+    /// Complete load and install the given schema (so autocomplete has its candidate source) —
+    /// the harness analog of the event loop's `set_schema` + `on_loaded` on `LoadOutcome::Ready`.
+    /// Returns whether a query was dispatched on becoming ready.
+    pub fn complete_load_with_schema(
+        &mut self,
+        schema: Schema,
+        summary: impl Into<String>,
+    ) -> bool {
+        self.app.set_schema(schema);
+        self.app.on_loaded(summary)
+    }
+
     /// Fail the off-thread load: drive into `LoadError`.
     pub fn fail_load(&mut self, message: impl Into<String>) -> &mut Self {
         self.app.on_load_error(message);
@@ -113,11 +126,31 @@ impl AppHarness {
     /// Drain every SQL string the App has dispatched to the worker since the last call. Lets a
     /// test assert "N debounced keystrokes produced exactly one query" by counting the result.
     pub fn dispatched(&mut self) -> Vec<String> {
+        self.dispatched_requests()
+            .into_iter()
+            .map(|r| r.query)
+            .collect()
+    }
+
+    /// Drain every full [`QueryRequest`] the App has dispatched since the last call — so a test can
+    /// inspect the [`RequestKind`] (main grid vs value-completion fetch) and the SQL.
+    pub fn dispatched_requests(&mut self) -> Vec<QueryRequest> {
         let mut out = Vec::new();
         while let Ok(req) = self.request_rx.try_recv() {
-            out.push(req.query);
+            out.push(req);
         }
         out
+    }
+
+    /// Drain only the value-completion fetches (P3.7) the App dispatched — `(column, sql)` pairs.
+    pub fn value_fetches(&mut self) -> Vec<(String, String)> {
+        self.dispatched_requests()
+            .into_iter()
+            .filter_map(|r| match r.kind {
+                RequestKind::Value { column } => Some((column, r.query)),
+                RequestKind::Main => None,
+            })
+            .collect()
     }
 
     /// Feed a [`QueryResponse`] back to the App (the worker-result edge), as the event loop does.

@@ -114,7 +114,9 @@ fn second_dispatch_interrupts_first_from_dispatcher_thread() {
     gate.release();
     let r2 = resp_rx.recv().unwrap();
     match &r2 {
-        QueryResponse::ProcessedSuccess { request_id, result } => {
+        QueryResponse::ProcessedSuccess {
+            request_id, result, ..
+        } => {
             assert_eq!(*request_id, 2);
             assert_eq!(result.rows.row_count(), 1);
         }

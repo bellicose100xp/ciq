@@ -49,6 +49,7 @@ use ratatui::crossterm::terminal::{
 use crate::engine::{CsvOpts, DuckdbEngine, InterruptHandle, QueryEngine};
 use crate::query::worker::spawn_worker;
 use crate::query::worker::types::{QueryRequest, QueryResponse};
+use crate::schema::Schema;
 
 use super::{App, Key, KeyEvent, KeyMods};
 
@@ -58,9 +59,11 @@ const POLL_MS: u64 = 16;
 
 /// What the off-thread loader hands back once the CSV ingest finishes.
 enum LoadOutcome {
-    /// Loaded; carries the engine's interrupt handle and a one-line summary for the status line.
+    /// Loaded; carries the engine's interrupt handle, the loaded schema (the autocomplete
+    /// candidate source), and a one-line summary for the status line.
     Ready {
         interrupt: InterruptHandle,
+        schema: Schema,
         summary: String,
     },
     /// Ingest failed; carries the error message for the `LoadError` state.
@@ -83,10 +86,12 @@ pub fn run(path: PathBuf, opts: CsvOpts) -> std::io::Result<()> {
     thread::spawn(move || {
         match DuckdbEngine::open(&path, &opts) {
             Ok(engine) => {
-                let rows = engine.schema().len();
+                let schema = engine.schema().clone();
+                let rows = schema.len();
                 let summary = format!("loaded: table t, {rows} column{}", plural(rows));
                 let _ = load_tx.send(LoadOutcome::Ready {
                     interrupt: engine.interrupt_handle(),
+                    schema,
                     summary,
                 });
                 // Hand the engine to the worker loop (it owns it for the session).
@@ -123,8 +128,13 @@ fn event_loop(
 
         // Drain a load outcome (at most one per session).
         match load_rx.try_recv() {
-            Ok(LoadOutcome::Ready { interrupt, summary }) => {
+            Ok(LoadOutcome::Ready {
+                interrupt,
+                schema,
+                summary,
+            }) => {
                 app.set_interrupt(interrupt);
+                app.set_schema(schema);
                 app.on_loaded(summary);
             }
             Ok(LoadOutcome::Failed(msg)) => app.on_load_error(msg),
