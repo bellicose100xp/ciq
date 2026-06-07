@@ -149,6 +149,11 @@ fn event_loop(
                 app.set_schema(schema);
                 app.set_csv_summary(delimiter, header);
                 app.on_loaded(summary);
+                // Pre-seed the bar with the palette's own `SELECT * FROM t LIMIT n` so the common
+                // "just opened a file" path starts palette-owned (§0/D3). No-op if the user typed
+                // during load. `now_ms` is the documented wall-clock seam (see module docs).
+                let now_ms = start.elapsed().as_millis() as u64;
+                app.seed_palette_query(now_ms);
             }
             Ok(LoadOutcome::Failed(msg)) => app.on_load_error(msg),
             Err(_) => {}

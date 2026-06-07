@@ -761,3 +761,88 @@ fn cancelled_main_lane_response_still_clears_in_flight() {
         "a main-lane Cancelled for the latest id accepts and clears in-flight"
     );
 }
+
+// --- column palette ownership detection (P4.4, §0/D3) ---
+
+#[test]
+fn no_palette_without_a_schema() {
+    let (app, _rx) = app();
+    assert!(app.palette().is_none());
+    assert!(!app.palette_owns_query());
+    assert!(!app.is_palette_open());
+}
+
+#[test]
+fn set_schema_builds_the_palette() {
+    let (app, _rx) = loaded_app();
+    let palette = app.palette().expect("palette built from schema");
+    // The pick universe mirrors the schema columns in table order.
+    let names: Vec<&str> = palette
+        .all_columns()
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["id", "status", "amount", "order"]);
+}
+
+#[test]
+fn seed_palette_query_makes_the_common_path_palette_owned() {
+    // Opening a file with nothing typed pre-seeds the bar with the palette's own emission, so the
+    // palette OWNS the query (equal byte-compare => live).
+    let (mut app, rx) = loaded_app();
+    assert_eq!(app.query(), "", "bar empty until seeded");
+    let seeded = app.seed_palette_query(0);
+    assert!(seeded);
+    assert_eq!(app.query(), "SELECT * FROM t LIMIT 1000");
+    assert!(app.palette_owns_query(), "equal => palette owns it (live)");
+    // The seed schedules the query; it dispatches on the debounce tick.
+    assert!(app.tick(150));
+    let sent = drain(&rx);
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].contains("SELECT * FROM t LIMIT 1000"));
+}
+
+#[test]
+fn seed_does_not_clobber_a_query_typed_during_load() {
+    // If the user typed during load, the seed must NOT overwrite their query.
+    let (mut app, _rx) = loaded_app();
+    type_str(&mut app, "SELECT id FROM t", 0);
+    let seeded = app.seed_palette_query(0);
+    assert!(!seeded, "non-empty bar is left untouched");
+    assert_eq!(app.query(), "SELECT id FROM t");
+    assert!(!app.palette_owns_query(), "hand-typed => palette disabled");
+}
+
+#[test]
+fn hand_typing_after_seed_disables_the_palette() {
+    // Equal => live; a single edit diverges the bar from the last emitted => palette disabled,
+    // detected purely by byte-compare (no SQL parsing).
+    let (mut app, _rx) = loaded_app();
+    app.seed_palette_query(0);
+    assert!(app.palette_owns_query());
+    type_str(&mut app, " WHERE id > 5", 0); // user appends -> diverges
+    assert!(
+        !app.palette_owns_query(),
+        "different bar text => palette no longer owns it (offer Replace)"
+    );
+}
+
+#[test]
+fn replace_query_with_palette_snaps_to_generated_query() {
+    // The "Replace?" affordance: a user who hand-typed SQL accepts Replace; the bar snaps to the
+    // palette's generated query (discarding their text — the documented UX cliff) and the palette
+    // owns it again.
+    let (mut app, rx) = loaded_app();
+    type_str(&mut app, "SELECT id FROM t WHERE status = 'EU'", 0);
+    assert!(!app.palette_owns_query());
+    // With nothing checked in the palette, Replace snaps to the generated `SELECT *` — discarding
+    // the hand-typed WHERE (the documented UX cliff, §0/D3).
+    let installed = app.replace_query_with_palette(0).expect("palette present");
+    assert_eq!(installed, "SELECT * FROM t LIMIT 1000");
+    assert_eq!(app.query(), "SELECT * FROM t LIMIT 1000");
+    assert!(
+        app.palette_owns_query(),
+        "after Replace the palette owns the query again"
+    );
+    let _ = drain(&rx);
+}

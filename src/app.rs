@@ -36,6 +36,8 @@ use crate::autocomplete::insertion::insert_suggestion;
 use crate::autocomplete::sql_keywords::OPERATORS;
 use crate::autocomplete::value_source::{ValueCache, build_distinct_sql_default};
 use crate::engine::InterruptHandle;
+use crate::palette::PaletteState;
+use crate::palette::query_emit::emit as emit_palette;
 use crate::query::debouncer::Debouncer;
 use crate::query::dispatcher::Dispatcher;
 use crate::query::error_enhance::enhance;
@@ -117,6 +119,15 @@ pub struct App {
     /// (`None` = DuckDB auto-detected it) and whether the first row is a header. Defaults to
     /// `(None, true)` until the loader reports the dialect ([`set_csv_summary`](Self::set_csv_summary)).
     csv_summary: (Option<char>, bool),
+    /// The column-palette generated-state machine (P4.2-P4.5, §0/D3). Built from the schema on
+    /// load ([`set_schema`](Self::set_schema)); `None` until then. The palette owns a ciq-generated
+    /// query state and emits SQL from it — it never parses the bar. Ownership ("is the palette
+    /// live?") is a byte-compare of the bar against the last string the palette emitted
+    /// ([`palette_owns_query`](Self::palette_owns_query)); the App never inspects user SQL grammar.
+    palette: Option<PaletteState>,
+    /// Whether the palette popup is currently open (P4.5). When open it intercepts keys (toggle /
+    /// reorder / filter / emit) before the query-bar routing, like the autocomplete popup.
+    palette_open: bool,
 }
 
 impl App {
@@ -138,6 +149,8 @@ impl App {
             autocomplete: AutocompleteState::new(),
             value_cache: ValueCache::new(),
             csv_summary: (None, true),
+            palette: None,
+            palette_open: false,
         }
     }
 
@@ -510,10 +523,12 @@ impl App {
         self.dispatcher.set_interrupt(interrupt);
     }
 
-    /// Install the loaded table schema (the autocomplete candidate source). The event loop calls
-    /// this on load completion with the engine's schema, before [`on_loaded`](Self::on_loaded).
-    /// Until it is set, the popup stays closed (no schema = nothing to ground completion in).
+    /// Install the loaded table schema (the autocomplete candidate source) and build the column
+    /// palette over it (P4.2/D3). The event loop calls this on load completion with the engine's
+    /// schema, before [`on_loaded`](Self::on_loaded). Until it is set, the autocomplete popup stays
+    /// closed and the palette is unavailable (no schema = no columns to pick).
     pub fn set_schema(&mut self, schema: Schema) {
+        self.palette = Some(PaletteState::from_schema(&schema));
         self.schema = Some(schema);
     }
 
@@ -522,6 +537,65 @@ impl App {
     /// from the launch [`CsvOpts`](crate::engine::CsvOpts) alongside [`set_schema`](Self::set_schema).
     pub fn set_csv_summary(&mut self, delimiter: Option<char>, header: bool) {
         self.csv_summary = (delimiter, header);
+    }
+
+    // --- column palette (P4.2-P4.5, §0/D3) ---
+
+    /// The column palette, if a schema is loaded.
+    pub fn palette(&self) -> Option<&PaletteState> {
+        self.palette.as_ref()
+    }
+
+    /// Whether the palette popup is currently open.
+    pub fn is_palette_open(&self) -> bool {
+        self.palette_open
+    }
+
+    /// Whether the **palette owns the current query** — i.e. the bar text byte-equals the last
+    /// string the palette emitted (§0/D3). Equal -> the palette's edits stay live; different (or no
+    /// palette / never emitted) -> the user hand-typed SQL and palette actions must offer a soft
+    /// "Replace?" rather than silently rewriting. A pure byte-compare; **no SQL parsing** anywhere.
+    pub fn palette_owns_query(&self) -> bool {
+        self.palette
+            .as_ref()
+            .is_some_and(|p| p.owns(self.editor.text()))
+    }
+
+    /// Pre-seed the query bar with the palette's own emission (`SELECT * FROM t LIMIT n`) so the
+    /// common path — open a file, no SQL typed yet — starts **palette-owned** (§0/D3). Only seeds
+    /// when a palette exists and the bar is still empty (the user typed nothing during load); it
+    /// never clobbers a query the user already started. Records the emitted string as the palette's
+    /// own and schedules the query so the grid populates. The event loop calls this once after
+    /// load. Returns `true` if it seeded.
+    pub fn seed_palette_query(&mut self, now_ms: u64) -> bool {
+        if !self.editor.text().is_empty() {
+            return false;
+        }
+        let Some(palette) = self.palette.as_mut() else {
+            return false;
+        };
+        let sql = emit_palette(palette);
+        palette.record_emitted(&sql);
+        self.editor.set_text(&sql);
+        self.refresh_autocomplete();
+        self.schedule(now_ms);
+        true
+    }
+
+    /// Re-emit the palette's query and replace the bar with it (the "Replace query with column
+    /// selection?" affordance, §0/D3). This is the **only** path that overwrites hand-typed SQL,
+    /// and only on explicit user confirmation — accepting Replace discards whatever the user typed
+    /// and snaps to the palette's generated query (the documented UX cliff: a hand-typed
+    /// `… WHERE region='EU'` is discarded). Records the new emission as palette-owned and schedules
+    /// it. No-op without a palette. Returns the emitted SQL it installed.
+    pub fn replace_query_with_palette(&mut self, now_ms: u64) -> Option<String> {
+        let palette = self.palette.as_mut()?;
+        let sql = emit_palette(palette);
+        palette.record_emitted(&sql);
+        self.editor.set_text(&sql);
+        self.refresh_autocomplete();
+        self.schedule(now_ms);
+        Some(sql)
     }
 
     // --- load state machine (P2.11) ---
