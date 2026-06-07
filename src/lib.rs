@@ -25,6 +25,7 @@ pub mod grid;
 pub mod logging;
 pub mod query;
 pub mod schema;
+pub mod theme;
 
 // The headless harness uses dev-only deps (`tempfile`) and is currently consumed only by
 // in-crate tests, so it compiles under `cfg(test)` only. When agent-facing E2E in a later

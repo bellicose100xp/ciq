@@ -1,0 +1,10 @@
+---
+source: src/grid/grid_render_tests.rs
+expression: screen
+---
+"val                 "
+"NULL                "
+"                    "
+"x                   "
+"                    "
+"                    "
