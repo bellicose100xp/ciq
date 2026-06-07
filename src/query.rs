@@ -8,3 +8,4 @@ pub mod debouncer;
 pub mod error_enhance;
 pub mod preprocess;
 pub mod query_state;
+pub mod worker;
