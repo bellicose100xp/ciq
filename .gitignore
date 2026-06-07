@@ -37,3 +37,7 @@ llvm_cov_output.log
 
 # Local benchmark / scratch data
 /*.csv
+
+# Claude Code local settings (session-specific, not shared)
+.claude/settings.json
+.claude/settings.local.json

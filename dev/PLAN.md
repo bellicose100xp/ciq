@@ -6,7 +6,31 @@
 
 ---
 
+## 0. Canonical Decisions (single source of truth)
+
+> **Read this first; it overrides the body.** The sections below (§1–§8) were drafted before five cross-section contradictions were found and resolved. Each contradiction is now settled **once, here**, by the matching entry in [`DECISIONS.md`](DECISIONS.md). Where any later section's prose disagrees with this block, **this block wins** and that prose is stale (it is being swept section-by-section; until a sweep lands, defer here).
+>
+> **Convention going forward — *cite, don't re-declare*.** A decided fact lives in exactly one place (this block, or its `DECISIONS.md` entry). Every other mention must *link* to it, never restate it. The plan's original "every section declares itself canonical" habit is what produced the contradictions below; do not reintroduce it.
+>
+> **Guiding principle — jiq is inspiration, not law.** ciq starts from jiq's shell, but its domain (tabular CSV, in-process DuckDB, SQL) differs fundamentally. Justify every reuse on ciq's own merits, not "jiq does it this way." jiq file/line citations throughout this plan are **illustrative** — grep the live jiq source to confirm; several are already known stale (see [`ASSUMPTIONS.md`](ASSUMPTIONS.md) A4).
+
+| # | Decision (canonical) | Supersedes the stale wording in |
+|---|---|---|
+| **D1** | **Engine trait is `QueryEngine`** (not `CsvEngine`), method **`query(&self, sql: &str) -> QueryOutcome`** (no cancel arg; not `run`/`execute`), with `load(&mut, path, opts) -> Result<Schema, EngineError>`, `distinct(col, limit) -> QueryOutcome`, `schema() -> &Schema`, `interrupt_handle() -> InterruptHandle`. **`enum QueryOutcome { Rows(Table), Error{message, sql}, Cancelled }`**. **`Table` is COLUMNAR** (`Vec<Column>` + cheap row-view). **`InterruptHandle` is a newtype over `Arc<duckdb::InterruptHandle>`** (verified `Send+Sync`); **there is no `Connection::interrupt()` method** — you call `.interrupt()` on the handle from `Connection::interrupt_handle()`. Impl: `DuckdbEngine` + `FakeEngine`. | §2.4, §2.6, §3.3, §3.4, §4.1, §7.0, §7.2, §8.2-preamble (every `CsvEngine`, `run()`, `execute()`, cancel-arg, `Result<…,EngineError>` hot-path, `Connection::interrupt()`). |
+| **D2** | **`Schema`/`ColumnMeta`/`ColumnType` live in top-level `src/schema/`** (sibling of `engine/`), imported as `crate::schema::Schema`. The engine *produces* it; everyone else only *reads* `&Schema`. **Type name is `ColumnType`** everywhere (not `SqlType`); the value cache is **`ValueCache`** (not `ValueIndex`). | §7.2 ("under engine/"); §6.3/§6.6/§6.8 ("home settled in §7.1" — §7.1 is the spike, decides nothing); all `SqlType`/`ValueIndex` spellings. |
+| **D3** | **Column palette owns a ciq-generated query state** and emits a canonical `SELECT … FROM t …`; it is **disabled when the user has hand-typed SQL** (offer "replace with generated query?"), detected by byte-comparing the bar against the last emitted string. **It never parses or splices user SQL.** Emitter module is **`palette/query_emit.rs`** (not `emit.rs` — collides with `output/emit.rs`). | §6.2's `select_writer`/`parse_shape`/`apply_projection`/`parse_selected`/`ProjectionShape` (deleted); §6.1's "round-trip parse" test row. |
+| **D4** | **The dispatcher (App) thread calls `.interrupt()` directly** on its `InterruptHandle` clone when a newer `request_id` arrives. The worker only blocks in `query()` and returns `Cancelled`. **No interrupt-watcher thread** (2 threads, not 3). Invariant: `interrupt()` is *not* request-scoped (cancels whatever runs) — dispatcher interrupts only while a specific request is in-flight; worker drains `Cancelled` before the next dequeue. Reuse-after-interrupt fallback: `Connection::try_clone()` (keeps the in-memory table; trait/topology unchanged). | §3.1's interrupt-watcher (deleted), its mermaid, §3.2/§3.3/§3.4 references to it. |
+| **D5** | **Coverage is tiered:** HARD floor (blocks build) on an explicit pure-core module allowlist using **branch** coverage; project-wide **95% is WARN-only** (build passes); the `// ciq:shell-exempt` marker-containment gate stays HARD. CI gate set is **4 jobs** (test / tarpaulin / fmt / clippy); `disallowed-methods` rides the clippy gate — **no separate "7th gate", no build job, no binary gate.** | §4.0/§4.6 ("no fixed percentage"); §4.4's "7th CI gate alongside the 6 in §7.2 / build / binary". |
+
+**Gating spike (blocks `DuckdbEngine`):** reuse-after-interrupt + interrupt latency + `SET threads=<bounded>` — see [`ASSUMPTIONS.md`](ASSUMPTIONS.md) A1/A2. The trait surface (D1) and threading topology (D4) are unchanged whether the spike passes or its `try_clone()` fallback applies, so D1/D4 are locked now.
+
+**Deferred to ingest impl (Phases 2/4, with defaults + fixtures — NOT decided here):** Q3 column-name normalization, Q7 ragged-row policy, Q12 empty-vs-NULL semantics, and the `CsvOpts` ↔ CLI-flag inventory (add `--types`/`--all-varchar`/`--date-format`, unify `--sniff-rows` with `sample_size`). See §8.2 and `DECISIONS.md`.
+
+---
+
 ## Table of Contents
+
+- [0. Canonical Decisions (single source of truth)](#0-canonical-decisions-single-source-of-truth)
 
 - [1. Vision, Goals & Non-Goals](#1-vision-goals--non-goals)
 - [2. Query Engine: Embedded DuckDB](#2-query-engine-embedded-duckdb)
@@ -223,7 +247,7 @@ The DuckDB equivalents of jiq's lazily-cached, `OnceLock`-backed autocomplete so
 
 ### 2.4 Threading and cancellation, carried over from jiq
 
-The concurrency design is reused **almost verbatim** from jiq. jiq's worker (`src/query/worker/thread.rs::spawn_worker`) is a dedicated background thread that owns a `JqExecutor`, blocks on `recv()` over an `mpsc::Receiver<QueryRequest>` (`thread.rs:95`, `worker_loop`), and sends `QueryResponse` back on an `mpsc::Sender`. ciq keeps this skeleton exactly; only the box inside changes — `JqExecutor` becomes a `DuckDbEngine` (the canonical engine type; it implements the `QueryEngine` trait defined in §3.3) that owns a long-lived `duckdb::Connection` to the resident table.
+The concurrency design is reused **almost verbatim** from jiq. jiq's worker (`src/query/worker/thread.rs::spawn_worker`) is a dedicated background thread that owns a `JqExecutor`, blocks on `recv()` over an `mpsc::Receiver<QueryRequest>` (`thread.rs:95`, `worker_loop`), and sends `QueryResponse` back on an `mpsc::Sender`. ciq keeps this skeleton exactly; only the box inside changes — `JqExecutor` becomes a `DuckdbEngine` implementing the `QueryEngine` trait ([§0/D1](#0-canonical-decisions-single-source-of-truth)) that owns a long-lived `duckdb::Connection` to the resident table.
 
 #### Canonical threading model (decided)
 
@@ -271,10 +295,10 @@ Why the handle lives on the dispatcher, not the worker: the worker is, by defini
 |---|---|
 | `Command::new("jq")` + pipe whole doc to stdin | long-lived `Connection` to resident table `t`, owned by the worker |
 | separate stdin-writer + stdout/stderr reader threads (deadlock avoidance) | none — in-process call returns a result set directly |
-| `try_wait()` poll loop at 10 ms for completion (`executor.rs:273-293`) | `DuckDbEngine::query` returns directly (blocks the dedicated worker thread, which is fine — it is dedicated) |
-| cancel via `child.kill()` when `cancel_token.is_cancelled()` (`executor.rs:279-281`) | cancel via **`Connection::interrupt()`** on a `Send`-able handle held by the dispatcher thread when a newer keystroke arrives |
+| `try_wait()` poll loop at 10 ms for completion (`executor.rs:273-293`) | `DuckdbEngine::query` returns directly (blocks the dedicated worker thread, which is fine — it is dedicated) |
+| cancel via `child.kill()` when `cancel_token.is_cancelled()` (`executor.rs:279-281`) | cancel via **`.interrupt()` on an `InterruptHandle`** (newtype over `Arc<duckdb::InterruptHandle>` from `Connection::interrupt_handle()`; **no `Connection::interrupt()` method exists**) held by the **dispatcher** thread, called when a newer keystroke arrives ([§0/D4](#0-canonical-decisions-single-source-of-truth)) |
 
-The cancellation contract the rest of the app sees is **unchanged**: a `CancellationToken` rides on each `QueryRequest`, and a newer query supersedes the older one. The 10 ms `try_wait()` polling loop in `run_jq` disappears entirely — there is no child to poll.
+The cancellation contract the rest of the app sees is settled in [§0/D4](#0-canonical-decisions-single-source-of-truth): a newer query supersedes the older one; the dispatcher issues the interrupt directly; there is **no `cancel_token` on `QueryRequest`** (out-of-band model). The 10 ms `try_wait()` polling loop in `run_jq` disappears entirely — there is no child to poll.
 
 ### 2.5 Schema introspection for autocomplete
 
@@ -303,7 +327,7 @@ This is also where DuckDB's superior type sniffing pays off twice: typed columns
 North Star 2 requires the vast majority of code to be exercisable headlessly with deterministic pass/fail. The engine is where ciq comes out **strictly ahead** of jiq, because moving from an external process to an in-process library removes the least-testable seam in the whole design.
 
 - **No external dependency to stub.** jiq's engine cannot run without a real `jq` binary on `PATH` (the jiq `CLAUDE.md` even pins jq v1.8.1+ for snapshot tests, because tests depend on `jq`'s exact error-message text). ciq's engine is statically linked; tests need nothing on the machine but the compiled crate. This eliminates an entire class of environment-dependent, version-sensitive test flakiness.
-- **Pure in-process function under test.** The engine's single entry point — `QueryEngine::query(&self, sql: &str) -> Result<ResultSet, EngineError>` (the canonical trait + signature from §3.3, implemented by `DuckDbEngine`) — is a deterministic Rust call over an in-memory table. Unit and integration tests construct an engine from a small tempfile CSV fixture, run SQL, and assert on the returned typed rows — **no terminal, no PTY, no spawned process, no stdin/stdout plumbing.** Compare to jiq, where testing `run_jq` means reasoning about process spawn, stdin-writer threads, and stdout/stderr reader threads.
+- **Pure in-process function under test.** The engine's single entry point — `QueryEngine::query(&self, sql: &str) -> QueryOutcome` ([§0/D1](#0-canonical-decisions-single-source-of-truth), implemented by `DuckdbEngine`) — is a deterministic Rust call over an in-memory table. Unit and integration tests construct an engine from a small tempfile CSV fixture, run SQL, and assert on the returned typed columnar rows — **no terminal, no PTY, no spawned process, no stdin/stdout plumbing.** Compare to jiq, where testing `run_jq` means reasoning about process spawn, stdin-writer threads, and stdout/stderr reader threads.
 - **Deterministic outputs for snapshots.** Bounded, ordered queries (`ORDER BY` + `LIMIT`) over a fixed fixture produce byte-stable row content, so the engine slots straight into jiq's existing `insta` snapshot harness. The one nondeterministic field on the result — `execution_time_ms` — is redacted from snapshots (consistent with §4.4), exactly as it must be excluded in jiq.
 - **Cancellation is unit-testable in mechanism, pending R4 in behavior.** Because `Connection::interrupt()` is an in-process call, a test can dispatch a deliberately heavy query and interrupt it from the dispatcher side, then assert the worker emits `QueryResponse::Cancelled { request_id }` — verifying the stale-query wiring end-to-end without a terminal. Whether the interrupt *reliably* aborts and leaves the connection reusable is the R4 spike item ([2.7](#27-open-verification-items-r4)); the test harness for it is headless either way.
 - **Schema/autocomplete sources are pure queries.** `DESCRIBE t` and the `SELECT … GROUP BY … ORDER BY COUNT(*) DESC LIMIT` candidate queries are ordinary SQL returning data structures, so the autocomplete candidate layer is fully assertable in headless tests against a known fixture schema.
@@ -316,12 +340,10 @@ With that caveat stated, the engine layer remains the cleanest example in the wh
 
 ### 2.7 Open verification items (R4)
 
-The cancellation model in [2.4](#24-threading-and-cancellation-carried-over-from-jiq) is the *intended* design, not yet a verified one. Two items, tracked as R4 in §8, must be closed by a focused spike before the engine is locked:
+The cancellation model ([§0/D4](#0-canonical-decisions-single-source-of-truth)) is decided, and its one unobserved engine behavior is now **CLOSED — A1 PASS** (spike at `../ciq-spike/interrupt-spike/`, real `duckdb 1.10503.1`, 5M-row fixture; [`ASSUMPTIONS.md`](ASSUMPTIONS.md) A1):
 
-1. **Is `Connection::interrupt()` safe to call from a different thread** (the dispatcher) against a connection that is **blocked** in a query on the worker thread? The `duckdb` crate's interrupt handle must be `Send` and the call must be valid concurrently with an in-flight `query`.
-2. **After an interrupt, is the connection immediately reusable** for the next query, or must it be reset/recreated? If a reset is required, the worker loop's "drain and re-issue" path must account for it.
-
-Both questions are answerable headlessly (a test thread issues a heavy query, another interrupts it, assertions check the `Cancelled` response and that a subsequent query succeeds). Until R4 closes, §2.4's "interrupted error -> `QueryResponse::Cancelled`" behavior is **expected, pending R4 verification** — DataFusion remains the documented fallback if `interrupt()` proves unusable cross-thread.
+1. **Cross-thread interrupt is safe** — `Connection::interrupt_handle()` returns `Arc<duckdb::InterruptHandle>` (`Send + Sync`); a blocked query interrupts from another thread in **~0.8 ms**.
+2. **The same connection IS immediately reusable** after an interrupt — re-query returns correct rows (5,000,000, baseline match), across 2 cycles. **Decision: `DuckdbEngine` keeps one long-lived connection per session.** The `Connection::try_clone()` fallback (shares the opened DB, no re-parse — also validated) is documented for a future-version regression only; it is **not needed** and leaves the D1 trait / D4 topology unchanged regardless. `SET threads=<bounded>` is applied at load (spike: `threads=4` → ~18 ms interactive). DataFusion remains the engine-level fallback only if a future bump regresses interrupt entirely.
 
 
 ---
@@ -334,9 +356,9 @@ The organizing principle, identical to jiq's, is: **subsystems never touch the t
 
 ### 3.1 Data flow: keystroke to rendered grid
 
-The cancellation model below is the canonical one for the whole plan; §2.4, §6.5, §7.2, and §8/R4 defer to it. It is taken directly from how jiq cancels today: in jiq, `run_jq` (`src/query/executor.rs`) polls `child.try_wait()` in a loop and, on each iteration, checks `cancel_token.is_cancelled()` (executor.rs:279); if the token has been tripped it calls `child.kill()`. The token is *tripped* by another thread (the dispatcher, when a newer request arrives), but the *kill action is taken by the thread that owns execution* — cooperative cancellation, not a cross-thread kill. ciq keeps this contract exactly, substituting DuckDB's `Connection::interrupt()` for `child.kill()`.
+The cancellation model is settled canonically in [§0/D4](#0-canonical-decisions-single-source-of-truth) (dispatcher calls `.interrupt()` directly; worker only runs queries; no watcher thread). It diverges deliberately from jiq's cooperative model: jiq's `run_jq` polls `child.try_wait()` and checks `cancel_token.is_cancelled()`, taking the `child.kill()` action *on the thread that owns execution*. ciq cannot do that — its worker is blocked inside an in-process DuckDB call and cannot also watch a token — so the interrupt is issued from the **dispatcher** thread instead (the supported usage of DuckDB's interrupt handle). This is a case where jiq's mechanism does **not** carry over and ciq diverges on its own merits.
 
-There is one mechanical difference forced by DuckDB: `Connection::execute(...)` blocks until the query finishes or is interrupted; ciq cannot poll a `try_wait()` between rows the way jiq polls a child process. So the worker holds **two handles to the same connection** — the owning handle on which it runs the blocking query, and a clonable interrupt handle. A small *interrupt watcher* (a short-lived helper thread spawned per query, or a single long-lived one) waits on the request's `CancellationToken` and calls `interrupt()` on the handle the moment the token fires. This is the minimal, physically-correct realization of jiq's "trip the token from elsewhere, act on it next to the execution" model, adapted to a blocking C++ call. R4 in §8 tracks the one open detail this leaves: confirming `duckdb-rs`'s documented thread-safety guarantee that `interrupt()` may be called on a handle while another thread is inside `execute()` (DuckDB's C API supports this; the Rust wrapper's guarantee is what R4 verifies).
+There is one mechanical difference forced by DuckDB: `query()` blocks until the query finishes or is interrupted; ciq cannot poll a `try_wait()` between rows the way jiq polls a child process. Per [§0/D4](#0-canonical-decisions-single-source-of-truth), the **dispatcher thread holds a clone of the engine's `InterruptHandle`** (a newtype over `Arc<duckdb::InterruptHandle>`, verified `Send + Sync`) and calls `.interrupt()` on it directly the moment a newer `request_id` supersedes the in-flight query. The worker thread does nothing but block in `query()` and return `QueryOutcome::Cancelled` when interrupted — there is **no** worker-side interrupt-watcher thread (the earlier draft's watcher is removed by D4). Two threads total. A1 in [`ASSUMPTIONS.md`](ASSUMPTIONS.md) tracks the one open engine behavior this leaves: confirming the connection is reusable after an interrupt (fallback: `Connection::try_clone()`, which keeps the in-memory table).
 
 ```mermaid
 flowchart TD
@@ -344,17 +366,17 @@ flowchart TD
     EV --> ED["editor: mutate query buffer + cursor"]
     ED --> DB["debouncer (150ms)<br/>query/debouncer.rs"]
     ED -.cursor ctx.-> AC["autocomplete: schema-aware<br/>SuggestionContext + candidates"]
-    DB -->|on fire| REQ["build QueryRequest{ query (SQL), request_id, cancel_token }"]
-    REQ -->|"mpsc Sender"| DSP["App / dispatcher: record latest request_id;<br/>cancel_token.cancel() on the PRIOR in-flight request"]
-    DSP -->|"mpsc Sender"| WT["worker thread (owns CsvEngine)"]
+    DB -->|on fire| REQ["build QueryRequest{ query (SQL), request_id }"]
+    REQ -->|"mpsc Sender"| DSP["App / dispatcher: record latest request_id;<br/>.interrupt() the PRIOR in-flight query directly"]
+    DSP -. "interrupt() via InterruptHandle clone" .-> EXE
+    DSP -->|"mpsc Sender"| WT["worker thread (owns QueryEngine)"]
 
     subgraph WORKER["dedicated worker thread (panic-caught, worker_loop @ thread.rs:86 analogue)"]
-        WT --> START["spawn interrupt watcher bound to this request's cancel_token"]
-        START --> EXE["conn.query(sql) — BLOCKS until done or interrupted"]
-        WATCH["interrupt watcher: await cancel_token,<br/>then call interrupt() on clone handle"] -.interrupt().-> EXE
-        EXE --> CHK{"returned due to<br/>interrupt?"}
-        CHK -->|yes| CAN["QueryResponse::Cancelled{request_id}"]
-        CHK -->|no| ROWS["fetch rows + column types"]
+        WT --> EXE["engine.query(sql) — BLOCKS until done or interrupted"]
+        EXE --> CHK{"QueryOutcome?"}
+        CHK -->|Cancelled| CAN["QueryResponse::Cancelled{request_id}"]
+        CHK -->|Rows| ROWS["fetch columnar rows + column types"]
+        CHK -->|Error| ERR["QueryResponse::Error{message, request_id}"]
         ROWS --> GRID["compute GridLayout<br/>(col widths, alignment, styled cells)"]
         GRID --> OK["QueryResponse::ProcessedSuccess{ProcessedResult, request_id}"]
     end
@@ -376,12 +398,13 @@ flowchart TD
 
 **Who does what (the resolved threading model):**
 
+*(Threading model per [§0/D4](#0-canonical-decisions-single-source-of-truth): dispatcher interrupts directly; no watcher thread.)*
+
 | Step | Thread | Action | jiq analogue |
 |---|---|---|---|
-| Trip cancellation on the superseded query | App / dispatcher | `cancel_token.cancel()` on the *prior* request before sending the new one | jiq: dispatcher tracks latest `request_id`; the worker observes the tripped token |
+| Supersede + interrupt the prior query | App / dispatcher | call `.interrupt()` directly on the dispatcher's `InterruptHandle` clone (only while a request is known in-flight) | jiq: dispatcher tracks latest `request_id`; here it also issues the interrupt itself |
 | Send new request | App / dispatcher | `mpsc` `send(QueryRequest)` | identical |
-| Run the query (blocking) | worker thread | `conn.query(sql)` | jiq `run_jq` runs the `jq` child |
-| Observe cancellation + act | interrupt watcher (worker-side helper) | await token, call `interrupt()` on a clone of the connection handle | jiq checks `cancel_token.is_cancelled()` inside `run_jq`'s poll loop, calls `child.kill()` |
+| Run the query (blocking) | worker thread | `engine.query(sql)` — returns `QueryOutcome::Cancelled` if interrupted | jiq `run_jq` runs the `jq` child |
 | Discard stale result | App / dispatcher | drop any `QueryResponse` whose `request_id` != latest | identical |
 
 The flow mirrors jiq exactly through the channel layer. The differences are confined to the worker subgraph: jiq's worker re-pipes the entire JSON document to a fresh `jq` child per keystroke (`executor.rs` `run_jq`, `try_wait()` polling); ciq's worker holds a persistent DuckDB connection over a table parsed **once** at startup, so each debounced query is a 1-20ms re-query of resident columnar data rather than a re-parse. The cancellation *contract* is unchanged: a superseded query is interrupted and its eventual `QueryResponse` is discarded by `request_id`.
@@ -390,7 +413,7 @@ The flow mirrors jiq exactly through the channel layer. The differences are conf
 
 - Each `QueryRequest` carries a monotonic `u64 request_id` and a `tokio_util` `CancellationToken`, exactly as jiq's `QueryRequest { query, request_id, cancel_token }` (`src/query/worker/types.rs:14`).
 - The dispatcher (App side) records the latest issued `request_id`. When a `QueryResponse` arrives, any response whose `request_id` is not the latest is dropped before it can touch result state — identical to jiq's stale-discard.
-- When a new request supersedes an in-flight one, the dispatcher trips the prior request's token (`cancel_token.cancel()`); the worker-side interrupt watcher then calls DuckDB `Connection::interrupt()` (replacing jiq's `child.kill()`). The interrupted query returns `QueryResponse::Cancelled { request_id }`, which the App ignores.
+- When a new request supersedes an in-flight one, the **dispatcher calls `.interrupt()` directly** on its `InterruptHandle` clone (per [§0/D4](#0-canonical-decisions-single-source-of-truth) — replacing jiq's `child.kill()`; no watcher thread). The interrupted query returns `QueryOutcome::Cancelled` → `QueryResponse::Cancelled { request_id }`, which the App ignores. Because `interrupt()` is not request-scoped, the dispatcher only fires it while a specific request is known in-flight, and the worker drains the `Cancelled` before dequeuing the next request.
 - The worker is a single dedicated thread doing a blocking `recv()` loop (jiq `worker_loop`, `thread.rs:86`), wrapped in `panic::catch_unwind` with a panic hook (`set_hook`, `thread.rs:38`) so the TUI never corrupts. The App side never blocks on the engine.
 
 ### 3.2 Reuse-from-jiq map
@@ -402,10 +425,10 @@ Legend: **Reuse** = copy with mechanical renames only (jq->SQL/CSV naming, theme
 | `src/app/` (App state, `app_events.rs`, focus/mode model) | **Reuse** | `src/app/` | Crossterm loop is the only terminal edge. Event routing tested by feeding synthetic `KeyEvent`s and asserting state. |
 | `src/app/app_render.rs` + TestBackend snapshots | **Adapt** | `src/app/app_render.rs` | Layout (query bar / results / status / popups) reused; results pane now renders a `GridLayout`. Snapshots re-baselined for tabular output. `ratatui::TestBackend` keeps this headless. |
 | `src/query/debouncer.rs` (`DEBOUNCE_MS = 150`) | **Reuse verbatim** | `src/query/debouncer.rs` | Time-as-parameter struct: `should_execute_at(current_time_ms: u64)` / `schedule_execution_at(current_time_ms)`, with a default `system_time_ms()` reading a static `Instant`. No engine coupling and no Clock trait — tests pass explicit `u64` timestamps for determinism. |
-| `src/query/worker/thread.rs` (`spawn_worker`, `worker_loop` @ thread.rs:86, blocking `recv()`, `catch_unwind` + `set_hook` @ thread.rs:38) | **Adapt** | `src/query/worker/thread.rs` | Same `Receiver<QueryRequest>` / `Sender<QueryResponse>` signature and panic-catch wrapper; loop body now runs SQL on the owned `CsvEngine` (plus the interrupt watcher of §3.1) instead of constructing a jq executor. |
+| `src/query/worker/thread.rs` (`spawn_worker`, `worker_loop` @ thread.rs:86, blocking `recv()`, `catch_unwind` + `set_hook` @ thread.rs:38) | **Adapt** | `src/query/worker/thread.rs` | Same `Receiver<QueryRequest>` / `Sender<QueryResponse>` signature and panic-catch wrapper; loop body now runs SQL on the owned `QueryEngine` ([§0/D1](#0-canonical-decisions-single-source-of-truth)) instead of constructing a jq executor. No interrupt watcher — the dispatcher interrupts directly ([§0/D4](#0-canonical-decisions-single-source-of-truth)). |
 | `src/query/worker/types.rs` (`QueryRequest` @ :14, `QueryResponse`, `ProcessedResult` @ :38) | **Adapt** | `src/query/worker/types.rs` | Channel enums (`QueryResponse::ProcessedSuccess` / `Error` / `Cancelled`) reused exactly. jiq's `ProcessedResult` fields are `output`, `rendered_lines`, `parsed: Option<Arc<Value>>`, `line_count`, `max_width`, `line_widths`, `result_type`, `query`, `execution_time_ms`. ciq drops `parsed` (JSON-only) and reinterprets `rendered_lines` as the grid's styled lines; adds `rows` + `schema` + `grid: GridLayout`; keeps `output`, `request_id` (on the response variant), `line_count`, `max_width`, `line_widths`, `result_type`, `execution_time_ms`. |
-| `src/query/executor.rs` (`run_jq`, child process, `try_wait` poll @ :293, `cancel_token.is_cancelled()` @ :279 -> `child.kill()` @ :281) | **Replace** | `src/engine/` | The engine box. Persistent DuckDB connection over a parse-once table; cancel via `interrupt()` on a clone handle (driven by the worker-side interrupt watcher) instead of `child.kill()`. Engine sits behind `trait CsvEngine` so a fake in-memory engine backs unit tests with zero DuckDB dependency. |
-| `src/query/worker/preprocess.rs` (jiq's jq query-text preprocessing) | **Adapt** | `src/query/worker/preprocess.rs` | jiq preprocesses jq query text; ciq normalizes/expands the SQL shorthand (bare column filters -> a single restricted `SELECT * FROM t WHERE ...`, plus the LIMIT-wrapping of §2.3). Pure `String -> String` over the restricted grammar of §5.3 (tokenize-only, no full SQL parse), trivially table-driven testable. (Note: `ProcessedResult` does **not** live here — it lives in `worker/types.rs`; §7.2 is corrected to match.) |
+| `src/query/executor.rs` (`run_jq`, child process, `try_wait` poll @ :293, `cancel_token.is_cancelled()` @ :279 -> `child.kill()` @ :281) | **Replace** | `src/engine/` | The engine box. Persistent DuckDB connection over a parse-once table; cancel via `.interrupt()` on the dispatcher's `InterruptHandle` clone ([§0/D4](#0-canonical-decisions-single-source-of-truth)) instead of `child.kill()`. Engine sits behind `trait QueryEngine` ([§0/D1](#0-canonical-decisions-single-source-of-truth)) so a `FakeEngine` backs unit tests with zero DuckDB dependency. |
+| `src/query/worker/preprocess.rs` (jiq's jq query-text preprocessing) | **Adapt** | `src/query/worker/preprocess.rs` | jiq preprocesses jq query text; ciq normalizes/expands the SQL shorthand (bare column filters -> a single restricted `SELECT * FROM t WHERE ...`, plus the LIMIT-wrapping of §2.3). Pure `String -> String` over the restricted grammar of §5.3 (tokenize-only, no full SQL parse), trivially table-driven testable. (Note: `ProcessedResult` lives in `worker/types.rs`, not here — see §7.3, which discusses it; its canonical added fields are `rows` + `schema` + `grid: GridLayout` per §3.2, not a flat `column_widths`.) |
 | `src/query/error_enhance.rs` | **Adapt** | `src/query/error_enhance.rs` | jq error -> friendly message becomes DuckDB error -> friendly message. Pure mapping, table-driven tests. |
 | `src/query/query_state.rs` | **Reuse** | `src/query/query_state.rs` | Latest-`request_id` tracking + stale-discard + in-flight bookkeeping. Pure state machine, headless. |
 | `src/autocomplete/` popup, ranking, insertion **framework** (`autocomplete_render.rs`, `autocomplete_state.rs` with `Suggestion`/`SuggestionType`, `insertion.rs`, fuzzy ranking via `fuzzy-matcher`) | **Reuse** | `src/autocomplete/` | Engine-agnostic per the brief. Popup scroll/selection, type labels, cursor-aware insertion all carry over. Insertion tested for UTF-8, mid-query, cursor positioning. |
@@ -422,7 +445,7 @@ Legend: **Reuse** = copy with mechanical renames only (jq->SQL/CSV naming, theme
 
 ### 3.3 Proposed ciq crate module layout
 
-Follows jiq conventions exactly: Rust 2024; `{name}.rs` (never `mod.rs`); tests in separate `{name}_tests.rs` (or `{name}_tests/` directories when large); files <1000 lines; all colors in `theme.rs`; `lib.rs` re-exports everything so tests reach internals directly. The schema module is **top-level `src/schema/`** (canonical; §5.2, §6.3, §7.1 defer to this) — it is consumed by both `engine/` (to build the resident table) and `autocomplete/` (for candidates), so it sits above both rather than inside `engine/`.
+Follows jiq conventions exactly: Rust 2024; `{name}.rs` (never `mod.rs`); tests in separate `{name}_tests.rs` (or `{name}_tests/` directories when large); files <1000 lines; all colors in `theme.rs`; `lib.rs` re-exports everything so tests reach internals directly. The schema module is **top-level `src/schema/`** ([§0/D2](#0-canonical-decisions-single-source-of-truth)) — it is consumed by both `engine/` (to build the resident table) and `autocomplete/` (for candidates), so it sits above both rather than inside `engine/`. (The type is `ColumnType`, the value cache is `ValueCache` — see §0/D2; `SqlType`/`ValueIndex` spellings elsewhere are stale.)
 
 ```
 src/
@@ -443,11 +466,11 @@ src/
 │   └── types_tests.rs
 │
 ├── engine/                      # ENGINE BOX — swappable (HEADLESS via trait + fake)
-│   ├── engine.rs                # trait CsvEngine { fn query(&self, sql, &CancellationToken) -> Result<RawRows>; fn interrupt_handle(&self) -> InterruptHandle }
+│   ├── engine.rs                # trait QueryEngine (see §0/D1: query(&self,sql)->QueryOutcome; load; distinct; schema; interrupt_handle)
 │   ├── engine_tests.rs
 │   ├── duckdb_engine.rs         # real impl: persistent Connection over parse-once table; interrupt() on clone handle
 │   ├── duckdb_engine_tests.rs   # exercised headlessly with tiny in-memory CSVs
-│   └── fake_engine.rs           # deterministic in-memory CsvEngine impl for fast worker/app tests (no DuckDB dep)
+│   └── fake_engine.rs           # deterministic in-memory QueryEngine impl for fast worker/app tests (no DuckDB dep)
 │
 ├── query/                       # WORKER + DEBOUNCE — copied shape from jiq (HEADLESS)
 │   ├── debouncer.rs             # reused verbatim (150ms; should_execute_at(current_time_ms: u64))
@@ -498,7 +521,7 @@ src/
 
 ### 3.4 The engine-as-swappable-box boundary
 
-In jiq the engine is *already* a box: subsystems only ever see `QueryRequest` going out and `QueryResponse` / `ProcessedResult` coming back over the worker channel (`spawn_worker` in `thread.rs`); nobody outside `executor.rs` knows `jq` is a child process. ciq preserves this and tightens it into one explicit trait — **`CsvEngine`** (the single canonical trait name; §2, §4, §7 use this name) — with one canonical query method, `fn query(&self, sql: &str, cancel: &CancellationToken) -> Result<RawRows>`, plus `fn interrupt_handle(&self) -> InterruptHandle` to give the worker's interrupt watcher (§3.1) a clonable handle for `interrupt()`. There is no `run()` and no `execute()` elsewhere in the plan; those names are eliminated.
+In jiq the engine is *already* a box: subsystems only ever see `QueryRequest` going out and `QueryResponse` / `ProcessedResult` coming back over the worker channel (`spawn_worker` in `thread.rs`); nobody outside `executor.rs` knows `jq` is a child process. ciq preserves this and tightens it into one explicit trait — **`QueryEngine`** (see [§0/D1](#0-canonical-decisions-single-source-of-truth) for the canonical name and full signature) — with the single hot-path method `query(&self, sql: &str) -> QueryOutcome` (cancellation is out-of-band per [§0/D4](#0-canonical-decisions-single-source-of-truth), so there is **no** cancel argument on `query()`), plus `interrupt_handle() -> InterruptHandle` (a newtype over `Arc<duckdb::InterruptHandle>`) that the dispatcher holds to interrupt the in-flight query. *(This paragraph originally named `CsvEngine`/`query(sql, cancel) -> Result<RawRows>` and a worker-side interrupt watcher — both superseded by §0; corrected here.)*
 
 ```mermaid
 flowchart LR
@@ -508,15 +531,15 @@ flowchart LR
         R["grid + results + autocomplete"]
     end
     A & Q & R <-->|"QueryRequest / QueryResponse<br/>(mpsc, owned data types)"| W["worker thread + interrupt watcher"]
-    W -->|"trait CsvEngine::query(sql, cancel)"| E1["DuckdbEngine<br/>(production)"]
-    W -->|"trait CsvEngine::query(sql, cancel)"| E2["FakeEngine<br/>(deterministic, in-memory, tests)"]
+    W -->|"trait QueryEngine::query(sql)"| E1["DuckdbEngine<br/>(production)"]
+    W -->|"trait QueryEngine::query(sql)"| E2["FakeEngine<br/>(deterministic, in-memory, tests)"]
 ```
 
 Two consequences that directly serve the hard north stars:
 
-1. **Performance north star is localized.** "Parse once, re-query resident columnar data" lives entirely inside `csv/ingest.rs` + `engine/duckdb_engine.rs`. The rest of the codebase only sees fast `QueryResponse`s. If DuckDB ever needs swapping for the DataFusion fallback, only the `engine/` directory changes — the `CsvEngine` contract, `query_state`, grid, and app are untouched.
+1. **Performance north star is localized.** "Parse once, re-query resident columnar data" lives entirely inside `csv/ingest.rs` + `engine/duckdb_engine.rs`. The rest of the codebase only sees fast `QueryResponse`s. If DuckDB ever needs swapping for the DataFusion fallback, only the `engine/` directory changes — the `QueryEngine` contract ([§0/D1](#0-canonical-decisions-single-source-of-truth)), `query_state`, grid, and app are untouched.
 
-2. **AI-testability north star is structural, not bolted on.** Because the worker speaks `trait CsvEngine`, the vast majority of the system — event routing, debounce, stale-discard, SQL preprocessing, schema-aware autocomplete, grid layout — is tested against a `FakeEngine` or pure functions with **zero** DuckDB/terminal dependency and fully deterministic output. `GridLayout` is a pure `fn(rows, schema) -> GridLayout` (assert on widths/alignment), `analyze_context` is a pure `fn(&str) -> (SuggestionContext, partial)`, and the debouncer is driven by **passing explicit `u64` timestamps to `should_execute_at(current_time_ms)`** — jiq's actual time-as-parameter design, not a Clock abstraction — so timing tests are deterministic without faking a clock. An AI agent runs the CI test command and gets binary pass/fail with no human in the loop.
+2. **AI-testability north star is structural, not bolted on.** Because the worker speaks `trait QueryEngine`, the vast majority of the system — event routing, debounce, stale-discard, SQL preprocessing, schema-aware autocomplete, grid layout — is tested against a `FakeEngine` or pure functions with **zero** DuckDB/terminal dependency and fully deterministic output. `GridLayout` is a pure `fn(rows, schema) -> GridLayout` (assert on widths/alignment), `analyze_context` is a pure `fn(&str) -> (SuggestionContext, partial)`, and the debouncer is driven by **passing explicit `u64` timestamps to `should_execute_at(current_time_ms)`** — jiq's actual time-as-parameter design, not a Clock abstraction — so timing tests are deterministic without faking a clock. An AI agent runs the CI test command and gets binary pass/fail with no human in the loop.
 
 The **small, explicitly-enumerated human-test surface is owned canonically by §4.7**; this section only points at it. Every item on that list is reachable only through the leaf edges of the diagram above — `app_render.rs`, the `crossterm` loop, and `clipboard.rs` (three files) — covering real-terminal rendering fidelity (true colors / Unicode width as a physical terminal draws them, beyond what `TestBackend` snapshots verify), genuine keyboard/mouse/paste via a PTY, system clipboard / OSC52 round-trips, color-polarity/theme legibility, and terminal resize. The layout *decisions* feeding them (`GridLayout`, copy-target selection, event routing) remain on the headless side and are asserted there. This keeps the human-validated fraction minimal and bounded by construction, exactly as the design constraint requires.
 
@@ -561,7 +584,7 @@ pub fn render_to_string(app: &mut App, width: u16, height: u16) -> String {
 
 Even paste handling — which *looks* like a terminal concern — is largely pure in jiq: `src/app/paste_recovery_render.rs` is a render/state module with its own `paste_recovery_render_tests.rs`, and paste insertion is property-tested in `src/app/app_events_tests.rs` (`prop_paste_text_insertion_integrity`, `prop_paste_appends_at_cursor_position`). Only the *framing* a real terminal emits stays in the shell (§4.7). ciq carries this discipline forward and tightens it.
 
-The table below maps every CSV-specific subsystem to its pure core and the exact thing that makes it headless-testable. Signatures are **illustrative** (ciq is greenfield); the jiq-symbol citations are grep-verified.
+The table below maps every CSV-specific subsystem to its pure core and the exact thing that makes it headless-testable. Signatures are **illustrative** (ciq is greenfield); the jiq-symbol citations are illustrative too (grep the live source — see [`ASSUMPTIONS.md`](ASSUMPTIONS.md) A4). **Canonical-name note:** the cells below predate §0 and use stale spellings — read `SqlType` as **`ColumnType`** and `ValueIndex` as **`ValueCache`** ([§0/D2](#0-canonical-decisions-single-source-of-truth)); read the context enum as **`CursorContext`** with the variants defined canonically in §5.3 (not the `SqlContext`/`{SelectList, WhereColumn, WhereValue, FuncArg, …}` sketch shown here). The pure/headless *intent* of each row stands; only the names defer to §0/§5.3.
 
 | Subsystem | Pure function signature (illustrative) | Why it needs no terminal | Replaces in jiq |
 |---|---|---|---|
@@ -603,7 +626,7 @@ flowchart LR
     I --> WRK
 ```
 
-> **Cross-section note (engine trait + cancellation).** This section uses the canonical names settled in §2/§3: the engine trait is **`QueryEngine`** with method **`query(&self, sql: &str) -> QueryOutcome`** (plain data: rows, schema, row_count, error). Cancellation follows the decided physical model: a cheap, `Clone`-able **`InterruptHandle`** (wrapping DuckDB's `Connection::interrupt()`) is held by the dispatcher/App thread and `interrupt()` is called *from that thread* to abort the query the worker is *blocked inside*. The worker never interrupts itself (it cannot — `query()` blocks it). Testability consequence below in §4.4.
+> **Cross-section note (engine trait + cancellation).** Per [§0/D1](#0-canonical-decisions-single-source-of-truth): the engine trait is **`QueryEngine`** with **`query(&self, sql: &str) -> QueryOutcome`** (`QueryOutcome = Rows(Table) | Error{message,sql} | Cancelled`). Per [§0/D4](#0-canonical-decisions-single-source-of-truth): a `Clone`-able **`InterruptHandle`** (newtype over `Arc<duckdb::InterruptHandle>`; obtained from `Connection::interrupt_handle()` — note there is no `Connection::interrupt()` method) is held by the dispatcher/App thread, which calls `.interrupt()` *from that thread* to abort the query the worker is blocked inside. The worker never interrupts itself (it cannot — `query()` blocks it). Testability consequence below in §4.4.
 
 ### 4.2 The headless harness
 
@@ -686,7 +709,7 @@ Nondeterminism is the one thing that breaks the agent loop: a flaky test gives a
 |---|---|---|
 | **Time is a `u64` parameter, never ambient in logic** | **Inherited verbatim from jiq.** jiq's debouncer is time-as-parameter, *not* a Clock trait: `Debouncer::should_execute_at(&self, current_time_ms: u64)` and `schedule_execution_at(&mut self, current_time_ms: u64)`, with a thin `system_time_ms()` wrapper used only by the non-`_at` convenience methods (`src/query/debouncer.rs`). ciq reuses this model **verbatim** — the harness feeds its own `now_ms` (§4.2) to `should_execute_at`. There is **no `Clock` trait and no `FakeClock`**; an earlier draft invented those and it was wrong. | `debouncer_tests.rs` exercises `should_execute_at` at exact boundaries; the harness drives `now_ms` explicitly. |
 | **Single-threaded test execution** | **Inherited from jiq's CI.** This is the *real* mechanism preventing cross-test races: `cargo test --all-features -- --test-threads=1`. The worker thread + mpsc channel + `TestBackend` tests depend on it; running tests multi-threaded would interleave worker responses across tests. | The §4.5 loop and §7 gate both pin `--test-threads=1`. Not optional. |
-| **No ambient `Instant::now()` / `SystemTime::now()` / `rand` in logic** | **NET-NEW ciq tooling — does not exist in jiq.** A `clippy.toml` `disallowed-methods` list bans `std::time::Instant::now`, `std::time::SystemTime::now`, `rand::random`, and `rand::thread_rng` everywhere except the seam wrappers (the debouncer's `system_time_ms` and any explicit-seed sampler). This must be **built in Phase 1** and added as the **7th CI gate** alongside the 6 in §7.2 (cross-ref: §7.2 currently lists only fmt/clippy/build/test/coverage/binary — this `disallowed-methods` lint gate is additive and must be listed there too). | `cargo clippy ... -D warnings` fails on any disallowed call; a CI grep gate is the belt-and-suspenders backstop. |
+| **No ambient `Instant::now()` / `SystemTime::now()` / `rand` in logic** | **NET-NEW ciq tooling — does not exist in jiq.** A `clippy.toml` `disallowed-methods` list bans `std::time::Instant::now`, `std::time::SystemTime::now`, `rand::random`, and `rand::thread_rng` everywhere except the seam wrappers (the debouncer's `system_time_ms` and any explicit-seed sampler). Built in Phase 1. Per [§0/D5](#0-canonical-decisions-single-source-of-truth) this is **not** a separate CI gate — it **rides inside the existing clippy gate** (one of the 4 jobs: test / tarpaulin / fmt / clippy; there is no build job, no binary gate, and no "7th gate"). | `cargo clippy ... -D warnings` fails on any disallowed call; a CI grep gate is the belt-and-suspenders backstop. |
 | **Stable ordering everywhere** | `BTreeMap`/sorted `Vec` for anything user-visible (column order, distinct values, suggestions). `SELECT DISTINCT` for a `ValueIndex` carries an explicit `ORDER BY` so DuckDB output is row-order-stable. | property test 4.3.1 "Ranking total order"; snapshots fail loudly on reorder. |
 | **Fixed fixtures, no network, no `$HOME`** | Engine tests read only `tests/fixtures/*.csv`; config tests read in-memory strings; clipboard/OSC are faked. | tests never touch real FS outside `fixtures/` or env. |
 | **Snapshotable output, timing redacted** | Every render and menu has a stable text serialization (`TestBackend::to_string`, `Debug` for menus). Execution-time fields (the analog of jiq's `ProcessedResult.execution_time_ms`) are **excluded from snapshots** (redacted) so timing never flips a golden. | `insta` redaction settings. |
@@ -723,7 +746,9 @@ Every edge in this loop is a **deterministic, machine-readable pass/fail** (exit
 
 ### 4.6 Coverage policy
 
-Following the jiq memory policy (critical-path coverage, not a blunt 100% gate). **Coverage tool is `cargo tarpaulin`, matching jiq's inherited CI toolchain** — `.github/workflows/ci.yml` installs `cargo-tarpaulin` and runs `cargo tarpaulin --out xml --out html --output-dir coverage -- --test-threads=1`, uploading `coverage/cobertura.xml` to Codecov. ciq stays on tarpaulin (no switch to `llvm-cov`; an earlier draft named llvm-cov in error). Note tarpaulin also runs with `--test-threads=1` for the same race reason as §4.4.
+> **Canonical gate shape is [§0/D5](#0-canonical-decisions-single-source-of-truth)** (tiered: **hard** branch-coverage floor on a pure-core allowlist; **warn-only** project-wide **95%**; **hard** shell-marker containment). The original "we deliberately do not assert a fixed percentage" stance in §4.0/§4.6 is **superseded** by D5 — there *is* a maintained 95% (warn-level) and a hard core floor. The tier descriptions below are otherwise correct and stand.
+
+Following the jiq memory policy (critical-path coverage, not a blunt 100% gate). **Coverage tool is `cargo tarpaulin`, matching jiq's inherited CI toolchain** — `.github/workflows/ci.yml` installs `cargo-tarpaulin` and runs `cargo tarpaulin --out xml --out html --output-dir coverage -- --test-threads=1`, uploading `coverage/cobertura.xml` to Codecov. ciq stays on tarpaulin (no switch to `llvm-cov`; an earlier draft named llvm-cov in error). Note tarpaulin also runs with `--test-threads=1` for the same race reason as §4.4. **Verify tarpaulin's branch-coverage support actually works** for the core floor — it is historically weak; if it can't enforce branch %, the floor is softer than intended ([`ASSUMPTIONS.md`](ASSUMPTIONS.md), D5 risks).
 
 - **Core tier (§4.0) — high bar.** SQL-context grammar, candidate generation, ranking, insertion, grid layout, schema/type inference, scroll/search math: aim for ~100% line + branch coverage, because these are pure and every branch is a cheap test. New logic here ships with its tests (jiq's "100% test coverage for all new logic" rule).
 - **Seam tier — behavior-covered.** The DuckDB `QueryEngine` wrapper, worker, debouncer are covered by integration + E2E session tests over fixtures rather than by chasing line %.
@@ -959,8 +984,8 @@ The hard rule: **`layout::*` functions take owned/borrowed data and return `Vec<
 
 | # | Feature | Owning module(s) | Core logic = pure fn | What's snapshot/unit tested headlessly | HTS residue (-> §4.7) |
 |---|---|---|---|---|---|
-| 6.2 | **Column palette / picker** (fuzzy multi-select that *writes* the SELECT clause) | `palette/palette_state.rs`, `palette/select_writer.rs`, `palette/palette_render.rs` | `apply_projection(parsed, checked) -> String`, `filter(cols, needle) -> Vec<Ranked>` | toggle/reorder state machine; emitted SQL string; fuzzy ranking order; round-trip parse of an explicit SELECT into checkmarks; unsupported-shape fallback | popup glyphs, real key chords |
-| 6.3 | **Header / schema bar** (always-visible names + sniffed types + delimiter) | `schema_bar.rs` (layout) over the canonical `Schema` (home settled in §7.1) | `layout_schema_bar(&Schema, width, h_col_offset, active_col) -> Vec<Span>` | width-fit truncation, type-badge text, active-column underline, delimiter glyph choice | final colored row |
+| 6.2 | **Column palette / picker** (fuzzy multi-select that *generates* the SELECT — [§0/D3](#0-canonical-decisions-single-source-of-truth)) | `palette/palette_state.rs`, `palette/query_emit.rs`, `palette/palette_render.rs` | `emit(state) -> String`, `filter(cols, needle) -> Vec<Ranked>` | toggle/reorder state machine; emitted SQL string (incl. identifier + facet-value quoting); fuzzy ranking order; ownership byte-compare; reorder ordering | popup glyphs, real key chords, Replace-transition |
+| 6.3 | **Header / schema bar** (always-visible names + sniffed types + delimiter) | `schema_bar.rs` (layout) over the canonical `Schema` (top-level `src/schema/`, [§0/D2](#0-canonical-decisions-single-source-of-truth)) | `layout_schema_bar(&Schema, width, h_col_offset, active_col) -> Vec<Span>` | width-fit truncation, type-badge text, active-column underline, delimiter glyph choice | final colored row |
 | 6.4 | **Tabular results grid** (the one new renderer) | `grid/grid_layout.rs` (pure), `grid/grid_render.rs` (blit), `grid/col_width.rs` | `layout_grid(rows, &Schema, &GridView) -> GridFrame{header, body, col_x, total_width}` | column widths, alignment per type, ellipsis, null glyph, h/v scroll windowing, sticky header line | cursor cell highlight blit, color |
 | 6.5 | **Instant facets / column stats** (min/max/distinct/nulls on cursor column) | `facets/facet_query.rs`, `facets/facet_state.rs`, `facets/facet_render.rs` | `build_facet_sql(col, &Schema) -> String`, `format_facets(FacetResult, width) -> Vec<Line>` | SQL generated per type; number/date/string formatting; histogram bar widths | popup blit |
 | 6.6 | **Delimiter / quote / header auto-detect** (+ override + config) | `ingest/sniff.rs`, `ingest/csv_opts.rs`, `config.rs` (`[csv]` section) | `to_read_csv_sql(&CsvOpts) -> String`, `merge(config, cli, sniffed) -> CsvOpts` | precedence resolution; emitted `read_csv(...)` SQL; override application | none beyond the grid re-render it triggers |
@@ -968,36 +993,30 @@ The hard rule: **`layout::*` functions take owned/borrowed data and return `Vec<
 
 The pattern is uniform: **selection/SQL-generation/formatting logic is pure and coverage-targeted (per §4.6, `cargo tarpaulin`, critical-path-first); the popup or row blit is a `TestBackend` snapshot; the actual terminal glyph + clipboard + color polarity is the only thing flagged for human validation, against §4.7's single list.** This is the concrete embodiment of North Star #2 (AI-testable by construction): an agent can drive a column toggle, assert the emitted SQL byte-string, run it through the engine harness, and snapshot the grid, all headlessly under `cargo test --all-features -- --test-threads=1` (the verified CI invocation), then self-correct on a diff.
 
-### 6.2 Column palette / picker — *writes the SELECT for you*
+### 6.2 Column palette / picker — *generates the SELECT for you*
 
-The headline CSV convenience: the user presses a chord (proposed `Ctrl+K`, "columns"), gets a fuzzy-filterable list of every column with its sniffed type and a checkbox, multi-selects, and ciq **rewrites the projection list of the live query** — they never hand-type `SELECT a, b, c`. This is the CSV analogue of jiq's autocomplete-driven query construction, but at the clause level rather than the token level.
+> **Superseded design — read [§0/D3](#0-canonical-decisions-single-source-of-truth).** This subsection originally specified a `select_writer` that **parsed and spliced into the user's hand-typed SQL** (`parse_shape`/`apply_projection`/`parse_selected`/`ProjectionShape`). That design is **dropped** by D3: the deep-dive confirmed it secretly requires the SQL parser §5.3 declines to build, and it dies on real exploratory SQL (`CASE`, `GROUP BY`, window fns) anyway. The replacement below is the **generated-state** design.
+
+The headline CSV convenience: the user presses a chord (proposed `Ctrl+K`, "columns"), gets a fuzzy-filterable list of every column with its sniffed type and a checkbox, multi-selects/reorders, and ciq **generates a fresh canonical `SELECT`** from the palette's own structured state — they never hand-type `SELECT a, b, c`.
 
 ```mermaid
 flowchart TD
-  Open["Open palette (Ctrl+K)"] --> Parse["parse current query's<br/>projection -> checked set<br/>(restricted-shape parser)"]
-  Parse --> Filter["type to fuzzy-filter columns<br/>(fuzzy-matcher, reused ranking)"]
+  Open["Open palette (Ctrl+K)"] --> Own{"is the bar text == the<br/>last string the palette emitted?"}
+  Own -->|yes (palette owns it)| Filter["type to fuzzy-filter columns<br/>(fuzzy-matcher, reused ranking)"]
+  Own -->|no (user hand-typed SQL)| Offer["palette DISABLED;<br/>offer 'Replace query with column selection?'"]
   Filter --> Toggle["Space toggles include/exclude<br/>arrow keys reorder"]
-  Toggle --> Write["select_writer::apply_projection()<br/>rewrites projection, keeps tail verbatim"]
-  Write --> Engine["new SQL -> debouncer -> worker -> DuckDB"]
+  Toggle --> Emit["query_emit::emit(state)<br/>-> fresh canonical SELECT ... FROM t ..."]
+  Emit --> Engine["new SQL -> debouncer -> worker -> DuckDB"]
 ```
 
-**Reuse vs. replace.** The popup chrome, scrolling, highlight, and **fuzzy ranking** are lifted from jiq's autocomplete framework (`autocomplete_state.rs`: `AutocompleteState` at line 318, `Suggestion` at 265, `SuggestionType` at 217, `visible_suggestions` at 414, plus the `fuzzy-matcher` ranking and the popup render). What's replaced is the *candidate source* — instead of JSON paths from live data, candidates are `Schema` columns — and the *insertion target* — instead of inserting a token at the cursor (`autocomplete/insertion.rs`), it rewrites a whole projection via a SQL-aware writer.
+**Reuse vs. replace.** The popup chrome, scrolling, highlight, and **fuzzy ranking** are lifted from jiq's autocomplete framework (popup render + `fuzzy-matcher`). What's replaced is the *candidate source* — candidates are `Schema` columns, not JSON paths — and the *output*: instead of inserting a token, the palette **emits a whole query from structured state**. There is **no SQL parser/splicer** ([§0/D3](#0-canonical-decisions-single-source-of-truth)).
 
-**The SELECT-rewriter is load-bearing; here is exactly what it parses (and what it refuses).** A critic correctly flagged that clause-level rewriting of *arbitrary* DuckDB SQL (CTEs, subqueries, window functions, `GROUP BY ALL`, set operations) would require a real SQL parser, which §5.3 deliberately declines to build (it ships a tokenizer, not a parser). ciq resolves this by **scoping the rewriter to the same restricted query grammar the rest of ciq targets** (cross-ref §8/Q1: read-only, single top-level `SELECT`, optionally one leading `WITH` CTE block that is treated as opaque prefix). The contract:
+**The generated-state contract (no parsing of user text):**
+- `PaletteState` (`palette/palette_state.rs`): `{ all_columns: Vec<ColumnRef>, checked: IndexSet<usize> (ordered — drives projection order), predicates: Vec<Predicate>, needle: String, cursor: usize }`. Toggle/reorder/filter are pure state transitions — unit-tested with plain asserts, no terminal.
+- `palette/query_emit.rs::emit(state) -> String` (NOT `emit.rs` — that name collides with `output/emit.rs`): renders a canonical `SELECT <projection> FROM t [WHERE <conjunction>] [ORDER BY …]`, applying the existing display-`LIMIT min(k, N)` rule (§2.3). Identifiers needing quoting (spaces, reserved words, case) are double-quoted; empty selection → `SELECT *`. **Pure `state -> String`**, exhaustively golden-tested — including **two** quoting surfaces: (a) identifier quoting in the projection, and (b) **facet-predicate value quoting/escaping** (`region = 'O''Brien'`, NULL handling, numeric `5` vs string `'5'`, dates). Reorder ordering is its own exit-criterion. The emitted byte format is an **identity/compatibility surface** (see ownership check below), so its formatting is stable, not a free internal choice.
+- **Ownership / "is the palette live?"** — decided by **byte-comparing the bar text against the last string `query_emit` produced**. Equal → the palette owns the query and edits stay live. Different → the user has hand-typed SQL; the palette is **disabled** and offers a soft "Replace query with column selection?". No parsing needed. Because opening a file pre-seeds `SELECT * FROM t LIMIT n` (the palette's own emission), the common path starts palette-owned and stays live.
 
-- `select_writer::parse_shape(sql, tokens) -> ProjectionShape` consumes the §5.3 **tokenizer output** (not a full AST). It walks the token stream to locate the **top-level** `SELECT` keyword and the boundary token that ends the projection list — the first top-level `FROM` at the same paren-depth-0, ignoring `SELECT`/`FROM` inside parenthesised subqueries and inside a leading `WITH (...)`. It classifies the result into one of:
-  - `ProjectionShape::Star` (`SELECT *` / `SELECT t.*`),
-  - `ProjectionShape::Explicit { span, items }` (a comma list of simple column refs / qualified names at depth 0),
-  - `ProjectionShape::Unsupported` (the projection contains expressions, aggregates, `DISTINCT`, window functions, `* EXCLUDE/REPLACE`, set operations, or the locator hits ambiguity).
-- `select_writer::apply_projection(sql, shape, checked: &[ColumnRef]) -> Outcome`:
-  - For `Star` and `Explicit`, it **splices** a freshly-rendered projection (`*` -> explicit list, or list -> new list) into the located `span`, **byte-preserving everything before the `SELECT` projection and everything from the boundary `FROM` onward** — so user-supplied `WHERE` / `GROUP BY` / `ORDER BY` / `LIMIT` survive verbatim and untouched. Identifiers needing quoting (spaces, reserved words, case-sensitivity) are double-quoted. Empty selection -> `SELECT *`.
-  - For `Unsupported`, it **does not rewrite** — it returns `Outcome::Unsupported` and the palette surfaces a one-line status ("can't rewrite this query's columns") and leaves the SQL untouched. The grid and query are never corrupted by a half-understood edit. This is the explicit escape hatch that keeps the "tokenizer, not a parser" promise honest.
-- `select_writer::parse_selected(sql, tokens) -> Vec<ColumnRef>`: the round-trip — reads an `Explicit` projection back into checkmarks so re-opening the palette shows current state (`Star` -> all checked, `Unsupported` -> palette opens read-only/disabled). Property-tested: `parse_selected ∘ apply_projection == identity` on the checked set for the `Explicit`/`Star` shapes.
-- **Interaction with §2.3's LIMIT-wrapping.** ciq's display-LIMIT (§2.3) is applied by the **engine layer as an outer wrapper**, not by the rewriter — the rewriter only ever touches the projection of the *user's* query text and leaves any user-authored `ORDER BY`/`LIMIT` in the preserved tail. The engine then wraps the whole user query (`SELECT * FROM (<user sql>) LIMIT <viewport>`), so a user `LIMIT` and the display `LIMIT` compose correctly and the rewriter never has to reason about them.
-
-**Pure-logic boundary (headless-testable).** `PaletteState` (`palette/palette_state.rs`): `{ all_columns: Vec<ColumnRef>, checked: IndexSet<usize> (ordered, drives projection order), needle: String, cursor: usize, shape: ProjectionShape }`. Toggle/reorder/filter are pure state transitions — unit-tested with plain asserts, no terminal. `parse_shape` / `apply_projection` / `parse_selected` are pure functions over `(sql, tokens)` and are **exhaustively `insta`-snapshot-tested** with a golden table of `(input_sql, checked) -> expected_sql | Unsupported` pairs, including the hard cases (CTE prefix, subquery in `FROM`, `GROUP BY`, reserved-word identifiers). An AI agent edits the writer and immediately sees which golden SQL strings drift, then runs the result through the engine harness. **Hide/show toggle**: a sibling chord (`-`/`+` on the focused grid column) flips a single column's membership and re-runs `apply_projection` — same pure path, no separate engine concept.
-
-**HTS residue (-> §4.7):** the popup's drawn glyphs, the checkbox character, and real `Space`/arrow key delivery. Pinned as far as possible by a `TestBackend` 80x24 snapshot of `palette_render`.
+**HTS residue (-> §4.7):** the popup's drawn glyphs, the checkbox character, real `Space`/arrow key delivery, and the **Replace-transition UX** (accepting Replace on a hand-typed `… WHERE region='EU'` discards the `WHERE` and snaps to `SELECT *` — correct-by-construction but a real UX cliff to validate). Pinned as far as possible by a `TestBackend` 80x24 snapshot of `palette_render`.
 
 ### 6.3 Header / schema bar
 
@@ -1098,7 +1117,7 @@ Pressing a chord on the focused grid column (proposed `f`, "facet") fires a chea
 
 ### 6.6 Delimiter / quote / header auto-detect (+ override + config)
 
-On load, ciq leans on **DuckDB's CSV sniffer** (the reason DuckDB won on "CSV type sniffing: best — `created_at -> DATE`"). The sniffed `delimiter`, `quote`, `escape`, `header` bool, and per-column types populate the canonical `Schema` (home settled in §7.1) shown in the schema bar (6.3). Users override via CLI flags, the config file, or an in-TUI override chord.
+On load, ciq leans on **DuckDB's CSV sniffer** (the reason DuckDB won on "CSV type sniffing: best — `created_at -> DATE`"). The sniffed `delimiter`, `quote`, `escape`, `header` bool, and per-column types populate the canonical `Schema` (top-level `src/schema/`, [§0/D2](#0-canonical-decisions-single-source-of-truth)) shown in the schema bar (6.3). Users override via CLI flags, the config file, or an in-TUI override chord.
 
 **Precedence (pure, fully testable):** `csv_opts::merge(config_opts, cli_opts, sniffed_opts) -> CsvOpts` with order **CLI > config > sniffed**. A pure function over three plain structs -> exhaustively unit-tested with no I/O. `csv_opts::to_read_csv_sql(&CsvOpts) -> String` emits the `read_csv('...', delim='..', header=.., quote='..', auto_detect=..)` call — snapshot-tested byte-for-byte so an agent can verify the engine invocation without spawning DuckDB.
 
@@ -1127,8 +1146,8 @@ Per the inherited jiq conventions (Rust 2024, `{name}.rs` never `mod.rs`, tests 
 
 ```
 src/
-  palette/   palette_state.rs  select_writer.rs  palette_render.rs   (+ _tests.rs each)
-  schema_bar.rs                                                      (+ _tests.rs)   # layout over the canonical Schema (model home: §7.1)
+  palette/   palette_state.rs  query_emit.rs  palette_render.rs   (+ _tests.rs each)   # query_emit, NOT select_writer (§0/D3)
+  schema_bar.rs                                                      (+ _tests.rs)   # layout over the canonical Schema (top-level src/schema/, §0/D2)
   grid/      grid_layout.rs    col_width.rs       grid_render.rs     (+ _tests.rs)
   facets/    facet_query.rs    facet_state.rs     facet_render.rs    (+ _tests.rs)
   ingest/    sniff.rs          csv_opts.rs                           (+ _tests.rs)
@@ -1138,7 +1157,7 @@ src/
   theme.rs      // add `grid`, `schema`, `palette`, `facet` color modules
 ```
 
-The `Schema` *model* is owned by the engine layer per §7.1 (this section does not redefine its home — it only consumes it); `schema_bar.rs` here is the *layout* over it. The split keeps each `*_layout.rs` / `*_state.rs` / `*_query.rs` / `select_writer.rs` / `emit.rs` file purely logical (the headless-testable majority) and isolates the thin blit shims (`grid_render.rs`, `palette_render.rs`, `facet_render.rs`, and the `schema_bar` blit) as the only `Frame`-touching code in this section. Even those are largely pinned by `TestBackend` snapshots, leaving only the residue (true glyphs, color polarity, real keys, OSC clipboard) for human validation — and that residue is delegated entirely to the single canonical HTS list in §4.7, never re-enumerated here.
+The `Schema` *model* lives in top-level `src/schema/` ([§0/D2](#0-canonical-decisions-single-source-of-truth) — the engine *produces* it but does not *own its module*; this section only consumes a `&Schema`); `schema_bar.rs` here is the *layout* over it. The split keeps each `*_layout.rs` / `*_state.rs` / `*_query.rs` / `query_emit.rs` / `emit.rs` file purely logical (the headless-testable majority) and isolates the thin blit shims (`grid_render.rs`, `palette_render.rs`, `facet_render.rs`, and the `schema_bar` blit) as the only `Frame`-touching code in this section. Even those are largely pinned by `TestBackend` snapshots, leaving only the residue (true glyphs, color polarity, real keys, OSC clipboard) for human validation — and that residue is delegated entirely to the single canonical HTS list in §4.7, never re-enumerated here.
 
 
 ---
@@ -1147,10 +1166,10 @@ The `Schema` *model* is owned by the engine layer per §7.1 (this section does n
 
 The roadmap is sequenced around the two North Stars. The **AI-testability harness is built FIRST (Phase 1) and is a hard prerequisite, not parallel work** — every later phase's exit criteria are phrased as deterministic assertions the harness can run in an agent's build->test->fix loop. The **parse-once columnar engine** (North Star 1) appears as early as Phase 1 (the engine wrapper) and is load-bearing from Phase 2 onward. Each phase has a single headline **deliverable**, machine-checkable **exit criteria**, and an explicitly enumerated, minimal **human-validation** carve-out.
 
-Two cross-cutting decisions are fixed here and used verbatim by every other section of this plan:
+Two cross-cutting decisions govern this roadmap; both are settled canonically in [§0](#0-canonical-decisions-single-source-of-truth) and only summarized here:
 
-1. **The engine abstraction is `trait QueryEngine` with method `run(&self, sql: &str, cancel: &CancellationToken) -> QueryOutcome`** (plus `load`, `schema`, `distinct`, and an out-of-band `interrupt_handle()`). This single name and signature is canonical across sections 2, 3, 4, and 7 — there is no `CsvEngine`/`Engine`/`execute()`/`query()` variant. The DuckDB implementor is `DuckdbEngine`.
-2. **Cancellation is out-of-band, not worker-self-interrupt.** This is the highest-priority correctness fix in the plan and it propagates here. jiq's worker (`src/query/worker/thread.rs`) blocks on `executor.execute_with_cancel(...)` and cancellation works only because jq is an **external process** the executor `child.kill()`s (`src/query/executor.rs:281`). DuckDB runs **in-process**, so a blocked worker thread cannot interrupt itself. ciq therefore splits the model: the worker thread blocks on `engine.run(...)`, and a separate, cheaply-cloneable **`InterruptHandle`** (wrapping a second DuckDB `Connection` against the same in-memory database, or `Connection::interrupt()` on a shared handle) is held by the dispatcher thread and fires `interrupt()` from there when a newer `request_id` arrives. The worker is the only thread that *issues* queries; a different thread *interrupts* the in-flight one. This resolves the contradiction that previously appeared across the threading/cancellation discussion.
+1. **Engine abstraction — `trait QueryEngine`, method `query(&self, sql: &str) -> QueryOutcome`** ([§0/D1](#0-canonical-decisions-single-source-of-truth)). No cancel arg on `query()` (cancellation is out-of-band); not `run`/`execute`; not `CsvEngine`. Plus `load(&mut, path, opts) -> Result<Schema, EngineError>`, `distinct(col, limit) -> QueryOutcome`, `schema() -> &Schema`, `interrupt_handle() -> InterruptHandle`. `QueryOutcome = Rows(Table) | Error{message,sql} | Cancelled`; `Table` is columnar. DuckDB implementor is `DuckdbEngine`. *(Earlier drafts of this list said `run(sql, cancel)` — stale, superseded by D1.)*
+2. **Cancellation is out-of-band, dispatcher-issued** ([§0/D4](#0-canonical-decisions-single-source-of-truth)). The worker blocks in `engine.query(...)` and cannot interrupt itself (in-process DuckDB call). A cheaply-cloneable **`InterruptHandle`** (newtype over `Arc<duckdb::InterruptHandle>` from `Connection::interrupt_handle()` — there is no `Connection::interrupt()` method) is held by the **dispatcher thread**, which calls `.interrupt()` from there when a newer `request_id` arrives. **No worker-side watcher thread.** Correctness rests on `request_id` stale-discard, not on the interrupt landing — so the interrupt is a latency optimization, and the dispatcher only fires it while a request is known in-flight.
 
 ### 7.0 Dependency / ordering overview
 
@@ -1220,12 +1239,14 @@ This is the phase that operationalizes North Star 2. Until the harness and gates
 
 #### Modules delivered
 
+> Module signatures below are corrected to [§0/D1](#0-canonical-decisions-single-source-of-truth)/[D2](#0-canonical-decisions-single-source-of-truth). The earlier draft of this table said `run(sql, cancel)`, `distinct -> Vec<String>`, and put the schema type "under `engine/` … the single decided path" — all three are **stale and wrong**: the method is `query(sql)` (no cancel arg), `distinct` returns `QueryOutcome`, and the schema type lives in top-level **`src/schema/`** (D2), not `engine/`.
+
 | Module (file) | Purpose | Testable how |
 |---|---|---|
-| `src/engine/engine.rs` | The canonical `trait QueryEngine`: `load(path, opts) -> Result<Schema>`, `run(sql, cancel) -> QueryOutcome`, `schema() -> &Schema`, `distinct(col, limit) -> Vec<String>`, `interrupt_handle() -> InterruptHandle` | Trait is the swap-point for the DataFusion fallback; mocked in all upper layers |
-| `src/engine/duckdb_engine.rs` | `DuckdbEngine`: parse CSV once via `read_csv_auto` into a registered in-memory table; per-query `SELECT` against that table; `interrupt_handle()` returns a handle that calls `Connection::interrupt()` from another thread | Unit tests over fixture CSVs; assert row counts, typed columns, error strings |
-| `src/engine/schema.rs` | **Canonical home of the schema type.** `Schema { columns: Vec<ColumnMeta { name, sql_type: ColumnType, .. }> }`, captured at load. The schema module lives **under `engine/`** (not a top-level `src/schema/`) — this is the single decided path used by every other section. | Golden-schema assertions (e.g., `created_at` -> `DATE`, mirroring the spike) |
-| `src/engine/types.rs` | `QueryOutcome::{ Rows(Table), Error { message, sql }, Cancelled }`; `InterruptHandle` | Exhaustive match tests |
+| `src/engine/engine.rs` | The canonical `trait QueryEngine` ([§0/D1](#0-canonical-decisions-single-source-of-truth)): `load(&mut, path, opts) -> Result<Schema, EngineError>`, `query(sql) -> QueryOutcome`, `distinct(col, limit) -> QueryOutcome`, `schema() -> &Schema`, `interrupt_handle() -> InterruptHandle` | Trait is the swap-point for the DataFusion fallback; mocked in all upper layers via `FakeEngine` |
+| `src/engine/duckdb_engine.rs` | `DuckdbEngine`: parse CSV once via `read_csv_auto` into a registered in-memory table; per-query `SELECT` against that table; `interrupt_handle()` returns a newtype over `Arc<duckdb::InterruptHandle>` (from `Connection::interrupt_handle()`) that the dispatcher calls `.interrupt()` on from another thread | Unit tests over fixture CSVs; assert row counts, typed columns, error strings. **Gated on the A1 reuse-after-interrupt spike** ([`ASSUMPTIONS.md`](ASSUMPTIONS.md)). |
+| `src/schema/schema.rs` + `src/schema/types.rs` | **Schema type lives in top-level `src/schema/`** ([§0/D2](#0-canonical-decisions-single-source-of-truth), NOT under `engine/`): `Schema { columns: Vec<ColumnMeta { name, ty: ColumnType, .. }> }`, produced by the engine at load. `ColumnType` (not `SqlType`). | Golden-schema assertions (e.g., `created_at` -> `DATE`, mirroring the spike) |
+| `src/engine/types.rs` | `QueryOutcome::{ Rows(Table), Error { message, sql }, Cancelled }`; columnar `Table`; `InterruptHandle` | Exhaustive match tests |
 | `src/harness/` | The headless test harness (below) | Self-tested |
 
 This replaces jiq's `src/query/executor.rs` `run_jq` model entirely: jiq spawns an external `jq` process and re-pipes the **entire** document on every keystroke (a writer thread does `stdin.write_all(json)`); ciq parses **once** at load and re-queries an in-memory table — directly serving North Star 1.
@@ -1247,7 +1268,7 @@ flowchart TD
     K["synthetic current_time_ms (u64)"] --> G
 ```
 
-- **`EngineHarness`** — load a fixture once, fire arbitrary SQL through `QueryEngine::run`, assert on `QueryOutcome`. Deterministic; no terminal.
+- **`EngineHarness`** — load a fixture once, fire arbitrary SQL through `QueryEngine::query` ([§0/D1](#0-canonical-decisions-single-source-of-truth)), assert on `QueryOutcome`. Deterministic; no terminal.
 - **`AppHarness`** (lands minimally here, fleshed out Phase 2) — drives the `App` against `ratatui::backend::TestBackend` (the same primitive jiq uses in `src/app/app_render_tests/`), so an agent can feed a keystroke script and snapshot the rendered buffer with `insta` (reusing jiq's `snapshots/` convention).
 - **Determinism rails:** the debounce gate is driven by feeding synthetic `current_time_ms: u64` to `should_execute_at` (per the reuse terms above) — never wall-clock; fixed terminal dimensions; seeded data; `execution_time_ms` excluded from snapshots. No real I/O in assertions.
 
@@ -1271,7 +1292,7 @@ Notes that correct prior inaccuracies:
 
 **Exit criteria (agent-checkable):**
 
-- `cargo test --all-features -- --test-threads=1` green, including: `engine::duckdb_engine` loads each fixture once and returns correct typed rows; `schema.rs` golden test asserts `created_at -> DATE` (matching `RESULTS.md`); a `QueryEngine::run` against the registered table returns `QueryOutcome::Rows` with the expected count; firing the `InterruptHandle` from a second thread while `run` blocks yields `QueryOutcome::Cancelled` (this directly exercises the out-of-band cancellation model decided above, not a worker self-interrupt); a malformed SQL string yields `QueryOutcome::Error` with a stable message.
+- `cargo test --all-features -- --test-threads=1` green, including: `engine::duckdb_engine` loads each fixture once and returns correct typed rows; the `src/schema/` golden test asserts `created_at -> DATE` (matching `RESULTS.md`); a `QueryEngine::query` against the registered table returns `QueryOutcome::Rows` with the expected count; firing the `InterruptHandle` from a second thread while `query` blocks yields `QueryOutcome::Cancelled` (this directly exercises the out-of-band cancellation model, [§0/D4](#0-canonical-decisions-single-source-of-truth), not a worker self-interrupt) **and a subsequent `query` on the same connection still returns correct rows (the A1 reuse-after-interrupt assertion)**; a malformed SQL string yields `QueryOutcome::Error` with a stable message.
 - All four CI gates pass in a clean checkout, and the `clippy.toml` `disallowed-methods` guard rejects a planted wall-clock call in a library module.
 - `EngineHarness` and `AppHarness` each have at least one self-test proving they run with no TTY attached (assert by running under `TERM` unset in the test).
 
@@ -1287,7 +1308,7 @@ Notes that correct prior inaccuracies:
 
 | Subsystem | Source in jiq | ciq action |
 |---|---|---|
-| Worker thread + channel | `src/query/worker/thread.rs` `spawn_worker` -> `worker_loop` -> `handle_request`, `src/query/worker/types.rs` | **Reuse the channel/loop interface verbatim.** Worker owns a `QueryEngine` instead of a `JqExecutor`; loops on `mpsc Receiver<QueryRequest>`, replies on `mpsc Sender<QueryResponse>`; `QueryRequest { query, request_id: u64, cancel_token }`; `QueryResponse::{ ProcessedSuccess { processed, request_id }, Error { message, query, request_id }, Cancelled { request_id } }`; stale results discarded by `request_id`; panics caught (the `catch_unwind` + panic-hook pattern) so the TUI never corrupts. **Cancellation diverges per the out-of-band model:** unlike jiq, where `handle_request` calls `execute_with_cancel` and the *executor* kills an external child, ciq's `handle_request` calls the blocking in-process `QueryEngine::run`, and the **dispatcher** thread fires the `InterruptHandle` when a newer request supersedes the in-flight one. |
+| Worker thread + channel | `src/query/worker/thread.rs` `spawn_worker` -> `worker_loop` -> `handle_request`, `src/query/worker/types.rs` | **Reuse the channel/loop interface verbatim.** Worker owns a `QueryEngine` instead of a `JqExecutor`; loops on `mpsc Receiver<QueryRequest>`, replies on `mpsc Sender<QueryResponse>`; `QueryRequest { query, request_id: u64, cancel_token }`; `QueryResponse::{ ProcessedSuccess { processed, request_id }, Error { message, query, request_id }, Cancelled { request_id } }`; stale results discarded by `request_id`; panics caught (the `catch_unwind` + panic-hook pattern) so the TUI never corrupts. **Cancellation diverges per the out-of-band model ([§0/D4](#0-canonical-decisions-single-source-of-truth)):** unlike jiq, where `handle_request` calls `execute_with_cancel` and the *executor* kills an external child, ciq's `handle_request` calls the blocking in-process `QueryEngine::query`, and the **dispatcher** thread calls `.interrupt()` on its `InterruptHandle` clone when a newer request supersedes the in-flight one. Note `QueryRequest` no longer carries a `cancel_token` (out-of-band model) — it is just `{ query, request_id }`. |
 | Debouncer | `src/query/debouncer.rs` (fixed 150 ms, time-as-`u64`-parameter) | **Reuse verbatim** (see Phase 1 reuse terms — no Clock trait). Spike proves 1-20 ms queries fit comfortably under 150 ms. |
 | App state / event loop / focus | `src/app/` (`App`, crossterm event loop, Focus/mode model) | **Reuse the shell skeleton**; retarget content to the grid |
 | Results renderer | jiq's JSON pretty-printer / tree renderer | **Replace** with an aligned columnar grid (column-width compute, header row, type-aware alignment) |
@@ -1313,7 +1334,7 @@ This is a headless test; it requires no real DuckDB (the stub engine models the 
 
 - `AppHarness` test: feed keystrokes `SELECT * FROM t WHERE region='EU' LIMIT 5`, advance the debounce gate by passing a synthetic `current_time_ms` past the 150 ms window to `should_execute_at`, assert the snapshot shows exactly 5 aligned data rows + header, columns left/right-aligned by inferred `ColumnType`.
 - Out-of-band cancellation test (above) passes: stale request is `Cancelled`, interrupt issued from the dispatcher thread, only the latest result surfaced — proving stale-discard + cancel parity with jiq under the in-process engine.
-- Debounce test: N rapid keystrokes within 150 ms (synthetic `current_time_ms`) produce exactly one `QueryEngine::run` call (assert via a counting mock engine).
+- Debounce test: N rapid keystrokes within 150 ms (synthetic `current_time_ms`) produce exactly one `QueryEngine::query` call (assert via a counting `FakeEngine`).
 - Error path: invalid SQL renders an error line in the status area, not a crash; snapshot asserts the message.
 - `load` happens exactly once per session: counting mock asserts `QueryEngine::load()` called once across many `run` calls (North Star 1 guard).
 - All Phase-1 CI gates remain green (including the `disallowed-methods` guard).
@@ -1331,8 +1352,8 @@ This is a headless test; it requires no real DuckDB (the stub engine models the 
 | Piece | jiq source | ciq action |
 |---|---|---|
 | Popup render / fuzzy ranking / cursor insertion | `src/app/app_render.rs` autocomplete popup, `src/autocomplete/autocomplete_state.rs` (`Suggestion`, `SuggestionType`), insertion logic, `fuzzy-matcher` | **Reuse ~verbatim** — engine-agnostic |
-| Context grammar | `src/autocomplete/context.rs` `analyze_context(before_cursor) -> Option<(SuggestionContext, partial)>` | **Replace** the JSON-path classifier with a SQL-clause classifier. (For accuracy: jiq's `SuggestionContext` variants are `FunctionContext`, `FieldContext`, `ObjectKeyContext`, `VariableContext` — *not* `Field`/`Function`/`ObjectKey`/`Variable`. ciq introduces its own SQL-oriented enum, e.g. `KeywordContext`, `ColumnContext`, `ValueContext(col)`, `FunctionContext`, `TableContext`, replacing the JSON set entirely.) |
-| Candidate sources | `src/autocomplete/json_navigator.rs`, `value_collector.rs`, `result_analyzer.rs`, the all-field-names fallback, `jq_functions.rs` | **Replace:** columns from `Schema`; values via `engine.distinct(col, limit)` (spike: ~10 ms low-card); functions from a **DuckDB builtins** list (`src/autocomplete/duckdb_functions.rs`, replacing `jq_functions.rs`); keywords static |
+| Context grammar | `src/autocomplete/context.rs` `analyze_context(before_cursor) -> Option<(SuggestionContext, partial)>` | **Replace** the JSON-path classifier with the SQL-clause classifier defined canonically in §5.3: **`CursorContext { SelectList, FromTable, Predicate, ComparisonOp, ColumnValue, GroupOrderList, Keyword }`**. *(The `ColumnContext`/`TableContext`/`ValueContext`/`FunctionContext` names this row originally used are an earlier sketch — superseded by §5.3's `CursorContext`; the exit criteria below are renamed to match.)* |
+| Candidate sources | `src/autocomplete/json_navigator.rs`, `value_collector.rs`, `result_analyzer.rs`, the all-field-names fallback, `jq_functions.rs` | **Replace:** columns from `Schema`; values via `engine.distinct(col, limit)` (spike: ~10 ms low-card); keywords **and** DuckDB functions **and** the operator table all live in **`src/autocomplete/sql_keywords.rs`** (one combined static-table file — *not* a separate `duckdb_functions.rs`; see §5.2/§5.5) |
 | Typed hints in popup | `JsonFieldType` (in `autocomplete_state.rs`) | **Replace** with `ColumnType` (BIGINT/DOUBLE/VARCHAR/DATE) shown beside each column suggestion |
 | **Dropped** | jq path autocomplete, the `jq_functions` builtins list, the JSON tree renderer | removed |
 
@@ -1342,7 +1363,7 @@ The SQL clause classifier is a **pure function over `before_cursor`** -> exhaust
 
 **Exit criteria (agent-checkable):**
 
-- `analyze_context` truth table: cursor after `SELECT ` -> `ColumnContext`; after `FROM ` -> `TableContext`; after `WHERE region = ` -> `ValueContext("region")`; after `ORDER BY a` with partial `a` -> `ColumnContext` partial `a`; after `coun` -> `FunctionContext` partial `coun`. Each asserted as a unit test.
+- `detect_context` truth table (using §5.3's canonical `CursorContext`): cursor after `SELECT ` -> `SelectList`; after `FROM ` -> `FromTable`; after `WHERE region = ` -> `ColumnValue { col: "region", .. }`; after `ORDER BY a` with partial `a` -> `GroupOrderList` partial `a`; after `WHERE x ` -> `ComparisonOp`; `coun` in select position -> `SelectList` partial `coun` (function candidates from `sql_keywords`). Each asserted as a unit test.
 - Column completion: against a fixture schema, typing `SELECT u` ranks `user_id` first; assert ordering.
 - Value completion: mock `distinct("status")` = `{active, closed}`; typing `WHERE status = ` then `a` suggests `'active'`; assert inserted text including quoting.
 - Insertion: applying a suggestion mutates the query buffer at the cursor to the exact expected string (snapshot of buffer + cursor offset).
@@ -1435,10 +1456,10 @@ The SQL clause classifier is a **pure function over `before_cursor`** -> exhaust
 
 This section is deliberately honest about where ciq is exposed. Each risk carries an owner-facing mitigation and an explicit note on which side of the headless/human test boundary it falls (North Star #2). Open questions are scoped decisions we are consciously *not* making at launch, with a recommended default for each so the plan stays decision-grade.
 
-Two cross-cutting conventions this section depends on and asserts, so the rest of the plan can grep against them:
+Two cross-cutting conventions this section depends on; both are settled canonically in [§0](#0-canonical-decisions-single-source-of-truth) (this preamble previously declared itself canonical with `CsvEngine`/`query(sql, cancel)`/`Result<QueryOutput, EngineError>` — that was **wrong on every axis** and is superseded by §0/D1; corrected here):
 
-- **Engine trait.** The engine box is the trait **`CsvEngine`** with the single hot-path method **`fn query(&self, sql: &str, cancel: &CancelHandle) -> Result<QueryOutput, EngineError>`** plus **`fn load(...)`** for ingest. `DuckdbEngine` is the launch implementation; `DataFusionEngine` is the documented fallback. This is the name/signature used in §2, §3, §4, §7 — if any of those sections still say `QueryEngine`/`Engine`/`run()`/`execute()`, they are stale and defer to this definition.
-- **Cancellation model (the resolved version — see R4).** The **App/event-loop thread is the dispatcher**: it owns request-id allocation, holds the cancel handle for the in-flight query, and flips it when a newer keystroke arrives. The **worker thread only runs queries** — it blocks inside the synchronous `CsvEngine::query()` call and never decides to cancel itself. `Connection::interrupt()` is therefore called *from the dispatcher thread*, not the worker, because the worker is busy inside the C++ call and cannot also be watching its channel. This is the physically correct model and supersedes any wording elsewhere that places `interrupt()` inside the worker loop.
+- **Engine trait** ([§0/D1](#0-canonical-decisions-single-source-of-truth)). The trait is **`QueryEngine`** (not `CsvEngine`); the hot-path method is **`query(&self, sql: &str) -> QueryOutcome`** (no cancel arg — cancellation is out-of-band; not `run`/`execute`). `QueryOutcome = Rows(Table) | Error{message,sql} | Cancelled`. Plus `load(&mut, …) -> Result<Schema, EngineError>` (the *only* `Result<…, EngineError>` surface — `load` failure is exceptional, a query error is not). `DuckdbEngine` is the launch impl; `DataFusionEngine` the documented fallback.
+- **Cancellation model** ([§0/D4](#0-canonical-decisions-single-source-of-truth)). The **dispatcher (App) thread** owns request-id allocation and holds a clone of the engine's `InterruptHandle`. The **worker thread only runs queries** — it blocks inside `query()` and never cancels itself. The dispatcher calls **`.interrupt()` on its handle** (a newtype over `Arc<duckdb::InterruptHandle>` from `Connection::interrupt_handle()` — **there is no `Connection::interrupt()` method**, contrary to the spike's loose wording) when a newer `request_id` arrives. No worker-side watcher thread.
 
 ### 8.1 Risk register
 
@@ -1499,7 +1520,7 @@ stateDiagram-v2
 - **Query bar is editable during load.** The user can type their first query while ingest finishes; the first query fires the instant the table is `Ready`. This hides perceived latency the way jiq's debounce hides keystroke latency.
 - **Empty/stdin fast path.** Small files and piped stdin load sub-100 ms; the `Loading` state is effectively invisible and must not flash.
 
-**Test boundary.** The load **state machine** — `Loading → Ready`, `Loading → LoadError`, progress monotonicity, "query typed during load fires on Ready", "event loop processes input events while loading" — is fully headless. We assert it with a fake/slow `CsvEngine` impl feeding the worker channel and `ratatui` `TestBackend` snapshots of the Loading frame, exactly as jiq snapshots its popups. **Human-only residue:** whether the spinner *feels* smooth and the first paint isn't jarring on a real terminal — covered by the canonical human-surface list in §4.7 (the "perceived latency / feel" row), not duplicated here.
+**Test boundary.** The load **state machine** — `Loading → Ready`, `Loading → LoadError`, progress monotonicity, "query typed during load fires on Ready", "event loop processes input events while loading" — is fully headless. We assert it with a fake/slow `QueryEngine` impl ([§0/D1](#0-canonical-decisions-single-source-of-truth)) feeding the worker channel and `ratatui` `TestBackend` snapshots of the Loading frame, exactly as jiq snapshots its popups. **Human-only residue:** whether the spinner *feels* smooth and the first paint isn't jarring on a real terminal — covered by the canonical human-surface list in §4.7 (the "perceived latency / feel" row), not duplicated here.
 
 ---
 
@@ -1524,9 +1545,9 @@ stateDiagram-v2
 
 #### R4 — DuckDB multi-threading vs the single-query cancel-stale model (the resolved threading design)
 
-**Exposure.** jiq's correctness rests on a clean invariant: one in-flight query, identified by a `u64 request_id` (`QueryRequest{query, request_id, cancel_token}`, `src/query/worker/types.rs:14`), with stale results discarded by id and a `CancellationToken` to abort early (`QueryResponse::Cancelled{request_id}`). DuckDB, unlike jq, is *internally* multi-threaded — a single query fans out across cores — and `CsvEngine::query()` is a **blocking synchronous call** on the worker thread.
+**Exposure.** jiq's correctness rests on a clean invariant: one in-flight query, identified by a `u64 request_id`, with stale results discarded by id. DuckDB, unlike jq, is *internally* multi-threaded — a single query fans out across cores — and `QueryEngine::query()` ([§0/D1](#0-canonical-decisions-single-source-of-truth)) is a **blocking synchronous call** on the worker thread. (ciq's `QueryRequest` is `{ query, request_id }` — no `cancel_token`, since cancellation is out-of-band per §0/D4.)
 
-**The architecture decision (this is the canonical resolution; propagate to §2.4, §3.1, §3.4, §6.5, §7.2).**
+**The architecture decision** (settled canonically in [§0/D4](#0-canonical-decisions-single-source-of-truth); this section is its detailed rationale). The model below is correct and feeds D4 — one refinement D4 adds: `interrupt()` is *not* request-scoped (it cancels whatever query is running), so the dispatcher only fires it while a request is known in-flight and the worker drains a `Cancelled` before the next dequeue.
 
 The naive phrasing "the worker interrupts the previous query when a newer request arrives" is **physically impossible** and must not appear anywhere in the plan: while the worker thread is blocked inside the C++ `query()` call, it *cannot* simultaneously be in its `recv()` loop noticing a newer `request_id`. Something on **another thread** must do the interrupting. The correct model mirrors how jiq *actually* cancels (verified against the source, not assumed):
 
@@ -1540,19 +1561,19 @@ sequenceDiagram
     participant UI as App / dispatcher thread
     participant W as Worker thread
     participant DB as DuckDB connection
-    Note over UI: holds CancelHandle for in-flight query + next request_id
-    UI->>W: QueryRequest{sql, id=N, cancel}
+    Note over UI: holds InterruptHandle clone + next request_id
+    UI->>W: QueryRequest{sql, id=N}
     W->>DB: query(sql)  (BLOCKS in C++)
     Note over UI: user types again (debounced)
-    UI->>UI: cancel.interrupt()  (calls Connection::interrupt from THIS thread)
-    DB-->>W: query() returns Err(Interrupted)
-    UI->>W: QueryRequest{sql, id=N+1, cancel'}
-    W-->>UI: stale result for id=N discarded by id
-    W->>DB: query(sql')  (fresh)
+    UI->>DB: handle.interrupt()  (Arc<InterruptHandle>, from THIS thread)
+    DB-->>W: query() returns QueryOutcome::Cancelled
+    UI->>W: QueryRequest{sql, id=N+1}
+    W-->>UI: stale Cancelled for id=N discarded by id
+    W->>DB: query(sql')  (fresh, same connection — A1)
     W-->>UI: QueryResponse for id=N+1
 ```
 
-Concretely: the **dispatcher (App thread) owns a `CancelHandle`** that wraps the DuckDB connection's interrupt entry point. `Connection::interrupt()` is documented thread-safe and exists precisely to be called from a thread other than the one running the query — so calling it from the dispatcher is the *supported* usage, not a hack. The worker holds a **single long-lived connection** (jiq's one-`JqExecutor`-per-worker analogue) and only runs queries on it.
+Concretely: the **dispatcher (App thread) holds a clone of the engine's `InterruptHandle`** — a newtype over `Arc<duckdb::InterruptHandle>`, obtained from `Connection::interrupt_handle()` (verified `Send + Sync`). **There is no `Connection::interrupt()` method**; you call `.interrupt()` on that handle, which is documented thread-safe precisely to be called from a thread other than the one running the query — so calling it from the dispatcher is the *supported* usage, not a hack. The worker holds the **single long-lived connection** and only runs queries on it.
 
 **Open verification items (must be closed in `ciq-spike/` before the engine is declared done).** These were previously phrased ambiguously; they are *engine behaviors to confirm*, not contradictions in the design — the design (above) already assumes cross-thread interrupt is required and supported:
 
@@ -1604,7 +1625,7 @@ Design principle: the sniffer is a convenience with a **visible result and a per
 - **`t` as the implicit table name.** A short, fixed alias for the loaded file removes per-query boilerplate.
 - **Bare-word fast paths (candidate, see 8.2).** Consider letting a bare token expand to a column filter/select shortcut, recovering some jq-like terseness for the common case. Note the constraint from §5.3: ciq builds **a tokenizer, not a full SQL parser**, so any such rewrite is restricted to the read-only single-`SELECT`+CTE grammar of Q1 — see the LIMIT-interaction note below.
 
-**LIMIT / ORDER BY interaction (resolves the §6.2 rewriter tension).** §2.3's auto-`LIMIT` wrapping and §6.2's `select_writer` cannot assume a full parse tree, because §5.3 explicitly declines to build a parser. The reconciled rule: the rewriter operates on the **tokenized** query within the Q1 restricted grammar (single read-only `SELECT`/CTE). It appends a default `LIMIT` **only when the user has supplied no top-level `LIMIT`**; if the user's query already contains a trailing `LIMIT` (or an `ORDER BY ... LIMIT`), ciq respects it verbatim and adds nothing. Detection is a trailing-clause token scan, not a parse — sufficient for the restricted grammar and consistent with "tokenizer, not parser". Anything outside that grammar is passed through untouched (the engine returns a normal SQL error, surfaced via the error path).
+**LIMIT / ORDER BY interaction.** §2.3's auto-`LIMIT` wrapping operates on the **tokenized** user query within the Q1 restricted grammar (single read-only `SELECT`/CTE), not a parse tree (§5.3 ships a tokenizer, not a parser). The rule: ciq appends a default `LIMIT` **only when the user supplied no top-level `LIMIT`**; an existing trailing `LIMIT` (or `ORDER BY ... LIMIT`) is respected verbatim. Detection is a trailing-clause token scan. *(Note: the column palette no longer "rewrites" anything — per [§0/D3](#0-canonical-decisions-single-source-of-truth) it emits a fresh query from its own state via `query_emit`, so there is no `select_writer` and the LIMIT rule only concerns the §2.3 display-wrap of whatever query — typed or palette-emitted — reaches the engine.)*
 
 **Test boundary.** The *logic* is fully headless: "given this schema and cursor position, the suggestion list is X", "completing `region = ` yields the distinct values", "selecting columns C1,C3 in the palette produces `SELECT C1, C3 FROM t`", "a user-supplied trailing `LIMIT` is preserved, absent one a default is appended". These are deterministic and tested exactly like jiq's autocomplete tests. **Human-only residue:** whether the resulting flow actually *feels* as fast as jq in practice — the "perceived latency / feel" row of the §4.7 canonical list.
 
@@ -1614,7 +1635,7 @@ Design principle: the sniffer is a convenience with a **visible result and a per
 
 North Star #2 says the *vast majority* of code is headless-testable and only a *small, explicitly-enumerated* surface needs a human. **There is exactly one canonical enumeration of that surface, and it lives in §4.7.** To avoid two competing "complete" lists (the inconsistency the critic flagged), R7 does **not** restate its own list — it *defers to §4.7 as the single source of truth* and only summarizes its shape here:
 
-§4.7's canonical human-validation surface is **six items**: (1) real terminal rendering fidelity, (2) true keyboard & mouse input, (3) clipboard / OSC 52, (4) color polarity / theme legibility, (5) **terminal-resize behavior/feel**, and (6) perceived latency / "feel". The earlier draft of R7 listed only five (it folded resize into R2); that omission is corrected — **resize is a standalone item, per §4.7**, and R2's first-paint smoothness maps to item (6), not a separate concern.
+§4.7's canonical human-validation surface is its **exact six table rows** — R7 mirrors them verbatim (it must not enumerate a *different* six): (1) **glyph + color rendering, light/dark polarity (OSC 10/11)** — color polarity is folded into this row, it is **not** a separate item; (2) **true raw-mode keyboard/mouse, scroll, focus**; (3) **bracketed-paste framing only**; (4) **system clipboard / OSC 52**; (5) **terminal-resize reflow (SIGWINCH)**; (6) **performance feel on a real large file**. *(An earlier draft of R7 dropped row 3 "paste framing" and invented a standalone "color polarity" item — that produced a different six and is corrected here to match §4.7 exactly.)* R2's first-paint smoothness and R6's ergonomic flow both map onto row 6 (perceived feel), not new items.
 
 The load-feel of R2 and the ergonomic-flow of R6 both resolve into §4.7 item (6) ("perceived latency / feel"); nothing in §8 introduces a human-test concern that is not already one of §4.7's six rows. Everything else — query execution, cancel/stale logic, schema inference, autocomplete candidate generation & ranking, insertion, results layout/alignment math, scroll/search, history, config parsing, the load state machine, error formatting — renders into the `TestBackend` cell buffer or returns plain data, and is therefore in the headless majority.
 
@@ -1629,7 +1650,7 @@ The load-feel of R2 and the ergonomic-flow of R6 both resolve into §4.7 item (6
 **Mitigations.**
 
 - **Exact version pin** (reinforces R1); upgrades are deliberate, gated by the full headless suite — especially the R5 sniffer fixtures and R4 cancel invariants, which will catch behavioral drift.
-- **Engine isolated behind the `CsvEngine` trait** (the "engine box" from the reuse map). DuckDB sits behind the trait so a version bump — or a swap to the `DataFusionEngine` fallback — touches one module, not the whole app. This *is* the architectural insurance for R1/R4/R8 collectively.
+- **Engine isolated behind the `QueryEngine` trait** ([§0/D1](#0-canonical-decisions-single-source-of-truth) — the "engine box" from the reuse map). DuckDB sits behind the trait so a version bump — or a swap to the `DataFusionEngine` fallback — touches one module, not the whole app. This *is* the architectural insurance for R1/R4/R8 collectively.
 - **License: stated fact, no open confirmation needed.** DuckDB is **MIT-licensed**, which permits bundled redistribution inside the ciq binary. The only remaining action is documentation hygiene, not a legal question: record the MIT terms in a `THIRD-PARTY` notice / about screen, the same hygiene jiq applies to its deps. (This replaces the earlier draft's contradictory "confirm DuckDB's MIT license" — the license *is* MIT; the task is to *document* it.)
 
 **Test boundary.** Headless. Version-pin correctness is a build property; behavioral drift across an upgrade is caught by the existing fixture suites (R5) and concurrency invariants (R4). The MIT notice is a repo-hygiene check (file present, contents correct), not a runtime concern.
@@ -1655,5 +1676,7 @@ Each item below is consciously **out of scope for launch** with a **recommended 
 | Q11 | **Streaming / out-of-core for files larger than RAM** | **Not at launch** — rely on DuckDB disk-spill + memory cap (R3). | Building a streaming engine contradicts North Star #1 (parse-once in-memory); disk-spill is the supported fallback. Distinct from §1.5's live-reload/tail non-goal (see R3 scope clarification). Reopen only if real users routinely exceed RAM and spill proves insufficient. |
 | Q12 | **NULL / empty-cell rendering & SQL semantics** *(genuinely undecided — must be decided + fixture-tested in impl)* | Render SQL `NULL` distinctly from empty string; document that an empty CSV cell ingests per DuckDB's default. | CSV's empty-string-vs-NULL ambiguity has real query-semantics consequences (`WHERE col IS NULL` vs `= ''`). Needs a stated, tested policy — defer the *exact* rule, but it must be decided (and fixture-tested under R5) before launch. |
 
-**Honest summary of what is genuinely undecided (not just deferred):** Q3 (column-name normalization policy), Q7 (ragged-row behavior), and Q12 (empty-vs-NULL semantics) are the three that carry real correctness weight and must be *decided and fixture-tested* during implementation, not hand-waved. Everything else is feature scope with a safe default and a clean reuse path from jiq. Three cross-section reconciliations are also load-bearing and must close before the affected code is written: the **threading model** (R4 → §2.4/§3.1/§3.4/§6.5/§7.2), the **`CsvEngine` trait name/signature** (this section's preamble → §2/§3/§4/§7), and the **R5 flag ↔ §6.6 `CsvOpts` inventory**.
+**Honest summary of what is genuinely undecided (not just deferred):** Q3 (column-name normalization policy), Q7 (ragged-row behavior), and Q12 (empty-vs-NULL semantics) are the three that carry real correctness weight and must be *decided and fixture-tested* during implementation, not hand-waved. Everything else is feature scope with a safe default and a clean reuse path from jiq.
+
+The three cross-section reconciliations that were load-bearing are now **CLOSED** (see [§0](#0-canonical-decisions-single-source-of-truth) and [`DECISIONS.md`](DECISIONS.md)): the **threading model** → D4 (dispatcher-issued `interrupt()`, no watcher); the **engine trait name/signature** → D1 (`QueryEngine::query(sql) -> QueryOutcome`, not `CsvEngine`/`run`); and the **R5 flag ↔ §6.6 `CsvOpts` inventory** → deferred-to-ingest with a defined default set (add `--types`/`--all-varchar`/`--date-format`, unify `--sniff-rows` with `sample_size`). The one remaining *engine-behavior* gate is the A1 reuse-after-interrupt spike ([`ASSUMPTIONS.md`](ASSUMPTIONS.md)), which does not change any trait or topology.
 

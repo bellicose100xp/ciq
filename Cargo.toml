@@ -1,0 +1,35 @@
+[package]
+name = "ciq"
+version = "0.1.0"
+edition = "2024"
+description = "CSV Interactive Query — type DuckDB SQL, watch an aligned grid update live (jiq for CSV)"
+license = "MIT"
+repository = "https://github.com/chahcha/ciq"
+default-run = "ciq"
+
+[dependencies]
+# Embedded query engine. PINNED EXACTLY (no range) per PLAN.md §8/R1+R8 — a minor
+# bump can change SQL/sniffer/interrupt behavior; upgrades are deliberate and gated
+# by the test suite. `bundled` builds DuckDB's C++ in-tree (self-contained binary).
+# A1 reuse-after-interrupt was validated against this exact version (dev/ASSUMPTIONS.md A1).
+duckdb = { version = "=1.10503.1", features = ["bundled"] }
+
+# Custom error types (load failures, etc. — the QueryOutcome hot path is NOT errors).
+thiserror = "2.0"
+
+# CLI argument parsing.
+clap = { version = "4.5", features = ["derive"] }
+
+[dev-dependencies]
+# Snapshot testing (render buffers, generated SQL, schema goldens).
+insta = "1.40"
+# Property-based testing (never-panic / invariants).
+proptest = "1.5"
+# Temp-file CSV fixtures for engine integration tests.
+tempfile = "3.10"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

@@ -2,7 +2,7 @@
 
 **CSV Interactive Query** — an interactive terminal UI that gives CSV files what [`jiq`](../jiq) gives JSON: type a DuckDB-style SQL query in a bar and watch an aligned result grid update live as you type, querying an in-memory columnar table parsed once at startup.
 
-> Status: **planning**. See [`PLAN.md`](PLAN.md) for the full project plan.
+> Status: **planning**. See [`dev/PLAN.md`](dev/PLAN.md) for the full project plan.
 
 ## Why
 
@@ -16,4 +16,4 @@ ciq is a standalone sibling of [`jiq`](../jiq). It reuses jiq's proven TUI shell
 
 ## Engine decision
 
-Chosen via a benchmark spike (DuckDB vs Polars vs DataFusion on a 5M-row / 368MB CSV). **Embedded DuckDB** won on interactive query latency, exact SQL dialect, type/date sniffing, and — critically — mid-query cancellation (`Connection::interrupt()`), which Polars lacks. See [`PLAN.md`](PLAN.md) section 2 for the full table and rationale.
+Chosen via a benchmark spike (DuckDB vs Polars vs DataFusion on a 5M-row / 368MB CSV). **Embedded DuckDB** won on interactive query latency, exact SQL dialect, type/date sniffing, and — critically — mid-query cancellation (via `Connection::interrupt_handle()`), which Polars lacks. See [`dev/PLAN.md`](dev/PLAN.md) section 2 for the full table and rationale.
