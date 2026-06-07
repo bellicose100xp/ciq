@@ -45,8 +45,18 @@ Unlike the interactive grid, the `--output` path is **not** capped to the viewpo
 returns the full result. It still goes through the same read-only single-statement guard, so it can
 never mutate the table.
 
-## Clipboard
+## Copying the result to your clipboard
 
-Inside the interactive session, the copy path uses OSC 52 escape sequences to put text on your
-system clipboard through the terminal. See the [Quick Reference](../quick-reference.md) for the
-in-session key set.
+There is no in-session copy chord today. To put a result on your system clipboard, use the
+`--output` path and pipe it to your OS clipboard tool:
+
+```sh
+# macOS:
+ciq data.csv --output csv -q "SELECT * FROM t WHERE region = 'EU'" | pbcopy
+
+# Linux (X11):
+ciq data.csv --output tsv | xclip -selection clipboard
+
+# Windows:
+ciq data.csv --output csv | clip
+```
