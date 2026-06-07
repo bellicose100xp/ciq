@@ -21,12 +21,19 @@ use crate::text_match::is_subsequence;
 /// cursor). Mirrors jiq's `MAX_VISIBLE_HISTORY`.
 pub const MAX_VISIBLE_HISTORY: usize = 15;
 
+/// The built-in cap on the in-memory ring when no explicit `max_entries` was configured. Reuses the
+/// `[history]` config default so the in-session ring and the on-disk file share one bound (mirrors
+/// jiq's `MAX_HISTORY_ENTRIES`). A `Default`/`new` ring carries this so the in-session contract
+/// ("the cap bounds the ring") holds even before the App threads its configured cap in via
+/// [`HistoryState::with_max`].
+pub const DEFAULT_MAX_ENTRIES: usize = crate::config::history_config::DEFAULT_MAX_ENTRIES;
+
 /// The history ring: the entries (newest first), the fuzzy needle + its filtered view, the popup
 /// cursor + scroll, and the inline-cycling index.
 ///
 /// All fields private; transitions go through the methods so the invariants hold (the cursor stays
-/// inside the filtered list; the entries stay newest-first and deduped).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// inside the filtered list; the entries stay newest-first, deduped, and capped to `max`).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryState {
     /// Every entry, **newest first**. `add` inserts at the front; a re-added entry moves to front.
     entries: Vec<String>,
@@ -44,6 +51,26 @@ pub struct HistoryState {
     /// The inline-cycling index into `entries` (Up-at-empty-bar walk), independent of the popup
     /// cursor. `None` = not cycling.
     cycling_index: Option<usize>,
+    /// The cap on `entries` — the in-session ring is bounded to this, matching the documented
+    /// `[history] max_entries` contract (the on-disk file is bounded separately by storage). At
+    /// least 1; defaults to [`DEFAULT_MAX_ENTRIES`] until the App sets the configured value via
+    /// [`with_max`](Self::with_max).
+    max: usize,
+}
+
+impl Default for HistoryState {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            filtered_indices: Vec::new(),
+            needle: String::new(),
+            selected_index: 0,
+            scroll_offset: 0,
+            visible: false,
+            cycling_index: None,
+            max: DEFAULT_MAX_ENTRIES,
+        }
+    }
 }
 
 impl HistoryState {
@@ -53,17 +80,49 @@ impl HistoryState {
         Self::default()
     }
 
+    /// An empty history whose ring is capped to `max` entries (clamped to at least 1). The App
+    /// builds the ring with the configured `[history] max_entries` so the in-session ring and the
+    /// on-disk file share one bound.
+    pub fn with_max(max: usize) -> Self {
+        Self {
+            max: max.max(1),
+            ..Self::default()
+        }
+    }
+
+    /// Re-cap the ring to `max` (clamped to at least 1), truncating any entries already past it.
+    /// Called by the App when it learns the configured `[history] max_entries`.
+    pub fn set_max(&mut self, max: usize) {
+        self.max = max.max(1);
+        self.trim_to_max();
+    }
+
+    /// The current ring cap (mostly for tests).
+    pub fn max(&self) -> usize {
+        self.max
+    }
+
     /// Build a history pre-populated with `entries` (newest first), e.g. loaded from disk. Dedupes
     /// (keeping the first/newest occurrence) and drops blanks so a hand-edited file never injects a
-    /// duplicate or empty recall target. The filtered view starts as "all".
+    /// duplicate or empty recall target. Capped to [`DEFAULT_MAX_ENTRIES`]; the filtered view starts
+    /// as "all".
     pub fn with_entries(entries: Vec<String>) -> Self {
         let mut s = Self::new();
         s.load_entries(entries);
         s
     }
 
-    /// Replace the ring with `entries` (newest first), deduped + blank-stripped, and reset the
-    /// filtered view to all. Used to seed from storage at startup.
+    /// Build a history pre-populated with `entries` and capped to `max` (clamped to at least 1) —
+    /// the App's startup path, seeding from the on-disk file with the configured cap so the
+    /// in-session ring and the file share one bound.
+    pub fn with_entries_max(entries: Vec<String>, max: usize) -> Self {
+        let mut s = Self::with_max(max);
+        s.load_entries(entries);
+        s
+    }
+
+    /// Replace the ring with `entries` (newest first), deduped + blank-stripped + capped to `max`,
+    /// and reset the filtered view to all. Used to seed from storage at startup.
     pub fn load_entries(&mut self, entries: Vec<String>) {
         let mut seen = std::collections::HashSet::new();
         self.entries = entries
@@ -71,6 +130,7 @@ impl HistoryState {
             .filter(|e| !e.trim().is_empty())
             .filter(|e| seen.insert(e.clone()))
             .collect();
+        self.trim_to_max();
         self.cycling_index = None;
         self.reset_filter();
     }
@@ -168,6 +228,7 @@ impl HistoryState {
         }
         self.entries.retain(|e| e != query);
         self.entries.insert(0, query.to_string());
+        self.trim_to_max();
         self.cycling_index = None;
         self.update_filter();
         true
@@ -281,6 +342,13 @@ impl HistoryState {
     }
 
     // --- internals ---
+
+    /// Drop the oldest entries past the `max` cap (entries are newest-first, so truncating from the
+    /// end discards the oldest). The on-disk file is bounded separately by the storage layer; this
+    /// keeps the in-session ring to the same documented `max_entries` bound.
+    fn trim_to_max(&mut self) {
+        self.entries.truncate(self.max);
+    }
 
     /// Re-filter, then reset cursor + scroll to the top (used on every needle edit).
     fn on_needle_changed(&mut self) {

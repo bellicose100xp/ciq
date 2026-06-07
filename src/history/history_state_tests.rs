@@ -1,7 +1,7 @@
 //! Tests for the pure history ring (`history_state.rs`) — add/dedupe/recall/navigate/filter over
 //! an in-memory store. No filesystem, no terminal.
 
-use super::{HistoryState, MAX_VISIBLE_HISTORY};
+use super::{DEFAULT_MAX_ENTRIES, HistoryState, MAX_VISIBLE_HISTORY};
 
 // --- add + dedupe (newest-first, unique) ---
 
@@ -56,6 +56,70 @@ fn add_trims_whitespace() {
     let mut h = HistoryState::new();
     h.add("  SELECT 1  ");
     assert_eq!(h.entries(), &["SELECT 1".to_string()]);
+}
+
+// --- the in-session ring is capped to `max` (the documented max_entries contract) ---
+
+#[test]
+fn default_ring_carries_the_built_in_cap() {
+    assert_eq!(HistoryState::new().max(), DEFAULT_MAX_ENTRIES);
+}
+
+#[test]
+fn add_beyond_the_cap_drops_the_oldest_entry() {
+    let mut h = HistoryState::with_max(3);
+    for q in ["a", "b", "c", "d"] {
+        h.add(q);
+    }
+    // Newest-first, capped to 3: "a" (the oldest) was dropped.
+    assert_eq!(h.total_count(), 3);
+    assert_eq!(
+        h.entries(),
+        &["d".to_string(), "c".to_string(), "b".to_string()]
+    );
+}
+
+#[test]
+fn with_max_clamps_zero_to_one() {
+    let mut h = HistoryState::with_max(0);
+    assert_eq!(h.max(), 1);
+    h.add("a");
+    h.add("b");
+    assert_eq!(
+        h.entries(),
+        &["b".to_string()],
+        "cap of 1 keeps only newest"
+    );
+}
+
+#[test]
+fn with_entries_max_caps_seeded_entries() {
+    // A long on-disk file seeds only `max` entries into the ring (newest-first preserved).
+    let entries: Vec<String> = (0..10).map(|i| format!("q{i}")).collect();
+    let h = HistoryState::with_entries_max(entries, 4);
+    assert_eq!(h.total_count(), 4);
+    assert_eq!(
+        h.entries(),
+        &[
+            "q0".to_string(),
+            "q1".to_string(),
+            "q2".to_string(),
+            "q3".to_string()
+        ]
+    );
+}
+
+#[test]
+fn set_max_shrinks_an_existing_ring() {
+    let mut h = HistoryState::new();
+    for i in 0..5 {
+        h.add(&format!("q{i}"));
+    }
+    assert_eq!(h.total_count(), 5);
+    h.set_max(2);
+    assert_eq!(h.total_count(), 2);
+    // Newest two survive (entries are newest-first: q4, q3).
+    assert_eq!(h.entries(), &["q4".to_string(), "q3".to_string()]);
 }
 
 // --- with_entries / load_entries: dedupe + blank-strip ---
