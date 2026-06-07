@@ -148,6 +148,30 @@ fn generated_sql_drops_into_bar_and_dispatches() {
 }
 
 #[test]
+fn fenced_select_reply_lands_as_runnable_sql() {
+    // A very common model habit: wrap the SQL in a ```sql … ``` fence despite the prompt's
+    // no-fences rule. Without unwrapping, the leading backtick/`sql` token makes preprocess reject
+    // it as "read-only SELECT queries only"; the fence-strip must let the good SELECT through.
+    let (mut app, ai_rx) = ai_app();
+    app.on_key(ctrl('g'), 0);
+    type_str(&mut app, "rows in EU", 0);
+    app.on_key(KeyEvent::plain(Key::Enter), 0);
+    let job = ai_rx.try_recv().expect("job sent");
+
+    let result = AiResult {
+        seq: job.seq,
+        outcome: Ok("```sql\nSELECT * FROM t WHERE region = 'EU'\n```".to_string()),
+    };
+    app.on_ai_result(result, 0);
+
+    // The fence noise is gone — the bar holds clean SQL that passes the read-only guard.
+    assert_eq!(app.query(), "SELECT * FROM t WHERE region = 'EU'");
+    let wrapped = prepare_interactive(app.query(), VIEWPORT_ROW_LIMIT)
+        .expect("a fenced SELECT must land as a runnable read-only query");
+    assert!(wrapped.contains("region = 'EU'"));
+}
+
+#[test]
 fn dml_reply_is_rejected_by_the_read_only_guard() {
     let (mut app, ai_rx) = ai_app();
     app.on_key(ctrl('g'), 0);

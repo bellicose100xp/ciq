@@ -89,6 +89,45 @@ fn empty_schema_is_handled() {
 
 // --- repair prompt ---
 
+// --- code-fence unwrapping (a model commonly wraps SQL in a fence despite rule 2) ---
+
+#[test]
+fn strip_code_fences_unwraps_a_tagged_fence() {
+    let reply = "```sql\nSELECT * FROM t WHERE region = 'EU'\n```";
+    assert_eq!(
+        strip_code_fences(reply),
+        "SELECT * FROM t WHERE region = 'EU'"
+    );
+}
+
+#[test]
+fn strip_code_fences_unwraps_an_untagged_fence() {
+    let reply = "```\nSELECT 1\n```";
+    assert_eq!(strip_code_fences(reply), "SELECT 1");
+}
+
+#[test]
+fn strip_code_fences_handles_surrounding_whitespace() {
+    let reply = "\n  ```sql\nSELECT 1\n```  \n";
+    assert_eq!(strip_code_fences(reply), "SELECT 1");
+}
+
+#[test]
+fn strip_code_fences_leaves_unfenced_sql_trimmed() {
+    assert_eq!(strip_code_fences("  SELECT 1  "), "SELECT 1");
+    // A backtick mid-query (not an outer fence) is untouched.
+    assert_eq!(
+        strip_code_fences("SELECT \"a`b\" FROM t"),
+        "SELECT \"a`b\" FROM t"
+    );
+}
+
+#[test]
+fn strip_code_fences_unterminated_fence_keeps_the_body() {
+    // Defensive: a fence opened but never closed still yields the inner SQL, not the backticks.
+    assert_eq!(strip_code_fences("```sql\nSELECT 1"), "SELECT 1");
+}
+
 #[test]
 fn repair_prompt_embeds_failed_sql_and_error() {
     let p = build_repair_prompt(

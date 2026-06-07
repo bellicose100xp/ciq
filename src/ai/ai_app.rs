@@ -23,7 +23,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 
 use crate::ai::ai_state::AiPhase;
-use crate::ai::prompt::build_prompt;
+use crate::ai::prompt::{build_prompt, strip_code_fences};
 use crate::ai::provider::{AiError, Provider};
 use crate::app::{App, AppPhase, Key, KeyEvent};
 
@@ -192,7 +192,10 @@ impl App {
         }
         match result.outcome {
             Ok(sql) => {
-                let sql = sql.trim().to_string();
+                // Unwrap a single outer markdown code fence the model may have added despite the
+                // prompt's no-fences rule, so a good SELECT isn't rejected for fence noise. This is
+                // cosmetic only — the unwrapped text still crosses the read-only guard below.
+                let sql = strip_code_fences(&sql);
                 self.ai.set_success(&sql);
                 // Drop the generated SQL into the bar and run it through the normal path — the
                 // read-only single-statement guard rejects any DML/multi-statement reply.

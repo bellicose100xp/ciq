@@ -66,6 +66,30 @@ pub fn build_repair_prompt(
     p
 }
 
+/// Strip a single outer markdown code fence (``` or ```sql … ```) and surrounding whitespace from
+/// a model reply, returning the inner text. Purely cosmetic unwrapping: rule 2 of [`output_rules`]
+/// asks the model for no fences, but that is best-effort, not the boundary — LLMs commonly wrap SQL
+/// in a fence anyway, which would otherwise lex with a leading backtick/`sql` token and be rejected
+/// by [`prepare_interactive`](crate::query::preprocess::prepare_interactive) as "read-only SELECT
+/// queries only". Unwrapping here lets a perfectly good `SELECT` reach the *same* read-only guard
+/// (the guard stays the security boundary; this only removes fence noise). A reply with no fence is
+/// returned trimmed and otherwise untouched.
+pub fn strip_code_fences(reply: &str) -> String {
+    let trimmed = reply.trim();
+    let Some(after_open) = trimmed.strip_prefix("```") else {
+        return trimmed.to_string();
+    };
+    // Drop the rest of the opening-fence line (an optional info string like `sql`).
+    let body_start = after_open.find('\n').map_or(after_open.len(), |i| i + 1);
+    let body = &after_open[body_start..];
+    // Remove a closing fence if present; otherwise keep the body as-is (an unterminated fence).
+    let inner = match body.rfind("```") {
+        Some(close) => &body[..close],
+        None => body,
+    };
+    inner.trim().to_string()
+}
+
 /// The schema-grounding section: the table name + one `- name (type)` line per column, in schema
 /// order. This is the ciq analog of jiq's JSON-schema block — the model's view of the real data.
 fn schema_section(schema: &Schema) -> String {
