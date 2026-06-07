@@ -94,9 +94,23 @@ src/facets/facet_query.rs
 src/facets/facet_state.rs
 src/facets/facet_render.rs
 
-# csv_config.rs (the minimal [csv] TOML loader) is a thin serde-parse-to-default seam — its real
-# behavior is covered by csv_config_tests, but the floor lives on the pure transform modules
-# above (judgment per the brief; the full config schema is Phase 5 / Q5).
+# Phase 5 (present now): the full config schema (Q5) — the pure per-section accessors that fold in
+# defaults (row_limit clamp, ai is_active, history max_entries clamp, theme mode/override lookup). A
+# wrong default or a wrong is_active gate is a real behavior bug (it silently mis-bounds the
+# viewport or silently activates/deactivates the AI feature), and all are data-in/data-out, so they
+# earn the hard floor.
+src/config/general.rs
+src/config/ai_config.rs
+src/config/history_config.rs
+src/config/theme_config.rs
+
+# config.rs itself (the top-level loader) is a thin serde-parse-to-default + filesystem/env seam
+# (load_config / config_path read $HOME) — its pure half (load_config_str) is covered by
+# config_tests, but the floor lives on the pure section modules above (same judgment as csv_config).
+#
+# csv_config.rs (the [csv] section shape + to_opts projection; loading now delegates to config.rs)
+# is a thin serde-parse-to-default seam — its real behavior is covered by csv_config_tests, but the
+# floor lives on the pure transform modules above (judgment per the brief).
 #
 # sql_keywords.rs is static data (keyword/function/operator tables) — const-sanity-tested but
 # largely branchless, so it is left off the hard floor (judgment per the brief).

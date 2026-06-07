@@ -21,6 +21,7 @@
 pub mod app;
 pub mod autocomplete;
 pub mod clipboard;
+pub mod config;
 pub mod engine;
 pub mod error;
 pub mod facets;

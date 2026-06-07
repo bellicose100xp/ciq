@@ -1,15 +1,17 @@
-//! The minimal `[csv]` TOML config section — the *config* layer of the ingest precedence
-//! (`dev/PLAN.md` §6.6).
+//! The `[csv]` TOML config section — the ingest dialect/type-override shape and its
+//! [`CsvOpts`](super::csv_opts::CsvOpts) projection (`dev/PLAN.md` §6.6).
 //!
-//! The full ciq config schema (theme, default LIMIT, memory cap, history, the rest of the
-//! `[csv]` keys) is **Q5, a Phase 5 deliverable** — locking it now, before the feature set
-//! stabilizes, invites churn (§8/Q5). So this is deliberately a *minimal `[csv]`-only* loader: it
-//! parses just enough to supply the `config` input to [`merge`](super::csv_opts::merge), reusing
-//! jiq's TOML load/validate shape (parse-to-default-on-error, never panic on a bad file). When the
-//! Phase 5 config module lands it subsumes this `[csv]` section.
+//! The [`CsvConfig`] type + its `to_opts()` projection live **here**, next to
+//! [`CsvOpts`](super::csv_opts), so the precedence merge's `config` input is built in one place.
+//! Config *loading*, by contrast, was subsumed by the Phase 5 [`config`](crate::config) module:
+//! the `[csv]` section is now parsed as part of the whole [`Config`](crate::config::Config), and
+//! [`load_csv_config_str`] is a thin shim that delegates to
+//! [`config::load_config_str`](crate::config::load_config_str) and projects out the `[csv]`
+//! section — so a single parse path covers every section (DRY) while existing
+//! `ingest::load_csv_config_str` callers compile unchanged.
 //!
-//! Parsed from a string ([`load_csv_config_str`]) so it is unit-tested over in-memory TOML with no
-//! filesystem; the CLI wiring reads the file and hands the contents in.
+//! Parsed from a string so it is unit-tested over in-memory TOML with no filesystem; the CLI
+//! wiring reads the file and hands the contents in.
 
 use serde::Deserialize;
 
@@ -40,15 +42,6 @@ pub struct CsvConfig {
     pub date_format: Option<String>,
 }
 
-/// The top-level config shape this loader cares about: just the `[csv]` table. Unknown *top-level*
-/// tables are allowed (the full Phase 5 config will add `[theme]`, `[ai]`, … alongside) — only the
-/// `[csv]` section's own keys are validated strictly.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
-struct ConfigFile {
-    csv: CsvConfig,
-}
-
 impl CsvConfig {
     /// Project the parsed `[csv]` section into a [`CsvOpts`] for [`merge`](super::csv_opts::merge).
     ///
@@ -74,17 +67,13 @@ impl CsvConfig {
     }
 }
 
-/// Parse a `[csv]` config from TOML text. Returns the default (empty) config on **any** parse
-/// error — the jiq pattern: a malformed config never blocks startup, it just falls back to
-/// defaults (the CLI surfaces a warning). An absent `[csv]` table yields the default too.
+/// Parse the `[csv]` section from a full-config TOML text. A thin shim over the Phase 5
+/// [`config::load_config_str`](crate::config::load_config_str) (which owns the single parse path
+/// for every section), projecting out the `[csv]` section. Returns the default (empty) `[csv]`
+/// config on **any** parse error — the jiq pattern: a malformed config never blocks startup, it
+/// just falls back to defaults. An absent `[csv]` table yields the default too.
 pub fn load_csv_config_str(toml_text: &str) -> CsvConfig {
-    match toml::from_str::<ConfigFile>(toml_text) {
-        Ok(cfg) => cfg.csv,
-        Err(e) => {
-            log::warn!("invalid [csv] config, using defaults: {e}");
-            CsvConfig::default()
-        }
-    }
+    crate::config::load_config_str(toml_text).config.csv
 }
 
 /// Return the single `char` of a one-character string, else `None` (empty or multi-char).
