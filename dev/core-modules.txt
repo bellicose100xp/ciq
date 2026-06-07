@@ -51,6 +51,13 @@ src/ingest/sniff.rs
 src/ingest/csv_opts.rs
 src/sql_ident.rs
 
+# Phase 4 (present now): the schema bar — pure `layout_schema_bar` (name+badge entries fit to the
+# grid's per-column widths, aligned to its col_x) + the `summary` string. A wrong width-fit or a
+# misaligned col_x silently breaks the grid alignment, so the layout earns the hard floor. The thin
+# `render_schema_bar` blit shares the file but is fully exercised by the TestBackend snapshot +
+# zero-area tests, so it doesn't erode the floor.
+src/schema_bar.rs
+
 # csv_config.rs (the minimal [csv] TOML loader) is a thin serde-parse-to-default seam — its real
 # behavior is covered by csv_config_tests, but the floor lives on the pure transform modules
 # above (judgment per the brief; the full config schema is Phase 5 / Q5).

@@ -113,6 +113,10 @@ pub struct App {
     /// Distinct-value cache for value-completion (P3.7), filled out-of-band by the worker; read as
     /// plain data by the candidate generator. The App never queries the engine for values itself.
     value_cache: ValueCache,
+    /// The active CSV dialect summary shown in the schema bar (P4.1): the effective delimiter
+    /// (`None` = DuckDB auto-detected it) and whether the first row is a header. Defaults to
+    /// `(None, true)` until the loader reports the dialect ([`set_csv_summary`](Self::set_csv_summary)).
+    csv_summary: (Option<char>, bool),
 }
 
 impl App {
@@ -133,6 +137,7 @@ impl App {
             schema: None,
             autocomplete: AutocompleteState::new(),
             value_cache: ValueCache::new(),
+            csv_summary: (None, true),
         }
     }
 
@@ -194,6 +199,12 @@ impl App {
     /// The distinct-value cache (for tests asserting value-completion wiring).
     pub fn value_cache(&self) -> &ValueCache {
         &self.value_cache
+    }
+
+    /// The active CSV dialect for the schema bar: the effective delimiter (`None` = auto-detected)
+    /// and whether the first row is a header.
+    pub fn csv_summary(&self) -> (Option<char>, bool) {
+        self.csv_summary
     }
 
     // --- event routing (headless: synthetic KeyEvents) ---
@@ -504,6 +515,13 @@ impl App {
     /// Until it is set, the popup stays closed (no schema = nothing to ground completion in).
     pub fn set_schema(&mut self, schema: Schema) {
         self.schema = Some(schema);
+    }
+
+    /// Install the active CSV dialect for the schema bar (P4.1): the effective delimiter (`None`
+    /// when DuckDB auto-detected it) and whether the first row is a header. Set by the event loop
+    /// from the launch [`CsvOpts`](crate::engine::CsvOpts) alongside [`set_schema`](Self::set_schema).
+    pub fn set_csv_summary(&mut self, delimiter: Option<char>, header: bool) {
+        self.csv_summary = (delimiter, header);
     }
 
     // --- load state machine (P2.11) ---

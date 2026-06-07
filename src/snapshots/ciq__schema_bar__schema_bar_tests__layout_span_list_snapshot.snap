@@ -1,0 +1,26 @@
+---
+source: src/schema_bar_tests.rs
+expression: shape
+---
+[
+    (
+        "id (int)  ",
+        false,
+    ),
+    (
+        "  ",
+        false,
+    ),
+    (
+        "name (txt)  ",
+        true,
+    ),
+    (
+        "  ",
+        false,
+    ),
+    (
+        "amount (num)",
+        false,
+    ),
+]

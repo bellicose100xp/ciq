@@ -60,11 +60,14 @@ const POLL_MS: u64 = 16;
 /// What the off-thread loader hands back once the CSV ingest finishes.
 enum LoadOutcome {
     /// Loaded; carries the engine's interrupt handle, the loaded schema (the autocomplete
-    /// candidate source), and a one-line summary for the status line.
+    /// candidate source), a one-line summary for the status line, and the effective CSV dialect
+    /// (delimiter, header) for the schema bar (`None` delimiter = DuckDB auto-detected it).
     Ready {
         interrupt: InterruptHandle,
         schema: Schema,
         summary: String,
+        delimiter: Option<char>,
+        header: bool,
     },
     /// Ingest failed; carries the error message for the `LoadError` state.
     Failed(String),
@@ -81,6 +84,11 @@ pub fn run(path: PathBuf, opts: CsvOpts) -> std::io::Result<()> {
     let (response_tx, response_rx) = channel::<QueryResponse>();
     let (load_tx, load_rx) = channel::<LoadOutcome>();
 
+    // The launch dialect for the schema-bar summary (delimiter `None` = DuckDB auto-detected it).
+    // Captured before `opts` moves into the loader thread.
+    let summary_delim = opts.delimiter;
+    let summary_header = opts.header.unwrap_or(true);
+
     // Loader+worker thread: load the CSV once (off the UI thread so the bar stays responsive),
     // report the outcome, then become the worker loop owning the engine.
     thread::spawn(move || {
@@ -93,6 +101,8 @@ pub fn run(path: PathBuf, opts: CsvOpts) -> std::io::Result<()> {
                     interrupt: engine.interrupt_handle(),
                     schema,
                     summary,
+                    delimiter: summary_delim,
+                    header: summary_header,
                 });
                 // Hand the engine to the worker loop (it owns it for the session).
                 let worker = spawn_worker(Box::new(engine), request_rx, response_tx);
@@ -132,9 +142,12 @@ fn event_loop(
                 interrupt,
                 schema,
                 summary,
+                delimiter,
+                header,
             }) => {
                 app.set_interrupt(interrupt);
                 app.set_schema(schema);
+                app.set_csv_summary(delimiter, header);
                 app.on_loaded(summary);
             }
             Ok(LoadOutcome::Failed(msg)) => app.on_load_error(msg),

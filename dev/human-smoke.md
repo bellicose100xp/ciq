@@ -37,3 +37,17 @@ polarity. Confirm by hand:
 8. **Color polarity.** Repeat 1 and 6 in a light terminal and a dark terminal. Confirm the popup
    border, the selected-row highlight, and the dimmed type-hint column are all legible in both
    (the §4.7 polarity check).
+
+## Phase 4 — schema bar (P4.1)
+
+The headless snapshot proves the schema bar's logical cells (the `name (badge)` entries, their
+alignment to the grid columns, the summary text). It does NOT prove the drawn underline on the
+active column or the literal delimiter glyph as a real terminal renders them. Confirm by hand:
+
+1. **Bar shows + aligns.** Run a query that returns a grid. Above the grid header sits a row of
+   `name (badge)` labels (e.g. `id (int)   name (txt)   amount (num)`), each sitting dead-on over
+   its data column. Scroll the grid horizontally (Right/Left while the grid has focus) and confirm
+   the bar scrolls in lockstep (same columns drop off the left as the grid's).
+2. **Delimiter/header summary.** The pane border title reads `delim , | header on` (or the actual
+   delimiter for your file; a TSV shows `delim \t`). Confirm it is legible in a light and a dark
+   terminal (the §4.7 polarity check).

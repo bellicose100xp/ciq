@@ -17,7 +17,8 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::app::{App, AppPhase};
 use crate::autocomplete::autocomplete_render::{MAX_VISIBLE_ROWS, render_popup};
-use crate::grid::{GridView, grid_render, layout_grid};
+use crate::grid::{GridFrame, GridView, grid_render, layout_grid};
+use crate::schema_bar;
 use crate::theme;
 
 /// Render the whole app into `frame`.
@@ -80,7 +81,16 @@ fn render_query_bar(app: &App, frame: &mut Frame, area: Rect) {
 /// The results pane: a bordered box containing the aligned grid, a loading indicator, or an
 /// empty hint. The grid is re-laid-out against the actual inner viewport.
 fn render_results(app: &App, frame: &mut Frame, area: Rect) {
-    let block = Block::default().borders(Borders::ALL);
+    let mut block = Block::default().borders(Borders::ALL);
+    // Once loaded, surface the CSV dialect (`delim , | header on`) as the pane's border title —
+    // the global indicator §6.3 calls for, distinct from the per-column schema bar below.
+    if app.schema().is_some() {
+        let (delim, header) = app.csv_summary();
+        block = block.title(Span::styled(
+            schema_bar::summary(delim, header),
+            theme::schema_bar::summary(),
+        ));
+    }
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -107,16 +117,22 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
 
     match app.result() {
         Some(result) => {
-            // Re-lay-out from the retained rows against the real viewport so a resize reflows
-            // without re-querying (§3.1). Column-granular h-scroll from the App's offset.
+            // The schema bar pins the top inner row (above the grid's sticky header). The grid
+            // gets the rows below it, so its body viewport shrinks by exactly this one row — the
+            // height math is just the reduced `grid_area.height` handed to `render_grid`.
+            let (bar_area, grid_area) = split_off_schema_bar(inner);
+
+            // Re-lay-out from the retained rows against the grid's (post-bar) viewport so a resize
+            // reflows without re-querying (§3.1). Column-granular h-scroll from the App's offset.
             let view = GridView {
-                width: inner.width,
-                height: inner.height,
+                width: grid_area.width,
+                height: grid_area.height,
                 h_col_offset: app.h_col_offset(),
                 v_row_offset: app.v_row_offset(),
             };
             let grid = layout_grid(&result.rows, &view);
-            grid_render::render_grid(frame, inner, &grid, app.v_row_offset());
+            render_schema_bar(app, frame, bar_area, &grid);
+            grid_render::render_grid(frame, grid_area, &grid, app.v_row_offset());
         }
         None => {
             let hint = Paragraph::new(Span::styled(
@@ -126,6 +142,31 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
             frame.render_widget(hint, inner);
         }
     }
+}
+
+/// Split the results pane inner area into the one-row schema bar (top) and the grid area (the
+/// rows below). When the pane is only one row tall there is no room for both, so the grid keeps
+/// the whole area and the bar is empty (degenerate; `render_schema_bar` no-ops on a 0-height area).
+fn split_off_schema_bar(inner: Rect) -> (Rect, Rect) {
+    if inner.height <= 1 {
+        return (Rect { height: 0, ..inner }, inner);
+    }
+    let bar = Rect { height: 1, ..inner };
+    let grid = Rect {
+        y: inner.y.saturating_add(1),
+        height: inner.height.saturating_sub(1),
+        ..inner
+    };
+    (bar, grid)
+}
+
+/// Render the schema bar over the grid's computed geometry so names align dead-on with their data
+/// columns and scroll in lockstep (shared `h_col_offset`). No-op without a loaded schema.
+fn render_schema_bar(app: &App, frame: &mut Frame, area: Rect, grid: &GridFrame) {
+    let Some(schema) = app.schema() else {
+        return;
+    };
+    schema_bar::render_schema_bar(frame, area, schema, grid, app.h_col_offset(), None);
 }
 
 /// The status line: error-styled when the phase is a load error, normal otherwise.

@@ -27,6 +27,7 @@ pub mod ingest;
 pub mod logging;
 pub mod query;
 pub mod schema;
+pub mod schema_bar;
 pub mod sql_ident;
 pub mod sql_lexer;
 pub mod theme;
