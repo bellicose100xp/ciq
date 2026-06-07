@@ -5,6 +5,7 @@
 //! `mod.rs`; submodules declared here; tests in `{name}_tests.rs` wired via `#[path]`.
 
 pub mod debouncer;
+pub mod dispatcher;
 pub mod error_enhance;
 pub mod preprocess;
 pub mod query_state;
