@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+#
+# Ported from proptest-regressions/query/preprocess_tests.txt (the original UTF-8 mid-char-slice
+# panic on "¡"). The shared lexer (`dev/DECISIONS.md` D6) now owns the byte scan, so the guard
+# lives here too: this case must keep `tokenize` (and the span-tiling property) total.
+cc 7115db6c837e457c685e15ca00db9aba70d0d57fa1da5801d138ebe12c8fcaef # shrinks to s = "¡"

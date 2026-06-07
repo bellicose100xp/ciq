@@ -9,12 +9,14 @@
 //!    top-level `LIMIT`** — an existing `LIMIT k` (incl. `ORDER BY … LIMIT k`) is respected and
 //!    never doubled.
 //!
-//! All three checks are built on **one shared `top_level_tokens` scan** that correctly handles
-//! single-quoted strings (`'...'`, `''` escape), double-quoted identifiers (`"..."`, `""`
-//! escape), `--` line comments, `/* */` block comments, and paren depth. This is a small,
-//! deliberate tokenizer-lite (§5.3 "tokenizer, not parser"); when P3.1 lands the full
-//! `src/autocomplete/sql_lexer.rs`, preprocess should consume that lexer instead of this local
-//! scan. Pure `&str -> Result<String, PreprocessError>`; table-driven tested.
+//! All three checks are built on **one shared scan** — `crate::sql_lexer::tokenize` (`dev/PLAN.md`
+//! §5.3, `dev/DECISIONS.md` D6) — that correctly handles single-quoted strings (`'...'`, `''`
+//! escape), double-quoted identifiers (`"..."`, `""` escape), `--` line comments, `/* */` block
+//! comments, and paren depth. Per D6's binding forward-rule, preprocess **consumes that shared
+//! lexer** rather than carrying its own tokenizer; the read-only-grammar checks are derived from
+//! the resulting `&[Token]`. Pure `&str -> Result<String, PreprocessError>`; table-driven tested.
+
+use crate::sql_lexer::{Token, TokenKind, tokenize};
 
 /// Why an interactive query was rejected before reaching the engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,32 +45,34 @@ impl PreprocessError {
 /// On success returns the exact SQL to send the engine. On rejection returns a
 /// `PreprocessError` (surfaced in the status line; no engine call is issued).
 pub fn prepare_interactive(input: &str, limit: usize) -> Result<String, PreprocessError> {
-    let tokens = top_level_tokens(input);
+    let tokens = tokenize(input);
 
     // Reject a top-level `;` that has any real token after it (multiple statements). A single
-    // trailing `;` with nothing meaningful after it is fine.
-    if let Some(semi) = tokens.iter().find(|t| t.kind == TokKind::Semicolon) {
+    // trailing `;` with nothing meaningful after it is fine. `;` is detected regardless of paren
+    // balance (the lexer always emits it), so a stray `)`/`(` can't smuggle a second statement.
+    if let Some(semi) = tokens.iter().find(|t| is_semicolon(input, t)) {
         let has_second_statement = tokens
             .iter()
-            .any(|t| t.start > semi.start && t.is_meaningful());
+            .any(|t| t.start > semi.start && is_meaningful(input, t));
         if has_second_statement {
             return Err(PreprocessError::MultipleStatements);
         }
     }
 
-    // Leading keyword decides read-only-ness. Use the first *word* at any depth so a leading
-    // `(` (parenthesized SELECT) doesn't hide the keyword.
-    let lead = match tokens.iter().find(|t| t.kind == TokKind::Word) {
+    // Leading keyword decides read-only-ness. Use the first *word* (keyword or identifier) at any
+    // depth so a leading `(` (parenthesized SELECT) doesn't hide the keyword.
+    let lead = match tokens.iter().find(|t| is_word(t)) {
         Some(t) => t,
         None => return Err(PreprocessError::Empty), // empty / only comments / only punctuation
     };
-    if !(lead.text.eq_ignore_ascii_case("SELECT") || lead.text.eq_ignore_ascii_case("WITH")) {
+    let lead_text = lead.text(input);
+    if !(lead_text.eq_ignore_ascii_case("SELECT") || lead_text.eq_ignore_ascii_case("WITH")) {
         return Err(PreprocessError::NotReadOnly);
     }
     // A bare `SELECT`/`WITH` with nothing meaningful after it is not a runnable statement.
     let has_body = tokens
         .iter()
-        .any(|t| t.start > lead.start && t.is_meaningful());
+        .any(|t| t.start > lead.start && is_meaningful(input, t));
     if !has_body {
         return Err(PreprocessError::NotReadOnly);
     }
@@ -77,7 +81,7 @@ pub fn prepare_interactive(input: &str, limit: usize) -> Result<String, Preproce
     // excluding) any trailing top-level `;`, so a trailing comment can't swallow our wrapper.
     let normalized = normalized_sql(input, &tokens);
 
-    if has_top_level_limit(&tokens) {
+    if has_top_level_limit(input, &tokens) {
         // Respect the user's own LIMIT — do not wrap or double it.
         Ok(normalized)
     } else {
@@ -94,8 +98,8 @@ pub fn prepare_interactive(input: &str, limit: usize) -> Result<String, Preproce
 /// The source SQL with comments preserved but any trailing top-level `;` (and everything that
 /// would be only whitespace after it) removed. We rebuild from the original byte span so the
 /// engine sees the user's exact text (formatting, comments) minus the statement terminator.
-fn normalized_sql(input: &str, tokens: &[Tok]) -> String {
-    let end = match tokens.iter().find(|t| t.kind == TokKind::Semicolon) {
+fn normalized_sql(input: &str, tokens: &[Token]) -> String {
+    let end = match tokens.iter().find(|t| is_semicolon(input, t)) {
         Some(semi) => semi.start,
         None => input.len(),
     };
@@ -103,168 +107,32 @@ fn normalized_sql(input: &str, tokens: &[Tok]) -> String {
 }
 
 /// Whether the query has a top-level (`depth == 0`) `LIMIT` clause (so we must not wrap).
-/// Scans *all* depth-0 word tokens (not a fixed tail window), avoiding both the "LIMIT pushed
-/// out of a short window" miss and the `OFFSET`-after-LIMIT case. A `limit` written as a
-/// quoted identifier (`"limit"`) is a `QuotedIdent`, not a `Word`, so it doesn't false-positive.
-/// A `limit` nested in a subquery has `depth > 0`, so it doesn't count as the outer clause.
-fn has_top_level_limit(tokens: &[Tok]) -> bool {
-    tokens
-        .iter()
-        .any(|t| t.kind == TokKind::Word && t.depth == 0 && t.text.eq_ignore_ascii_case("LIMIT"))
+/// Scans *all* depth-0 keyword tokens (not a fixed tail window), avoiding both the "LIMIT pushed
+/// out of a short window" miss and the `OFFSET`-after-LIMIT case. A `limit` written as a quoted
+/// identifier (`"limit"`) lexes as `QuotedIdent`, not `Keyword`, so it doesn't false-positive. A
+/// `limit` nested in a subquery has `depth > 0`, so it doesn't count as the outer clause.
+fn has_top_level_limit(input: &str, tokens: &[Token]) -> bool {
+    tokens.iter().any(|t| {
+        t.kind == TokenKind::Keyword && t.depth == 0 && t.text(input).eq_ignore_ascii_case("LIMIT")
+    })
 }
 
-/// Token kind for the restricted-grammar scan.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TokKind {
-    /// An unquoted identifier or keyword.
-    Word,
-    /// A statement terminator (only emitted at `depth == 0`).
-    Semicolon,
-    /// A double-quoted identifier (`"order"`). Never matches keywords.
-    QuotedIdent,
-    /// A run of other punctuation/operator bytes (not whitespace/comment/string).
-    Other,
+/// Whether a token is the statement terminator `;` (a one-byte `Punct` with that text). The lexer
+/// always emits `;` regardless of paren depth, so this is the fail-closed multi-statement signal.
+fn is_semicolon(input: &str, t: &Token) -> bool {
+    t.kind == TokenKind::Punct && t.text(input) == ";"
 }
 
-/// A token from the scan: kind, source text, byte start, and paren depth at its position.
-#[derive(Debug, Clone)]
-struct Tok<'a> {
-    kind: TokKind,
-    text: &'a str,
-    start: usize,
-    depth: i32,
+/// Whether a token is "word-shaped" — an unquoted keyword or identifier. The leading-keyword
+/// check keys off the first such token (so a leading `(` or comment can't hide the SELECT/WITH).
+fn is_word(t: &Token) -> bool {
+    matches!(t.kind, TokenKind::Keyword | TokenKind::Ident)
 }
 
-impl Tok<'_> {
-    /// Whether this token represents real statement content (vs a bare separator). Used to
-    /// decide "is there a second statement after `;`" and "does the leading keyword have a body".
-    fn is_meaningful(&self) -> bool {
-        matches!(
-            self.kind,
-            TokKind::Word | TokKind::QuotedIdent | TokKind::Other
-        )
-    }
-}
-
-/// Single shared scan producing the tokens all three checks consume (no duplicated scanners).
-/// Correctly skips `'...'` strings (with `''` escape), emits `"..."` quoted idents (with `""`
-/// escape), and skips `--` line and `/* */` block comments. Each token carries its paren
-/// `depth` so callers filter to top-level where the grammar requires it (LIMIT clause, `;`
-/// terminator) while still seeing nested words (e.g. a leading parenthesized `SELECT`). Pure,
-/// total, never panics; slices only at byte boundaries it controls.
-///
-/// NOTE (P3.1): when the full `src/autocomplete/sql_lexer.rs` lands it should SUBSUME this scan
-/// (same string/comment/quote/paren handling) rather than duplicate it — `Tok`/`TokKind` are
-/// the seed of that shared lexer.
-fn top_level_tokens(s: &str) -> Vec<Tok<'_>> {
-    let bytes = s.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    let mut depth: i32 = 0;
-    let n = bytes.len();
-
-    while i < n {
-        let c = bytes[i];
-        match c {
-            b'\'' => i = skip_quoted(bytes, i, b'\''), // string literal — skip entirely
-            b'"' => {
-                let end = skip_quoted(bytes, i, b'"');
-                out.push(Tok {
-                    kind: TokKind::QuotedIdent,
-                    text: &s[i..end],
-                    start: i,
-                    depth,
-                });
-                i = end;
-            }
-            b'-' if i + 1 < n && bytes[i + 1] == b'-' => {
-                // line comment: skip to end of line (or end of input)
-                i += 2;
-                while i < n && bytes[i] != b'\n' {
-                    i += 1;
-                }
-            }
-            b'/' if i + 1 < n && bytes[i + 1] == b'*' => {
-                // block comment: skip to matching `*/` (or end of input)
-                i += 2;
-                while i + 1 < n && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                    i += 1;
-                }
-                i = (i + 2).min(n);
-            }
-            b'(' => {
-                depth += 1;
-                i += 1;
-            }
-            b')' => {
-                // Clamp at 0: a stray `)` must never drive depth negative, or a later
-                // top-level `;`/`LIMIT` (which key off depth) would be silently missed —
-                // a statement-smuggling / wrap-bypass hole (caught by the fix re-review).
-                depth = (depth - 1).max(0);
-                i += 1;
-            }
-            b';' => {
-                // A `;` outside a string/comment is ALWAYS a statement terminator for the
-                // safety (multi-statement) check, regardless of paren depth. Failing closed
-                // on malformed/unbalanced input is the safe choice: the resident table `t`
-                // must never be mutated. `depth` is recorded for callers that care.
-                out.push(Tok {
-                    kind: TokKind::Semicolon,
-                    text: ";",
-                    start: i,
-                    depth,
-                });
-                i += 1;
-            }
-            _ if c.is_ascii_alphanumeric() || c == b'_' => {
-                let start = i;
-                while i < n && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                    i += 1;
-                }
-                out.push(Tok {
-                    kind: TokKind::Word,
-                    text: &s[start..i],
-                    start,
-                    depth,
-                });
-            }
-            _ if c.is_ascii_whitespace() => i += 1,
-            _ => {
-                // Any other char (ASCII punctuation/operator, OR a multi-byte non-ASCII char
-                // such as `¡` or `日`). Advance by the FULL UTF-8 char width so the slice below
-                // never splits a code point — `c` is a byte, but `s[i..]` is valid UTF-8 here.
-                let start = i;
-                let ch_len = s[i..].chars().next().map_or(1, char::len_utf8);
-                i += ch_len;
-                out.push(Tok {
-                    kind: TokKind::Other,
-                    text: &s[start..i],
-                    start,
-                    depth,
-                });
-            }
-        }
-    }
-    out
-}
-
-/// From an opening quote byte at `open`, return the index just past the closing quote of the
-/// same kind, honoring the doubled-quote escape (`''` / `""`). If unterminated (half-typed),
-/// returns `n` — a normal mid-keystroke state, not an error.
-fn skip_quoted(bytes: &[u8], open: usize, q: u8) -> usize {
-    let n = bytes.len();
-    let mut i = open + 1;
-    while i < n {
-        if bytes[i] == q {
-            if i + 1 < n && bytes[i + 1] == q {
-                i += 2; // escaped quote, stay inside
-                continue;
-            }
-            return i + 1; // closing quote
-        }
-        i += 1;
-    }
-    n // unterminated
+/// Whether a token is real statement content (vs trivia or a bare `;` separator). Used to decide
+/// "is there a second statement after `;`" and "does the leading keyword have a body".
+fn is_meaningful(input: &str, t: &Token) -> bool {
+    !t.is_trivia() && !is_semicolon(input, t)
 }
 
 #[cfg(test)]

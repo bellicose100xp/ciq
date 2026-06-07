@@ -21,8 +21,11 @@ src/grid/grid_layout.rs
 src/grid/col_width.rs
 src/app/editor.rs
 
-# Phase 3+ (added as they land): autocomplete lexer/context/candidates/keywords.
-# src/autocomplete/sql_lexer.rs
+# Phase 3 (present now): the shared SQL lexer (D6) — neutral top-level module both `query` and
+# `autocomplete` consume; pure, total `tokenize(&str) -> Vec<Token>`.
+src/sql_lexer.rs
+
+# Phase 3+ (added as they land): autocomplete context/candidates/keywords.
 # src/autocomplete/clause_context.rs
 # src/autocomplete/candidates.rs
 # src/autocomplete/sql_keywords.rs
