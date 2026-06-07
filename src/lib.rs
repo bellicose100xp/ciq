@@ -19,6 +19,7 @@
 //! `error` first, then `schema` and `engine`.
 
 pub mod app;
+pub mod autocomplete;
 pub mod engine;
 pub mod error;
 pub mod grid;

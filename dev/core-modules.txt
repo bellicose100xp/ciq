@@ -25,7 +25,12 @@ src/app/editor.rs
 # `autocomplete` consume; pure, total `tokenize(&str) -> Vec<Token>`.
 src/sql_lexer.rs
 
-# Phase 3+ (added as they land): autocomplete context/candidates/keywords.
-# src/autocomplete/clause_context.rs
+# Phase 3 (present now): the clause-context detector — pure `detect_context` over the lexer token
+# stream; a wrong cursor-context silently corrupts every suggestion, so it earns the hard floor.
+src/autocomplete/clause_context.rs
+
+# Phase 3+ (added as they land): value-source SQL builder + ValueCache (P3.4), candidates (P3.5).
+# src/autocomplete/value_source.rs
 # src/autocomplete/candidates.rs
-# src/autocomplete/sql_keywords.rs
+# sql_keywords.rs is static data (keyword/function/operator tables) — const-sanity-tested but
+# largely branchless, so it is left off the hard floor (judgment per the brief).
