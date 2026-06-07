@@ -168,8 +168,12 @@ fn parse_summary(table: &Table) -> FacetResult {
 }
 
 /// Parse the text **histogram**: rows of `(value, n, distinct_count, null_count)` where the last
-/// two repeat the column-wide counts on every row. An empty result (no non-null values) yields an
-/// empty bar list with zero counts.
+/// two repeat the column-wide counts on every row.
+///
+/// A **NULL `value` cell is the sentinel row** the `stats LEFT JOIN bars` shape emits when there
+/// are zero bars (an all-NULL column): it carries the real distinct/null counts but no bar, so it
+/// is skipped from `bars` while its counts are still read. A genuine bar value is never NULL (the
+/// query filters `IS NOT NULL`), so this skip never drops a real bar.
 fn parse_histogram(table: &Table) -> FacetResult {
     let cols = table.columns();
     let values = cols.first();
@@ -179,11 +183,13 @@ fn parse_histogram(table: &Table) -> FacetResult {
             .cells
             .iter()
             .zip(n.cells.iter())
+            .filter(|(val, _)| !val.is_null())
             .map(|(val, cnt)| FacetBar::new(val.display(), cell_u64(Some(cnt))))
             .collect(),
         _ => Vec::new(),
     };
-    // The column-wide counts repeat on every row; read them from the first row (0 if no rows).
+    // The column-wide counts repeat on every row (including the sentinel), so the first row always
+    // carries them — even when there are no bars.
     let distinct = cols.get(2).map(|c| cell_u64(c.cells.first())).unwrap_or(0);
     let nulls = cols.get(3).map(|c| cell_u64(c.cells.first())).unwrap_or(0);
     FacetResult::Histogram {

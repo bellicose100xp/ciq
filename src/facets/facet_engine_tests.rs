@@ -81,6 +81,35 @@ fn text_facet_histogram_round_trips_with_stable_order() {
 }
 
 #[test]
+fn all_null_text_histogram_reports_real_null_count() {
+    // Regression guard: an entirely-NULL text column must report its true null count, not 0. The
+    // `stats LEFT JOIN bars` shape carries the count on the sentinel row even with zero bars.
+    let h = EngineHarness::from_csv("id,note\n1,\n2,\n3,\n4,\n5,\n").expect("load");
+    assert_eq!(h.schema().column_type("note"), Some(&ColumnType::Text));
+
+    let sql = build_facet_sql("note", h.schema());
+    let table = match h.query(&sql) {
+        QueryOutcome::Rows(t) => t,
+        other => panic!("facet SQL must be valid + return rows, got {other:?}"),
+    };
+
+    let mut state = FacetState::pending("note", ColumnType::Text);
+    state.apply_result(&table);
+    match state.result().expect("ready") {
+        FacetResult::Histogram {
+            bars,
+            distinct,
+            nulls,
+        } => {
+            assert!(bars.is_empty(), "no non-null values => no bars");
+            assert_eq!(*distinct, 0, "no distinct non-null values");
+            assert_eq!(*nulls, 5, "all five rows are NULL — the lost-count bug");
+        }
+        other => panic!("text column => histogram facet, got {other:?}"),
+    }
+}
+
+#[test]
 fn facet_for_keyword_column_is_valid_sql() {
     // A reserved-word column name must be quoted so the facet SQL parses (the shared sql_ident
     // escaper). `order` is reserved.

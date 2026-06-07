@@ -124,8 +124,33 @@ fn other_type_parses_as_histogram() {
 }
 
 #[test]
-fn empty_histogram_yields_no_bars() {
-    // A column with no non-null values: the GROUP BY returns no rows.
+fn all_null_histogram_reports_real_null_count_via_sentinel_row() {
+    // An entirely-NULL text column: the `stats LEFT JOIN bars` shape returns ONE sentinel row with
+    // a NULL value/n but the true distinct/null counts. The parser must skip the NULL-value
+    // sentinel from the bars (no spurious bar) while still reading the real null count — the bug
+    // where an all-NULL column reported nulls=0.
+    let mut s = FacetState::pending("status", ColumnType::Text);
+    s.apply_result(&Table::new(vec![
+        Column::new("value", ColumnType::Text, vec![Cell::Null]),
+        Column::new("n", ColumnType::Int, vec![Cell::Null]),
+        Column::new("distinct_count", ColumnType::Int, vec![Cell::Int(0)]),
+        Column::new("null_count", ColumnType::Int, vec![Cell::Int(5)]),
+    ]));
+    assert_eq!(
+        s.result().unwrap(),
+        &FacetResult::Histogram {
+            bars: vec![],
+            distinct: 0,
+            nulls: 5,
+        }
+    );
+    assert_eq!(s.result().unwrap().max_count(), 0);
+}
+
+#[test]
+fn empty_histogram_table_yields_no_bars() {
+    // A genuinely empty result table (no rows at all — an engine/shape surprise) parses to an
+    // empty histogram with zero counts, never a panic.
     let mut s = FacetState::pending("status", ColumnType::Text);
     s.apply_result(&Table::new(vec![
         Column::new("value", ColumnType::Text, vec![]),

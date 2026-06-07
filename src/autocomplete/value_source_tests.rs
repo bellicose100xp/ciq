@@ -14,7 +14,18 @@ fn distinct_sql_for_plain_column() {
     assert_eq!(
         build_distinct_sql("status", 10),
         "SELECT \"status\", count(*) AS n FROM t WHERE \"status\" IS NOT NULL \
-         GROUP BY 1 ORDER BY n DESC LIMIT 10"
+         GROUP BY 1 ORDER BY n DESC, 1 ASC LIMIT 10"
+    );
+}
+
+#[test]
+fn distinct_sql_carries_value_tie_break_for_stable_order() {
+    // The secondary `1 ASC` (the quoted column positionally) tie-breaks equal counts so the
+    // suggestion order — and which tied values survive the LIMIT — is deterministic run to run.
+    let sql = build_distinct_sql("status", 10);
+    assert!(
+        sql.contains("ORDER BY n DESC, 1 ASC LIMIT 10"),
+        "got: {sql}"
     );
 }
 
@@ -24,7 +35,7 @@ fn distinct_sql_quotes_a_reserved_word_column() {
     assert_eq!(
         build_distinct_sql("order", 5),
         "SELECT \"order\", count(*) AS n FROM t WHERE \"order\" IS NOT NULL \
-         GROUP BY 1 ORDER BY n DESC LIMIT 5"
+         GROUP BY 1 ORDER BY n DESC, 1 ASC LIMIT 5"
     );
 }
 
@@ -35,7 +46,7 @@ fn distinct_sql_escapes_embedded_double_quote() {
     assert_eq!(
         build_distinct_sql("we\"ird", 3),
         "SELECT \"we\"\"ird\", count(*) AS n FROM t WHERE \"we\"\"ird\" IS NOT NULL \
-         GROUP BY 1 ORDER BY n DESC LIMIT 3"
+         GROUP BY 1 ORDER BY n DESC, 1 ASC LIMIT 3"
     );
 }
 

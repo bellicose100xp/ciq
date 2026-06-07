@@ -70,7 +70,7 @@ fn timestamp_column_emits_summary() {
 fn text_column_emits_histogram() {
     assert_eq!(
         build_facet_sql("status", &schema()),
-        r#"SELECT "status" AS value, count(*) AS n, (SELECT count(DISTINCT "status") FROM t) AS distinct_count, (SELECT count(*) FILTER (WHERE "status" IS NULL) FROM t) AS null_count FROM t WHERE "status" IS NOT NULL GROUP BY 1 ORDER BY n DESC, value ASC LIMIT 10"#
+        r#"WITH bars AS (SELECT "status" AS value, count(*) AS n FROM t WHERE "status" IS NOT NULL GROUP BY 1 ORDER BY n DESC, value ASC LIMIT 10), stats AS (SELECT count(DISTINCT "status") AS distinct_count, count(*) FILTER (WHERE "status" IS NULL) AS null_count FROM t) SELECT bars.value AS value, bars.n AS n, stats.distinct_count AS distinct_count, stats.null_count AS null_count FROM stats LEFT JOIN bars ON true ORDER BY n DESC, value ASC"#
     );
 }
 
@@ -79,7 +79,7 @@ fn other_type_column_emits_histogram() {
     // A structured/unknown type gets the most general (histogram) shape — MIN/MAX is not meaningful.
     assert_eq!(
         build_facet_sql("payload", &schema()),
-        r#"SELECT "payload" AS value, count(*) AS n, (SELECT count(DISTINCT "payload") FROM t) AS distinct_count, (SELECT count(*) FILTER (WHERE "payload" IS NULL) FROM t) AS null_count FROM t WHERE "payload" IS NOT NULL GROUP BY 1 ORDER BY n DESC, value ASC LIMIT 10"#
+        r#"WITH bars AS (SELECT "payload" AS value, count(*) AS n FROM t WHERE "payload" IS NOT NULL GROUP BY 1 ORDER BY n DESC, value ASC LIMIT 10), stats AS (SELECT count(DISTINCT "payload") AS distinct_count, count(*) FILTER (WHERE "payload" IS NULL) AS null_count FROM t) SELECT bars.value AS value, bars.n AS n, stats.distinct_count AS distinct_count, stats.null_count AS null_count FROM stats LEFT JOIN bars ON true ORDER BY n DESC, value ASC"#
     );
 }
 
@@ -88,7 +88,7 @@ fn unknown_column_defaults_to_histogram() {
     // A column not in the schema (the App never passes one — defensive) gets the general shape.
     assert_eq!(
         build_facet_sql("nonexistent", &schema()),
-        r#"SELECT "nonexistent" AS value, count(*) AS n, (SELECT count(DISTINCT "nonexistent") FROM t) AS distinct_count, (SELECT count(*) FILTER (WHERE "nonexistent" IS NULL) FROM t) AS null_count FROM t WHERE "nonexistent" IS NOT NULL GROUP BY 1 ORDER BY n DESC, value ASC LIMIT 10"#
+        r#"WITH bars AS (SELECT "nonexistent" AS value, count(*) AS n FROM t WHERE "nonexistent" IS NOT NULL GROUP BY 1 ORDER BY n DESC, value ASC LIMIT 10), stats AS (SELECT count(DISTINCT "nonexistent") AS distinct_count, count(*) FILTER (WHERE "nonexistent" IS NULL) AS null_count FROM t) SELECT bars.value AS value, bars.n AS n, stats.distinct_count AS distinct_count, stats.null_count AS null_count FROM stats LEFT JOIN bars ON true ORDER BY n DESC, value ASC"#
     );
 }
 
@@ -132,8 +132,10 @@ fn column_type_resolved_case_insensitively() {
 
 #[test]
 fn explicit_k_changes_limit() {
+    // The top-K LIMIT now lives inside the `bars` CTE (the counts come from a separate one-row CTE
+    // joined in), so the limit appears as `LIMIT 3` within the query, not at the very end.
     let sql = build_facet_sql_with_k("status", Some(&ColumnType::Text), 3);
-    assert!(sql.ends_with("LIMIT 3"), "got: {sql}");
+    assert!(sql.contains("LIMIT 3)"), "got: {sql}");
 }
 
 #[test]

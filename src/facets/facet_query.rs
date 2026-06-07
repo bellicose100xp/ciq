@@ -74,20 +74,32 @@ fn build_summary_sql(col: &str) -> String {
 }
 
 /// The text **top-K histogram**: one `(value, n)` row per most-frequent non-null value, plus the
-/// column-wide `distinct_count` / `null_count` carried on every row (scalar sub-selects).
+/// column-wide `distinct_count` / `null_count` on every row.
+///
+/// The counts come from a one-row `stats` CTE that the top-K `bars` is `LEFT JOIN`ed onto, so the
+/// counts **always materialize even when there are zero bars** — an entirely-NULL column yields one
+/// `(NULL, NULL, distinct_count, null_count)` row carrying the true null count, instead of the
+/// empty result the old per-row correlated sub-select produced (which lost the null count). The
+/// parser ([`facet_state`](super::facet_state)) skips the sentinel NULL-value row, so no spurious
+/// bar appears.
 ///
 /// `ORDER BY n DESC, value ASC` is a **stable, deterministic** order (the determinism rule for
-/// anything user-visible) — the secondary `value ASC` tie-breaks equal counts so the snapshot
-/// never flips. `WHERE col IS NOT NULL` drops the null bucket from the bars (the null count is the
+/// anything user-visible) — the secondary `value ASC` tie-breaks equal counts so the snapshot never
+/// flips. `WHERE col IS NOT NULL` drops the null bucket from the bars (the null count is the
 /// separate `null_count` column). `GROUP BY 1` groups by the (quoted) value positionally so the
 /// quoting is written once.
 fn build_histogram_sql(col: &str, k: usize) -> String {
     let q = quote_ident(col);
     format!(
-        "SELECT {q} AS value, count(*) AS n, \
-         (SELECT count(DISTINCT {q}) FROM t) AS distinct_count, \
-         (SELECT count(*) FILTER (WHERE {q} IS NULL) FROM t) AS null_count \
-         FROM t WHERE {q} IS NOT NULL GROUP BY 1 ORDER BY n DESC, value ASC LIMIT {k}"
+        "WITH bars AS (\
+         SELECT {q} AS value, count(*) AS n FROM t WHERE {q} IS NOT NULL \
+         GROUP BY 1 ORDER BY n DESC, value ASC LIMIT {k}), \
+         stats AS (\
+         SELECT count(DISTINCT {q}) AS distinct_count, \
+         count(*) FILTER (WHERE {q} IS NULL) AS null_count FROM t) \
+         SELECT bars.value AS value, bars.n AS n, \
+         stats.distinct_count AS distinct_count, stats.null_count AS null_count \
+         FROM stats LEFT JOIN bars ON true ORDER BY n DESC, value ASC"
     )
 }
 

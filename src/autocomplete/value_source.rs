@@ -33,17 +33,20 @@ pub const MAX_VALUES_PER_PATH: usize = 10_000;
 /// Build the distinct-value query for `col`, capped at `cap` rows, frequency-ordered.
 ///
 /// Emits exactly:
-/// `SELECT "<col>", count(*) AS n FROM t WHERE "<col>" IS NOT NULL GROUP BY 1 ORDER BY n DESC LIMIT <cap>`
+/// `SELECT "<col>", count(*) AS n FROM t WHERE "<col>" IS NOT NULL GROUP BY 1 ORDER BY n DESC, 1 ASC LIMIT <cap>`
 ///
 /// `GROUP BY 1` groups by the quoted column (positional, so the quoting is written once); the
-/// `IS NOT NULL` filter drops the null bucket (a NULL is not a completable value); `ORDER BY n DESC`
-/// surfaces the most common values first (the frequency-sort jiq's value collector also applies);
-/// the explicit `ORDER BY` also makes the row order **stable/deterministic** (the determinism rule
-/// for anything user-visible). The column identifier is quote-escaped via [`quote_ident`].
+/// `IS NOT NULL` filter drops the null bucket (a NULL is not a completable value); `ORDER BY n DESC,
+/// 1 ASC` surfaces the most common values first, with the secondary value tie-break (`1 ASC`, the
+/// quoted column positionally) breaking equal counts. The tie-break is what makes the order — and,
+/// under `LIMIT`, *which* tied values survive the cap — **stable/deterministic** (the determinism
+/// rule for anything user-visible): without it, DuckDB's order within an `n`-tie is unspecified and
+/// the suggestion list could vary run to run. This mirrors the facet histogram's `n DESC, value
+/// ASC`. The column identifier is quote-escaped via [`quote_ident`].
 pub fn build_distinct_sql(col: &str, cap: usize) -> String {
     let q = quote_ident(col);
     format!(
-        "SELECT {q}, count(*) AS n FROM t WHERE {q} IS NOT NULL GROUP BY 1 ORDER BY n DESC LIMIT {cap}"
+        "SELECT {q}, count(*) AS n FROM t WHERE {q} IS NOT NULL GROUP BY 1 ORDER BY n DESC, 1 ASC LIMIT {cap}"
     )
 }
 
