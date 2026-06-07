@@ -6,9 +6,13 @@
 # Enforced by the existing `cargo clippy ... -D warnings` invocation (no separate CI gate —
 # it rides the lint gate). When a seam wrapper genuinely needs the clock, allow it locally
 # with `#[allow(clippy::disallowed_methods)]` and a comment naming why it's a seam.
+# Note: only methods reachable from ciq's dependency tree can be listed — clippy warns on an
+# unresolvable path. ciq has no `rand` dependency, so the RNG bans are documented here for when
+# one is ever added, not listed above. The wall-clock bans are the load-bearing ones.
 disallowed-methods = [
-    { path = "std::time::Instant::now", reason = "nondeterministic clock; thread a u64 timestamp through instead (see debouncer seam)" },
+    { path = "std::time::Instant::now", reason = "nondeterministic clock; thread a u64 timestamp through instead (see debouncer / logging seams)" },
     { path = "std::time::SystemTime::now", reason = "nondeterministic clock; thread a u64 timestamp through instead" },
-    { path = "rand::random", reason = "unseeded RNG breaks determinism; use an explicit seed" },
-    { path = "rand::thread_rng", reason = "unseeded RNG breaks determinism; use an explicit seed" },
+    # When `rand` becomes a dependency, re-add:
+    #   { path = "rand::random", reason = "unseeded RNG breaks determinism; use an explicit seed" },
+    #   { path = "rand::thread_rng", reason = "unseeded RNG breaks determinism; use an explicit seed" },
 ]

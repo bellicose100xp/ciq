@@ -184,3 +184,18 @@ These carry real correctness weight but do not gate Phase 1. Each gets decided *
 - **Q7 — Ragged-row policy** (rows with wrong column count). Default: lean on DuckDB's detector; decide error-vs-pad-vs-skip during impl, fixture-tested.
 - **Q12 — Empty-cell vs SQL NULL semantics.** Default: render NULL distinctly from empty string; ingest empties per DuckDB default; `null_string` knob is the user lever. Must be decided + fixture-tested before launch (affects `WHERE col IS NULL` vs `= ''`).
 - **CsvOpts ↔ CLI-flag inventory.** §6.6's struct (`delimiter, quote, escape, header, null_string, sample_size`) must be expanded to cover R5's required overrides: add `types` (`--types`), `all_varchar` (`--all-varchar`), `date_format` (`--date-format`); unify `--sniff-rows` with the existing `sample_size` under one name. Final field/flag/config-key names decided when the config schema (Q5) is frozen.
+
+---
+
+## D6 — Shared SQL tokenizer (one scan, no duplication)
+
+**Status:** DECIDED 2026-06-07 (Phase 2, from a `/simplify` + `/code-review` pass).
+**Was open because:** the first cut of `query/preprocess.rs` shipped three separate hand-rolled string scanners (semicolon-finder, word-collector, leading-keyword), each independently tracking string/comment state. `/code-review` found ~10 real bugs concentrated in that duplication (unhandled `--`/`/* */` comments, double-quoted identifiers, a `take(6)` LIMIT-window miss, a trailing-comment swallow, and a UTF-8 mid-char slice panic that a `proptest` then caught on input `"¡"`).
+
+**Decision:** there is **one** scan — `query::preprocess::top_level_tokens(&str) -> Vec<Tok>` — that all grammar checks consume. It handles `'...'` strings (`''` escape), `"..."` quoted idents (`""` escape, emitted as `QuotedIdent` so a column named `"limit"` never matches the keyword), `--` and `/* */` comments, and paren `depth` (each token carries its depth). The multi-statement check, leading-keyword/read-only check, top-level-LIMIT check, and `;`-stripping are all derived from this token stream — no second scanner.
+
+**Why (DRY + altitude, on ciq's merits):** the duplicated scanners were the bug nest; collapsing to one correct scan fixed the whole class at the root. Tokens carry `depth` (not "drop everything in parens") so a leading parenthesized `(SELECT …)` is still recognized while a nested `LIMIT` correctly doesn't count as the outer clause.
+
+**Binding forward-rule (P3.1):** when the full `src/autocomplete/sql_lexer.rs` lands, it must **subsume/extend `top_level_tokens`**, not introduce a parallel tokenizer. `Tok`/`TokKind` are the seed of that shared lexer; promote them to a shared module both `query` and `autocomplete` import rather than duplicating string/comment/quote handling. (User directive: "use existing structure rather than duplicating.")
+
+**Modern-Rust practices locked in here:** total functions that never panic on arbitrary input (verified by a committed `proptest` over arbitrary strings + the `proptest-regressions/` seed), exhaustive `match` on token kinds, `saturating_add` for the debouncer's `u64` time arithmetic, no `unwrap` on untrusted input, and the `#[expect]`/`#[allow]` wall-clock seam confined to `logging.rs` + the debouncer.
