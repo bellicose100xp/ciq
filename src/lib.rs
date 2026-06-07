@@ -21,6 +21,7 @@
 pub mod app;
 pub mod engine;
 pub mod error;
+pub mod logging;
 pub mod schema;
 
 // The headless harness uses dev-only deps (`tempfile`) and is currently consumed only by

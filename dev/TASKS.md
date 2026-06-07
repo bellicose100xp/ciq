@@ -64,7 +64,20 @@ These are not repeated per-task; they apply to **every** task that writes Rust:
 
 ---
 
-## Phase 2 — Vertical slice: shell + worker + DuckDB + grid + run-on-debounce  ·  Status: TODO  ·  Deps: P1
+## Phase 1.5 — Debug logging infrastructure  ·  Status: TODO  ·  Deps: P1
+
+> Stand up `--debug` file logging before Phase 2 so the worker/engine/cancel code is instrumented *as it's written* (cheaper than retrofitting). Mirrors jiq's `log` + `env_logger` + RAII `Timer` pattern, with ciq's twist: logs to a **`/tmp/ciq/` folder** (created on demand). Goes to a **file only**, never stdout/stderr (which would corrupt the TUI). The wall-clock calls (`Instant::now`/`SystemTime::now`) are confined to this logging module as the documented `clippy.toml` seam exception — logic code stays clock-free.
+
+| ID | Task | Deps | Status | Exit criteria |
+|---|---|---|---|---|
+| P1.5.1 | `--debug` CLI flag + `CIQ_DEBUG=1` env (**explicit opt-in ONLY — NOT auto-on in debug builds**, deliberate divergence from jiq); `init_logger` writes to `/tmp/ciq/ciq-debug.log` (create `/tmp/ciq/` if missing); `log` + `env_logger` deps; timestamped lines, file-only | P1.1 | **DONE** | **Verified on release binary**: no `--debug` → `/tmp/ciq/` never created, zero effect; `--debug` → dir created + timestamped line in `ciq-debug.log`; nothing ever to stdout/stderr. `log::debug!` no-ops when logger off. |
+| P1.5.2 | RAII `Timer` (logs `[TIMING] {label} took {ms}ms` on drop) — **reads the clock only when logging is active** (`Option<Instant>` gated on `log_enabled!`), so zero hot-path cost when off; wall-clock confined here behind `#[allow(clippy::disallowed_methods)]` as the documented seam | P1.5.1 | **DONE** | `Timer::new` reads clock only if debug enabled (`clock_was_read()` test asserts `None` when off); clippy green (only `Instant`/`SystemTime::now` in the crate live in `logging.rs`, allow-annotated). 51 tests. |
+
+**Phase 1.5 exit:** ✅ `--debug` produces a timestamped `/tmp/ciq/ciq-debug.log`; binary without the flag is silent and overhead-free (verified on release build — no clock read, no dir, no logger); determinism gate green (wall-clock confined to the logging seam, `Timer` gated on `log_enabled!`). Ready for Phase 2 to instrument query/load/cancel timing.
+
+---
+
+## Phase 2 — Vertical slice: shell + worker + DuckDB + grid + run-on-debounce  ·  Status: TODO  ·  Deps: P1, P1.5
 
 > The end-to-end loop a user feels: type SQL → see aligned grid update live, stale results discarded, in-flight cancellable. Renderer split pure-layout vs blit.
 

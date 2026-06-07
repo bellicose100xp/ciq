@@ -15,10 +15,19 @@ struct Cli {
     /// CSV file to open. If omitted, ciq reads from stdin (wired in a later phase).
     #[arg(value_name = "FILE")]
     file: Option<PathBuf>,
+
+    /// Enable debug logging to /tmp/ciq/ciq-debug.log (file only; never the terminal).
+    #[arg(long)]
+    debug: bool,
 }
 
 fn main() {
     let cli = Cli::parse();
+
+    // Stand up debug logging first so everything after it can be instrumented. No-op (and
+    // no file) unless --debug / CIQ_DEBUG=1 / a debug build.
+    ciq::logging::init_logger(cli.debug);
+    log::debug!("=== ciq debug session started ===");
 
     // P1.1: no interactive surface yet. Acknowledge the arg and exit cleanly so
     // `ciq --version` / `ciq --help` work and the binary smoke-tests pass.

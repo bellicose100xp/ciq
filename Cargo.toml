@@ -24,6 +24,11 @@ clap = { version = "4.5", features = ["derive"] }
 # `TestBackend`, which lets the entire render path be snapshot-tested with no real terminal.
 ratatui = "0.29"
 
+# Debug logging (--debug). `log` is the zero-cost facade (no-op when no logger is installed);
+# `env_logger` is the file sink. Output goes to /tmp/ciq/ only, never stdout/stderr.
+log = "0.4"
+env_logger = "0.11"
+
 [dev-dependencies]
 # Snapshot testing (render buffers, generated SQL, schema goldens).
 insta = "1.40"
