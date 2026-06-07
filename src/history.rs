@@ -19,6 +19,7 @@
 //!
 //! Per ciq conventions: no `mod.rs`; the submodules are declared from this sibling file.
 
+pub mod history_app;
 pub mod history_events;
 pub mod history_render;
 pub mod history_state;

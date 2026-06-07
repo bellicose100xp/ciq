@@ -225,6 +225,53 @@ pub mod history {
     }
 }
 
+/// AI NL->SQL popup colors and styles (`dev/PLAN.md` §7 P5.1).
+///
+/// The AI popup overlays the query bar: a bordered box where the user types a natural-language
+/// request, with a status line below it that shows the lifecycle (editing prompt / generating… /
+/// the generated SQL / an error). It reuses the autocomplete/palette/history popup chrome, so the
+/// styles mirror those surfaces. Color polarity (legibility light vs dark) is the §4.7
+/// human-validated concern — centralizing here keeps it a single-file change.
+pub mod ai {
+    use ratatui::style::{Color, Modifier, Style};
+
+    /// The popup border / frame.
+    pub fn border() -> Style {
+        Style::default().fg(Color::Magenta)
+    }
+
+    /// The natural-language input text the user is typing.
+    pub fn input() -> Style {
+        Style::default()
+    }
+
+    /// The "generating…" pending line — dimmed context.
+    pub fn pending() -> Style {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::DIM)
+    }
+
+    /// The generated-SQL success line — accented so the produced query stands out.
+    pub fn success() -> Style {
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// An error line — stands out from the normal status.
+    pub fn error() -> Style {
+        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+    }
+
+    /// The popup title / hint line — dimmed context.
+    pub fn hint() -> Style {
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM)
+    }
+}
+
 /// Grid (results table) colors and styles.
 pub mod grid {
     use ratatui::style::{Color, Modifier, Style};

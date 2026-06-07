@@ -150,3 +150,40 @@ reverse-video color, the real `Ctrl+R` chord, and color polarity. Confirm by han
    file is not written).
 6. **Color polarity.** Repeat 1-3 in a light and a dark terminal — confirm the popup border, the
    highlighted row, and the dimmed title/no-matches line are all legible in both (the §4.7 check).
+
+## Phase 5 — AI NL→SQL popup (P5.1)
+
+The headless suite proves the pure prompt builder (schema grounding), the popup state machine, the
+popup blit (TestBackend snapshot), the AI thread round-trip (with the mock provider — no network),
+and that a generated query flows through the existing read-only guard + dispatch path (a `DROP`/
+multi-statement reply is rejected). What a real terminal must confirm is the §4.7 residue — the
+real `Ctrl+G` chord, true-terminal glyphs/placement, the magenta popup border, and color polarity.
+**This requires a configured provider** (see below); without one the chord is a no-op, which is
+itself worth confirming. **NL→SQL answer quality is a RECOMMENDED spot-check, NOT a blocking gate**
+(model output is non-deterministic and out of ciq's control). Confirm by hand:
+
+1. **Chord is a no-op when unconfigured.** With no `[ai]` block (or `enabled = false`), press
+   `Ctrl+G` — confirm nothing happens (the feature is off, no popup).
+2. **Popup opens (configured).** With `[ai] enabled = true`, `provider = "anthropic"`, and the API
+   key exported in the env var named by `[ai] api_key_env` (default `ANTHROPIC_API_KEY` — never put
+   the key in the config file), press `Ctrl+G`. A bordered "ask AI" popup appears under the query
+   bar with a `> ` prompt. Type a request (e.g. `rows where status is active`) and confirm the text
+   lands in the popup, NOT in the query bar.
+3. **Esc closes, does not quit; Ctrl-C quits.** With the popup open, `Esc` closes it and the app
+   stays running; `Ctrl+C` from the popup quits.
+4. **Generate (RECOMMENDED quality spot-check).** Press `Enter`. Confirm the popup shows
+   `generating…`, then either drops a `SELECT …` into the query bar (popup closes, the grid updates
+   through the normal debounce path) or shows an `error: …` line (popup stays open to retry).
+   *Recommended, not blocking:* eyeball whether the generated SQL is a reasonable answer to the
+   request — but a poor answer is a model-quality issue, not a ciq bug.
+5. **Read-only guard still applies.** If the model ever returns non-SELECT SQL, confirm the status
+   line shows `read-only SELECT queries only` and the table is unchanged (the AI cannot smuggle DML
+   past the existing guard — this is enforced headlessly, but worth seeing once live).
+6. **Color polarity.** Repeat 2 in a light and a dark terminal — confirm the magenta popup border,
+   the prompt text, the `generating…`/success/error lines are all legible in both (the §4.7 check).
+
+**Note (current build):** the real provider's HTTP client is not compiled into this binary (no
+network dependency yet — see `src/ai/provider.rs`), so step 4 will surface a clear "the live HTTP
+provider … is not built into this binary" message rather than a real completion. The chord/popup/
+guard/polarity checks (1-3, 5, 6) are fully exercisable now; the live-completion quality check (4)
+applies once the HTTP body is wired.

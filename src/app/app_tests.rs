@@ -766,6 +766,8 @@ fn cancelled_main_lane_response_still_clears_in_flight() {
 // submodules — split out so each test file stays under the 1000-line limit. They reach the shared
 // App helpers above via `super`. Explicit `#[path]` because this file is itself `#[path]`-loaded,
 // so child modules would otherwise resolve against `src/app/`, not `src/app/app_tests/`.
+#[path = "app_tests/ai_tests.rs"]
+mod ai_tests;
 #[path = "app_tests/facet_tests.rs"]
 mod facet_tests;
 #[path = "app_tests/history_tests.rs"]

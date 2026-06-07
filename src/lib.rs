@@ -18,6 +18,7 @@
 //! Modules are added as build phases land (see `dev/TASKS.md`); Phase 1 stands up
 //! `error` first, then `schema` and `engine`.
 
+pub mod ai;
 pub mod app;
 pub mod autocomplete;
 pub mod clipboard;

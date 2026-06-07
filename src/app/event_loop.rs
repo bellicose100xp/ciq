@@ -127,12 +127,32 @@ pub fn run(path: PathBuf, opts: CsvOpts) -> std::io::Result<()> {
         .or_else(crate::history::storage::default_history_path);
     app.configure_history(history_path, hist.max_entries(), hist.enabled());
 
+    // Wire the AI NL->SQL feature (P5.1) when `[ai]` is active. A provider is built from the
+    // config (the API key is read from the env var it names, never the file); the AI thread owns
+    // it and blocks on `Provider::complete` off the UI thread. When inactive, no thread is spawned
+    // and the `Ctrl+G` chord is a no-op. The result receiver is drained in the event loop below.
+    let ai_bridge =
+        crate::ai::provider::provider_from_config(cfg.ai()).map(crate::ai::ai_app::spawn_ai_thread);
+    let ai_result_rx = if let Some(bridge) = &ai_bridge {
+        app.set_ai_channel(bridge.request_tx.clone());
+        Some(&bridge.result_rx)
+    } else {
+        None
+    };
+
     // The session's time origin. The one ambient clock read at this layer (the documented seam,
     // see module docs); everything downstream takes elapsed `u64` ms and stays deterministic.
     #[allow(clippy::disallowed_methods)]
     let start = Instant::now();
 
-    let result = event_loop(&mut terminal, &mut app, &load_rx, &response_rx, start);
+    let result = event_loop(
+        &mut terminal,
+        &mut app,
+        &load_rx,
+        &response_rx,
+        ai_result_rx,
+        start,
+    );
     restore_terminal(&mut terminal)?;
     result
 }
@@ -143,6 +163,7 @@ fn event_loop(
     app: &mut App,
     load_rx: &Receiver<LoadOutcome>,
     response_rx: &Receiver<QueryResponse>,
+    ai_result_rx: Option<&Receiver<crate::ai::ai_app::AiResult>>,
     start: Instant,
 ) -> std::io::Result<()> {
     loop {
@@ -179,6 +200,22 @@ fn event_loop(
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => break,
+            }
+        }
+
+        // Drain any AI NL->SQL results (P5.1). A successful reply drops generated SQL into the bar
+        // and runs it through the normal preprocess-validate + dispatch path (no bypass); an error
+        // surfaces in the popup. `now_ms` is the documented wall-clock seam.
+        if let Some(rx) = ai_result_rx {
+            loop {
+                match rx.try_recv() {
+                    Ok(res) => {
+                        let now_ms = start.elapsed().as_millis() as u64;
+                        app.on_ai_result(res, now_ms);
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => break,
+                }
             }
         }
 

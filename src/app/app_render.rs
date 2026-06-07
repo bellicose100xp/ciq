@@ -15,6 +15,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
+use crate::ai::ai_render::render_ai;
 use crate::app::{App, AppPhase};
 use crate::autocomplete::autocomplete_render::{MAX_VISIBLE_ROWS, render_popup};
 use crate::facets::facet_render::render_facet;
@@ -56,6 +57,28 @@ pub fn render(app: &App, frame: &mut Frame) {
     // The history popup overlays the results pane when open (mutually exclusive with the palette /
     // autocomplete popup — opening it closes them). Drawn last so it sits on top.
     render_history_popup(app, frame, chunks[0], chunks[1]);
+    // The AI NL->SQL popup overlays the results pane when open (mutually exclusive with the other
+    // popups — opening it closes them). Drawn last so it sits on top.
+    render_ai_popup(app, frame, chunks[0], chunks[1]);
+}
+
+/// Overlay the AI NL->SQL popup below the query bar, over the results pane, when open (P5.1). A
+/// short fixed-height box (the prompt line + a status line) anchored under the bar. No-op when the
+/// popup is closed.
+fn render_ai_popup(app: &App, frame: &mut Frame, bar: Rect, results: Rect) {
+    if !app.is_ai_open() {
+        return;
+    }
+    // The prompt row + a status row + the border (2) = 4; clamped to the available height.
+    let height = 4u16.min(results.height.max(1));
+    let width = popup_width(results.width);
+    let area = Rect {
+        x: bar.x,
+        y: bar.y.saturating_add(1),
+        width,
+        height,
+    };
+    render_ai(app.ai(), frame, area);
 }
 
 /// Overlay the history popup below the query bar, over the results pane, when open (P5.2). Sized to

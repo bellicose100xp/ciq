@@ -29,6 +29,7 @@
 
 use ratatui::Frame;
 
+use crate::ai::ai_state::AiState;
 use crate::autocomplete::autocomplete_state::AutocompleteState;
 use crate::autocomplete::candidates::get_suggestions;
 use crate::autocomplete::clause_context::{CursorContext, detect_context};
@@ -38,7 +39,6 @@ use crate::autocomplete::value_source::{ValueCache, build_distinct_sql_default};
 use crate::engine::InterruptHandle;
 use crate::facets::FacetState;
 use crate::facets::facet_query::build_facet_sql;
-use crate::history::history_events::{HistoryAction, map_key as map_history_key};
 use crate::history::{HistoryState, storage as history_storage};
 use crate::palette::PaletteState;
 use crate::palette::query_emit::emit as emit_palette;
@@ -106,10 +106,14 @@ pub enum Focus {
 }
 
 /// The TUI application state (engine-ignorant; talks to the worker over channels only).
+///
+/// A handful of fields/methods are `pub(crate)` so the AI orchestration (an `impl App` block in
+/// [`crate::ai::ai_app`], kept out of this file to respect the 1000-line cap) can drive the popup
+/// and reuse the same schedule/refresh path a typed query uses.
 pub struct App {
-    phase: AppPhase,
+    pub(crate) phase: AppPhase,
     focus: Focus,
-    editor: Editor,
+    pub(crate) editor: Editor,
     debouncer: Debouncer,
     dispatcher: Dispatcher,
     /// The latest accepted successful result, if any (None until the first query lands).
@@ -125,9 +129,9 @@ pub struct App {
     /// The loaded table schema — the candidate source for autocomplete. `None` until the engine
     /// reaches `Ready` ([`on_loaded`](Self::on_loaded) installs it). Without it the popup stays
     /// closed (no schema = no column/value candidates to ground completion in).
-    schema: Option<Schema>,
+    pub(crate) schema: Option<Schema>,
     /// The autocomplete popup state machine (P3.6) — recomputed on each query-bar edit.
-    autocomplete: AutocompleteState,
+    pub(crate) autocomplete: AutocompleteState,
     /// Distinct-value cache for value-completion (P3.7), filled out-of-band by the worker; read as
     /// plain data by the candidate generator. The App never queries the engine for values itself.
     value_cache: ValueCache,
@@ -143,7 +147,7 @@ pub struct App {
     palette: Option<PaletteState>,
     /// Whether the palette popup is currently open (P4.5). When open it intercepts keys (toggle /
     /// reorder / filter / emit) before the query-bar routing, like the autocomplete popup.
-    palette_open: bool,
+    pub(crate) palette_open: bool,
     /// The instant-facet popup (P4.6, §6.5): the focused column + its parsed stats, filled
     /// out-of-band by the worker. `None` when no facet is open. Opened by `f` on the focused grid
     /// column; the SQL rides the same worker channel and the response routes here (not the grid) by
@@ -152,18 +156,30 @@ pub struct App {
     /// The query-history ring (P5.2, §7.6): prior SQL queries, newest first. Recorded on each
     /// successful dispatch; recalled through the popup. In-memory always; persisted to disk when
     /// [`history_path`](Self::history_path) is set + [`history_persist`](Self::history_persist).
-    history: HistoryState,
+    pub(crate) history: HistoryState,
     /// Whether the history popup is currently open (intercepts keys like the palette popup).
-    history_open: bool,
+    pub(crate) history_open: bool,
     /// The on-disk history file path (from `[history] path`, or the XDG default). `None` = no
     /// persistence wired (the in-memory ring still works). Tests always pass a tempdir path here,
     /// never `$HOME`.
-    history_path: Option<PathBuf>,
+    pub(crate) history_path: Option<PathBuf>,
     /// The history entry cap (from `[history] max_entries`); bounds the on-disk file.
-    history_max: usize,
+    pub(crate) history_max: usize,
     /// Whether on-disk history persistence is enabled (`[history] enabled`). When false, the ring
     /// is session-only.
-    history_persist: bool,
+    pub(crate) history_persist: bool,
+    /// The AI NL->SQL popup state (P5.1): the natural-language prompt the user types + the request
+    /// lifecycle (editing / pending / success / error). Pure state; the request itself runs on the
+    /// AI thread (see [`ai_app`](crate::ai::ai_app)).
+    pub(crate) ai: AiState,
+    /// The request channel to the AI thread — `Some` only when the `[ai]` feature is active and the
+    /// thread was spawned. The App sends a built prompt; the thread calls `Provider::complete` and
+    /// sends the result back on a channel the event loop drains. `None` keeps the AI popup
+    /// unavailable (the chord is a no-op).
+    pub(crate) ai_tx: Option<Sender<crate::ai::ai_app::AiJob>>,
+    /// Monotonic AI-request sequence id (P5.1): bumped on each submit so a reply from a superseded
+    /// request is discarded (stale-discard, like the query worker's `request_id`).
+    pub(crate) ai_seq: u64,
 }
 
 impl App {
@@ -193,6 +209,9 @@ impl App {
             history_path: None,
             history_max: crate::config::history_config::DEFAULT_MAX_ENTRIES,
             history_persist: false,
+            ai: AiState::new(),
+            ai_tx: None,
+            ai_seq: 0,
         }
     }
 
@@ -266,6 +285,16 @@ impl App {
         self.history_open
     }
 
+    /// The AI NL->SQL popup state (for the render layer and tests).
+    pub fn ai(&self) -> &crate::ai::AiState {
+        &self.ai
+    }
+
+    /// Whether the AI popup is currently open.
+    pub fn is_ai_open(&self) -> bool {
+        self.ai.is_open()
+    }
+
     /// Configure history persistence (P5.2): the on-disk file path, the entry cap, and whether to
     /// persist at all (from the `[history]` config section). Seeds the in-memory ring from the file
     /// when persistence is enabled and a path is set. The event loop calls this once at startup
@@ -310,6 +339,9 @@ impl App {
     /// so Esc dismisses the popup rather than quitting (it only quits when no popup is open).
     /// `Ctrl+K` opens the palette from anywhere.
     pub fn on_key(&mut self, ev: KeyEvent, now_ms: u64) -> bool {
+        if self.ai.is_open() {
+            return self.handle_ai_key(&ev, now_ms);
+        }
         if self.history_open {
             return self.handle_history_key(&ev, now_ms);
         }
@@ -337,6 +369,13 @@ impl App {
         // pre-filters to similar prior queries.
         if ev.mods.ctrl && matches!(ev.key, Key::Char('r') | Key::Char('R')) {
             self.open_history();
+            return false;
+        }
+        // Ctrl+G opens the AI NL->SQL popup (the "generate" chord, P5.1). No-op when the AI
+        // feature is inactive (no provider configured) or while loading. Reachable from any
+        // non-popup state, like Ctrl+K / Ctrl+R.
+        if ev.mods.ctrl && matches!(ev.key, Key::Char('g') | Key::Char('G')) {
+            self.open_ai();
             return false;
         }
         if self.autocomplete.is_open() && self.handle_popup_key(&ev, now_ms) {
@@ -556,7 +595,7 @@ impl App {
     /// and (P3.7) fetch distinct values through the worker when the cursor is in a value position
     /// for a column not yet cached. Closes the popup when there is no schema (still loading) or no
     /// candidate applies. Pure except for the out-of-band value fetch.
-    fn refresh_autocomplete(&mut self) {
+    pub(crate) fn refresh_autocomplete(&mut self) {
         let Some(schema) = self.schema.as_ref() else {
             self.autocomplete.close();
             return;
@@ -633,7 +672,7 @@ impl App {
 
     /// (Re)schedule a debounced query at `now_ms`. While `Loading` we only remember that a query
     /// is pending (it can't run until the engine is `Ready`); the debounce window still gates it.
-    fn schedule(&mut self, now_ms: u64) {
+    pub(crate) fn schedule(&mut self, now_ms: u64) {
         self.debouncer.schedule_execution_at(now_ms);
         if matches!(self.phase, AppPhase::Loading) {
             self.pending_query_on_ready = true;
@@ -871,78 +910,9 @@ impl App {
         Some(sql)
     }
 
-    // --- query history (P5.2, §7.6) ---
-
-    /// Open the history popup (P5.2). No-op while loading / on a load error. Seeds the fuzzy needle
-    /// with the current bar text so the list pre-filters to similar prior queries (jiq's behavior).
-    /// Closes the other popups so overlays never stack.
-    fn open_history(&mut self) {
-        if matches!(self.phase, AppPhase::Loading | AppPhase::LoadError(_)) {
-            return;
-        }
-        self.autocomplete.close();
-        self.palette_open = false;
-        let seed = self.editor.text().to_string();
-        self.history.open(Some(&seed));
-        self.history_open = true;
-    }
-
-    /// Close the history popup without recalling.
-    fn close_history(&mut self) {
-        self.history.close();
-        self.history_open = false;
-    }
-
-    /// Handle a key while the history popup is open (P5.2). Returns whether the app should quit
-    /// (only `Ctrl+C` quits). The chord set is the pure [`map_history_key`] mapping:
-    ///  - `Up`/`Down` move the cursor through the filtered list;
-    ///  - a printable char appends to the fuzzy needle; `Backspace` pops it;
-    ///  - `Enter`/`Tab` recall the selected entry into the bar (-> the normal dispatch path) and
-    ///    close;
-    ///  - `Esc` closes without recalling.
-    fn handle_history_key(&mut self, ev: &KeyEvent, now_ms: u64) -> bool {
-        match map_history_key(ev) {
-            HistoryAction::Quit => return true,
-            HistoryAction::SelectNext => self.history.select_next(),
-            HistoryAction::SelectPrevious => self.history.select_previous(),
-            HistoryAction::Push(c) => self.history.push_needle(c),
-            HistoryAction::Pop => self.history.pop_needle(),
-            HistoryAction::Accept => self.recall_selected_history(now_ms),
-            HistoryAction::Close => self.close_history(),
-            HistoryAction::Ignore => {}
-        }
-        false
-    }
-
-    /// Recall the selected history entry into the query bar and close the popup. The recalled SQL
-    /// is dropped into the bar verbatim and scheduled through the **same** debounce + preprocess-
-    /// validate + dispatch path a typed query uses (§7.6) — so it goes through the read-only
-    /// single-statement guard like any other query, never a privileged path. No-op (just closes)
-    /// when nothing is selected.
-    fn recall_selected_history(&mut self, now_ms: u64) {
-        let recalled = self.history.selected_entry().map(str::to_string);
-        if let Some(sql) = recalled {
-            self.editor.set_text(&sql);
-            self.refresh_autocomplete();
-            self.schedule(now_ms);
-        }
-        self.close_history();
-    }
-
-    /// Record `query` in the history ring (in-memory, newest-first, deduped) and persist it to disk
-    /// when enabled. Called when a query is successfully dispatched (the felt "I ran this" moment),
-    /// so only real, accepted queries enter history. A blank query is ignored by the ring.
-    fn record_history(&mut self, query: &str) {
-        if !self.history.add(query) {
-            return; // blank or already-newest: nothing to persist either
-        }
-        if self.history_persist
-            && let Some(path) = self.history_path.as_ref()
-            && let Err(e) = history_storage::add(path, query, self.history_max)
-        {
-            log::warn!("failed to persist history entry: {e}");
-        }
-    }
+    // --- query history (P5.2, §7.6): the open/close/handle/recall/record block lives in
+    //     `crate::history::history_app` (an `impl App` block) to keep this file under the
+    //     1000-line cap; `configure_history` + the accessors stay here with the other accessors. ---
 
     // --- load state machine (P2.11) ---
 

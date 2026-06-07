@@ -104,6 +104,17 @@ src/config/ai_config.rs
 src/config/history_config.rs
 src/config/theme_config.rs
 
+# Phase 5 (present now): AI NL->SQL (P5.1) — the pure prompt builder (schema-grounded model prompt:
+# table name + every column + its ColumnType) and the pure AI popup state machine (editing /
+# pending / success / error transitions, UTF-8-safe input). A wrong prompt loses the schema
+# grounding the model needs; a wrong popup transition desyncs the request lifecycle — both
+# data-in/data-out, so they earn the hard floor. The provider (real HTTP escape hatch + mock), the
+# AI thread bridge, and `ai_render` (the TestBackend popup blit) are seams left off the floor
+# (the provider's `complete` is the network edge; the bridge is thread+channel plumbing; the blit
+# is snapshot-covered like the other *_render files).
+src/ai/prompt.rs
+src/ai/ai_state.rs
+
 # Phase 5 (present now): query history (P5.2) — the pure ring state machine (add/dedupe-to-newest-
 # first/recall/popup-navigate/inline-cycle/fuzzy-filter over an in-memory Vec). A wrong dedupe, a
 # wrong navigation clamp, or a wrong filter silently corrupts recall, and all are data-in/data-out,
