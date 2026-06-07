@@ -46,7 +46,7 @@ use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 
-use crate::engine::{CsvOpts, DuckdbEngine, InterruptHandle, QueryEngine};
+use crate::engine::{CsvOpts, DuckdbEngine, EngineConfig, InterruptHandle, QueryEngine};
 use crate::query::worker::spawn_worker;
 use crate::query::worker::types::{QueryRequest, QueryResponse};
 use crate::schema::Schema;
@@ -89,10 +89,20 @@ pub fn run(path: PathBuf, opts: CsvOpts) -> std::io::Result<()> {
     let summary_delim = opts.delimiter;
     let summary_header = opts.header.unwrap_or(true);
 
+    // Load the full config once up front (the shell's filesystem touch). The `[general]` section
+    // drives the engine pragmas (threads / memory_limit) and the App's viewport row cap; `[history]`
+    // and `[ai]` are wired below. Reading it here (before the loader thread) lets the engine config
+    // move into that thread alongside `opts`.
+    let cfg = crate::config::load_config().config;
+    let engine_cfg = EngineConfig {
+        threads: cfg.general().threads(),
+        memory_limit: cfg.general().memory_limit().map(str::to_string),
+    };
+
     // Loader+worker thread: load the CSV once (off the UI thread so the bar stays responsive),
     // report the outcome, then become the worker loop owning the engine.
     thread::spawn(move || {
-        match DuckdbEngine::open(&path, &opts) {
+        match DuckdbEngine::open_with(&path, &opts, &engine_cfg) {
             Ok(engine) => {
                 let schema = engine.schema().clone();
                 let rows = schema.len();
@@ -116,10 +126,13 @@ pub fn run(path: PathBuf, opts: CsvOpts) -> std::io::Result<()> {
 
     let mut app = App::new(request_tx, InterruptHandle::noop());
 
+    // Wire the `[general]` viewport row cap so a bare `SELECT` is LIMIT-wrapped to the user's
+    // configured `row_limit` (the engine threads/memory pragmas were applied in the loader above).
+    app.configure_general(cfg.general().row_limit());
+
     // Wire query history from the `[history]` config section (P5.2). Loads + seeds the on-disk
     // ring up front so prior queries are recallable immediately. The config read is the shell
     // edge's filesystem touch (like the engine load); the App-level history behavior is headless.
-    let cfg = crate::config::load_config().config;
     let hist = cfg.history();
     let history_path = hist
         .path()

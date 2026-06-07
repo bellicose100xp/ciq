@@ -101,6 +101,58 @@ fn clearing_the_bar_returns_to_the_initial_hint_not_no_rows() {
     );
 }
 
+// --- [general] row_limit wiring (the configured cap drives the dispatched LIMIT + the banner) ---
+
+#[test]
+fn configured_row_limit_changes_the_dispatched_limit() {
+    let (mut app, rx) = app();
+    app.configure_general(50);
+    assert_eq!(app.viewport_row_limit(), 50);
+    app.on_loaded("ready");
+    type_str(&mut app, "SELECT * FROM t", 0);
+    app.tick(150);
+    let sent: Vec<String> = {
+        let mut v = Vec::new();
+        while let Ok(r) = rx.try_recv() {
+            v.push(r.query);
+        }
+        v
+    };
+    assert_eq!(sent.len(), 1);
+    assert!(
+        sent[0].contains("LIMIT 50"),
+        "the configured row_limit must drive the viewport LIMIT, got: {}",
+        sent[0]
+    );
+}
+
+#[test]
+fn configured_row_limit_drives_the_truncation_banner_cap() {
+    // A configured cap of 50: a 50-row bare-SELECT result hits the cap and shows the banner.
+    let (mut app, _rx) = app();
+    app.configure_general(50);
+    app.on_loaded("ready");
+    type_str(&mut app, "SELECT * FROM t", 0);
+    app.tick(150);
+    let id = app.latest_request_id();
+    app.on_response(QueryResponse::ProcessedSuccess {
+        result: id_result(50),
+        request_id: id,
+        kind: RequestKind::Main,
+    });
+    assert_eq!(
+        app.truncation_banner(),
+        Some("showing first 50 rows (use --output to export all)".to_string())
+    );
+}
+
+#[test]
+fn configure_general_clamps_zero_to_one() {
+    let (mut app, _rx) = app();
+    app.configure_general(0);
+    assert_eq!(app.viewport_row_limit(), 1);
+}
+
 // --- truncation banner ---
 
 #[test]
@@ -156,6 +208,68 @@ fn unknown_column_error_gets_did_you_mean_against_schema() {
     assert_eq!(
         app.status(),
         "unknown column: \"reigon\" — did you mean \"region\"?"
+    );
+}
+
+#[test]
+fn engine_error_after_a_success_clears_the_stale_grid_and_banner() {
+    // Run a bare SELECT that fills (and caps) the grid, then a query that the engine rejects (an
+    // unknown column). The error must drop the last-good grid + its truncation banner so they aren't
+    // left painted under the error message — matching set_query_error / empty_state's contract.
+    let (mut app, _rx) = app();
+    app.set_schema(Schema::new(vec![ColumnMeta::new("id", ColumnType::Int)]));
+    app.on_loaded("ready");
+
+    // (1) a successful bare SELECT that hits the viewport cap -> grid + truncation banner.
+    type_str(&mut app, "SELECT * FROM t", 0);
+    app.tick(150);
+    let id = app.latest_request_id();
+    app.on_response(QueryResponse::ProcessedSuccess {
+        result: id_result(VIEWPORT_ROW_LIMIT),
+        request_id: id,
+        kind: RequestKind::Main,
+    });
+    assert!(app.result().is_some());
+    assert!(app.truncation_banner().is_some());
+
+    // (2) edit to an unknown-column query; the engine returns Error.
+    type_str(&mut app, "x", 200); // any edit that re-dispatches
+    app.tick(400);
+    let id2 = app.latest_request_id();
+    app.on_response(QueryResponse::Error {
+        message: "Binder Error: Referenced column \"foo\" not found in FROM clause!".into(),
+        request_id: id2,
+        kind: RequestKind::Main,
+    });
+
+    // The error is in the status line; the stale grid AND its banner are gone, and the pane falls
+    // back to the neutral empty-state (no grid).
+    assert!(app.status().contains("unknown column"));
+    assert!(app.result().is_none(), "error must clear the stale grid");
+    assert_eq!(
+        app.truncation_banner(),
+        None,
+        "stale banner must be cleared"
+    );
+    assert!(app.empty_state().is_some(), "the pane shows an empty-state");
+}
+
+#[test]
+fn preprocess_reject_after_a_success_clears_the_stale_grid() {
+    // The other error path: a preprocess rejection (DML) after a successful grid must also drop the
+    // stale result so no grid lingers under the "read-only" status.
+    let app0 = run_query("SELECT * FROM t", id_result(3));
+    let mut app = app0;
+    type_str(&mut app, ";DROP TABLE t", 200); // makes the bar multi-statement
+    app.tick(400);
+    assert!(
+        app.status().contains("statement") || app.status().contains("read-only"),
+        "status: {}",
+        app.status()
+    );
+    assert!(
+        app.result().is_none(),
+        "a preprocess reject must clear the stale grid"
     );
 }
 

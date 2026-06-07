@@ -17,7 +17,7 @@ pub mod value_render;
 
 pub use duckdb_engine::DuckdbEngine;
 pub use fake_engine::FakeEngine;
-pub use types::{Cell, Column, InterruptHandle, QueryOutcome, Table};
+pub use types::{Cell, Column, EngineConfig, InterruptHandle, QueryOutcome, Table};
 
 /// CSV ingest / dialect options. The struct now lives in [`crate::ingest::csv_opts`] (it grew the
 /// full R5 override set + the `merge`/`to_read_csv_sql` machinery there); re-exported here so the

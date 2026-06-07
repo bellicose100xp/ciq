@@ -13,8 +13,9 @@ use std::time::Duration;
 use tempfile::NamedTempFile;
 
 use crate::engine::duckdb_engine::DuckdbEngine;
-use crate::engine::types::{Cell, QueryOutcome};
+use crate::engine::types::{Cell, EngineConfig, QueryOutcome};
 use crate::engine::{CsvOpts, QueryEngine};
+use crate::error::EngineError;
 use crate::schema::ColumnType;
 
 /// Write `contents` to a temp .csv and return (the file handle to keep it alive, its path).
@@ -162,6 +163,58 @@ fn distinct_values_for_autocomplete() {
             assert_eq!(t.col_count(), 2);
         }
         other => panic!("expected Rows, got {other:?}"),
+    }
+}
+
+// --- [general] engine pragmas wired through EngineConfig (threads / memory_limit) ---
+
+#[test]
+fn open_with_applies_configured_threads_pragma() {
+    // A configured thread bound is sent as `SET threads`; the load succeeds and queries run.
+    let (_f, path) = fixture(SALES);
+    let cfg = EngineConfig {
+        threads: Some(2),
+        memory_limit: None,
+    };
+    let engine = DuckdbEngine::open_with(&path, &CsvOpts::default(), &cfg)
+        .expect("load with a configured thread bound");
+    // DuckDB reflects the applied pragma in current_setting('threads').
+    match engine.query("SELECT current_setting('threads') AS t") {
+        QueryOutcome::Rows(t) => assert_eq!(t.columns()[0].cells[0], Cell::Int(2)),
+        other => panic!("expected Rows, got {other:?}"),
+    }
+}
+
+#[test]
+fn open_with_applies_valid_memory_limit() {
+    // A well-formed memory_limit size string is accepted and the load succeeds.
+    let (_f, path) = fixture(SALES);
+    let cfg = EngineConfig {
+        threads: None,
+        memory_limit: Some("512MB".to_string()),
+    };
+    let engine = DuckdbEngine::open_with(&path, &CsvOpts::default(), &cfg)
+        .expect("load with a valid memory_limit");
+    assert!(matches!(
+        engine.query("SELECT count(*) FROM t"),
+        QueryOutcome::Rows(_)
+    ));
+}
+
+#[test]
+fn open_with_malformed_memory_limit_yields_load_error() {
+    // The documented "malformed value -> clean load error" contract: a bad size string surfaces as
+    // EngineError::Load, never a panic.
+    let (_f, path) = fixture(SALES);
+    let cfg = EngineConfig {
+        threads: None,
+        memory_limit: Some("not-a-size".to_string()),
+    };
+    // (`DuckdbEngine` is not `Debug`, so match the Result rather than `expect_err`.)
+    match DuckdbEngine::open_with(&path, &CsvOpts::default(), &cfg) {
+        Err(EngineError::Load { .. }) => {}
+        Err(other) => panic!("expected EngineError::Load, got {other:?}"),
+        Ok(_) => panic!("a malformed memory_limit must fail the load"),
     }
 }
 

@@ -47,8 +47,8 @@ Engine-wide defaults.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `row_limit` | integer | `1000` | The interactive viewport `LIMIT N` — how many rows a live query shows. `0` is clamped to `1`. |
-| `threads` | integer | DuckDB default | DuckDB worker-thread bound (`SET threads=<n>`). Unset leaves DuckDB's own default. |
-| `memory_limit` | string | DuckDB default | DuckDB memory cap as a size string (e.g. `"4GB"`, `"512MB"`). A malformed value surfaces as a clean load error. |
+| `threads` | integer | `4` | DuckDB worker-thread bound (`SET threads=<n>`). Unset applies ciq's bounded default (`4`) so a many-core host doesn't oversubscribe under rapid keystrokes. |
+| `memory_limit` | string | DuckDB default | DuckDB memory cap as a size string (e.g. `"4GB"`, `"512MB"`), applied as `SET memory_limit='<s>'`. Unset leaves DuckDB's own default. A malformed value surfaces as a clean load error. |
 
 ## `[theme]`
 

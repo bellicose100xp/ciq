@@ -21,15 +21,18 @@ use std::sync::Arc;
 use duckdb::types::{Type, ValueRef};
 use duckdb::{Connection, InterruptHandle as DuckInterruptHandle};
 
-use crate::engine::types::{Cell, Column, InterruptHandle, Interruptible, QueryOutcome, Table};
+use crate::engine::types::{
+    Cell, Column, EngineConfig, InterruptHandle, Interruptible, QueryOutcome, Table,
+};
 use crate::engine::{CsvOpts, QueryEngine};
 use crate::error::EngineError;
 use crate::ingest::to_read_csv_sql;
 use crate::schema::{ColumnMeta, ColumnType, Schema};
 
-/// Default cap on DuckDB's per-query thread fan-out (A2). Bounded so rapid keystrokes on a
-/// many-core box don't oversubscribe; the A1 spike measured ~18 ms interactive latency at 4.
-const DEFAULT_THREADS: u64 = 4;
+/// Default cap on DuckDB's per-query thread fan-out (A2), used when `[general] threads` is unset.
+/// Bounded so rapid keystrokes on a many-core box don't oversubscribe; the A1 spike measured
+/// ~18 ms interactive latency at 4.
+pub const DEFAULT_THREADS: u64 = 4;
 
 /// The resident table name every interactive query targets.
 pub const TABLE: &str = "t";
@@ -42,15 +45,44 @@ pub struct DuckdbEngine {
 impl DuckdbEngine {
     /// Open an in-memory DuckDB and load `path` once into table `t`, returning the engine.
     /// This is the constructor used in tests; the `QueryEngine::load` path mutates an
-    /// already-constructed engine. Both go through [`Self::open_and_load`].
+    /// already-constructed engine. Both go through [`Self::open_and_load`]. Applies the default
+    /// engine config (the A2-bounded thread cap, no memory limit).
     pub fn open(path: &Path, opts: &CsvOpts) -> Result<Self, EngineError> {
-        Self::open_and_load(path, opts)
+        Self::open_and_load(path, opts, &EngineConfig::default())
     }
 
-    fn open_and_load(path: &Path, opts: &CsvOpts) -> Result<Self, EngineError> {
+    /// Like [`open`](Self::open), but applies the given [`EngineConfig`] (the `[general] threads` /
+    /// `memory_limit` pragmas). The production path uses this with the loaded config; tests and the
+    /// `EngineHarness` keep using [`open`](Self::open) (the defaults).
+    pub fn open_with(
+        path: &Path,
+        opts: &CsvOpts,
+        engine_cfg: &EngineConfig,
+    ) -> Result<Self, EngineError> {
+        Self::open_and_load(path, opts, engine_cfg)
+    }
+
+    fn open_and_load(
+        path: &Path,
+        opts: &CsvOpts,
+        engine_cfg: &EngineConfig,
+    ) -> Result<Self, EngineError> {
         let conn = Connection::open_in_memory().map_err(EngineError::Duckdb)?;
-        conn.execute_batch(&format!("SET threads = {DEFAULT_THREADS};"))
+        let threads = engine_cfg.threads.map_or(DEFAULT_THREADS, u64::from);
+        conn.execute_batch(&format!("SET threads = {threads};"))
             .map_err(EngineError::Duckdb)?;
+        // Apply the memory cap when configured. A malformed size string is a genuine ingest-time
+        // failure (the documented "malformed value -> clean load error" contract), not a panic.
+        if let Some(mem) = engine_cfg.memory_limit.as_deref().filter(|m| !m.is_empty()) {
+            conn.execute_batch(&format!(
+                "SET memory_limit = '{}';",
+                mem.replace('\'', "''")
+            ))
+            .map_err(|e| EngineError::Load {
+                path: path.to_string_lossy().to_string(),
+                source: e,
+            })?;
+        }
 
         let path_str = path.to_string_lossy();
         // The `read_csv(...)` source is built by the ingest layer from the effective `CsvOpts`.
@@ -128,8 +160,9 @@ impl DuckdbEngine {
 impl QueryEngine for DuckdbEngine {
     fn load(&mut self, path: &Path, opts: &CsvOpts) -> Result<Schema, EngineError> {
         // Re-load replaces the resident engine state. (In practice load happens once per
-        // session; this keeps the trait honest if a caller re-loads.)
-        let fresh = Self::open_and_load(path, opts)?;
+        // session; this keeps the trait honest if a caller re-loads.) Re-load uses the default
+        // engine config — the `[general]` pragmas are applied at the production `open_with` path.
+        let fresh = Self::open_and_load(path, opts, &EngineConfig::default())?;
         self.conn = fresh.conn;
         self.schema = fresh.schema;
         Ok(self.schema.clone())

@@ -31,29 +31,26 @@ use ratatui::Frame;
 
 use crate::ai::ai_state::AiState;
 use crate::autocomplete::autocomplete_state::AutocompleteState;
-use crate::autocomplete::candidates::get_suggestions;
-use crate::autocomplete::clause_context::{CursorContext, detect_context};
 use crate::autocomplete::insertion::insert_suggestion;
-use crate::autocomplete::sql_keywords::OPERATORS;
-use crate::autocomplete::value_source::{ValueCache, build_distinct_sql_default};
+use crate::autocomplete::value_source::ValueCache;
 use crate::engine::InterruptHandle;
 use crate::facets::FacetState;
 use crate::facets::facet_query::build_facet_sql;
 use crate::history::{HistoryState, storage as history_storage};
 use crate::palette::PaletteState;
-use crate::palette::query_emit::emit as emit_palette;
+use crate::palette::query_emit::emit_with_limit as emit_palette_with_limit;
 use crate::query::debouncer::Debouncer;
 use crate::query::dispatcher::Dispatcher;
 use crate::query::error_enhance::{enhance, enhance_with_schema};
 use crate::query::preprocess::{PreprocessError, applies_viewport_limit, prepare_interactive};
 use crate::query::worker::types::{ProcessedResult, QueryRequest, QueryResponse, RequestKind};
 use crate::schema::Schema;
-use crate::sql_lexer::tokenize;
 
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
 pub mod app_render;
+pub mod autocomplete_app;
 pub mod editor;
 pub mod event_loop;
 pub mod key;
@@ -108,9 +105,11 @@ pub enum Focus {
 
 /// The TUI application state (engine-ignorant; talks to the worker over channels only).
 ///
-/// A handful of fields/methods are `pub(crate)` so the AI orchestration (an `impl App` block in
-/// [`crate::ai::ai_app`], kept out of this file to respect the 1000-line cap) can drive the popup
-/// and reuse the same schedule/refresh path a typed query uses.
+/// A handful of fields/methods are `pub(crate)` so the cohesive `impl App` blocks lifted into
+/// sibling files to respect the 1000-line cap — the AI orchestration ([`crate::ai::ai_app`]), the
+/// history orchestration ([`crate::history::history_app`]), and the autocomplete orchestration
+/// ([`autocomplete_app`]) — can drive their popups and reuse the same schedule/refresh path a typed
+/// query uses.
 pub struct App {
     pub(crate) phase: AppPhase,
     focus: Focus,
@@ -189,6 +188,11 @@ pub struct App {
     /// Monotonic AI-request sequence id (P5.1): bumped on each submit so a reply from a superseded
     /// request is discarded (stale-discard, like the query worker's `request_id`).
     pub(crate) ai_seq: u64,
+    /// The interactive viewport row cap (`[general] row_limit`): the `LIMIT N` a bare `SELECT` is
+    /// wrapped to, and the cap the truncation banner compares against. Defaults to
+    /// [`VIEWPORT_ROW_LIMIT`]; the event loop overrides it from the config via
+    /// [`configure_general`](Self::configure_general).
+    viewport_row_limit: usize,
 }
 
 impl App {
@@ -223,6 +227,7 @@ impl App {
             ai: AiState::new(),
             ai_tx: None,
             ai_seq: 0,
+            viewport_row_limit: VIEWPORT_ROW_LIMIT,
         }
     }
 
@@ -317,8 +322,27 @@ impl App {
         if self.history_persist
             && let Some(p) = self.history_path.as_ref()
         {
-            self.history = HistoryState::with_entries(history_storage::load(p));
+            // Seed the in-session ring from disk, capped to the same `max_entries` the on-disk file
+            // is bounded by — so the documented "cap bounds the in-session ring and the file" holds.
+            self.history =
+                HistoryState::with_entries_max(history_storage::load(p), self.history_max);
+        } else {
+            // Session-only ring: still bound it to the configured cap.
+            self.history.set_max(self.history_max);
         }
+    }
+
+    /// Configure the interactive viewport row cap (`[general] row_limit`). The event loop calls
+    /// this once at startup with the resolved config so a bare `SELECT` is wrapped to the user's
+    /// configured `LIMIT N` (and the truncation banner compares against the same cap). The config
+    /// accessor already clamps `0` to `1`; this clamps defensively too.
+    pub fn configure_general(&mut self, row_limit: usize) {
+        self.viewport_row_limit = row_limit.max(1);
+    }
+
+    /// The effective interactive viewport row cap (`[general] row_limit`, defaulted).
+    pub fn viewport_row_limit(&self) -> usize {
+        self.viewport_row_limit
     }
 
     /// The loaded schema, if the engine has reached `Ready`.
@@ -342,7 +366,7 @@ impl App {
     /// cap — derived from state, no extra COUNT query (see [`polish::truncation_banner`]).
     pub fn truncation_banner(&self) -> Option<String> {
         let rows = self.result.as_ref()?.rows.row_count();
-        polish::truncation_banner(rows, VIEWPORT_ROW_LIMIT, self.result_ciq_capped)
+        polish::truncation_banner(rows, self.viewport_row_limit, self.result_ciq_capped)
     }
 
     /// The empty-state message for the results pane when there is no grid to draw (P5.3):
@@ -549,11 +573,12 @@ impl App {
     /// palette `Enter` reaches the engine — through exactly the same dispatch path a typed query
     /// uses, so there is no second engine entry.
     fn emit_palette_query(&mut self, now_ms: u64) {
+        let limit = self.viewport_row_limit;
         let Some(palette) = self.palette.as_mut() else {
             self.palette_open = false;
             return;
         };
-        let sql = emit_palette(palette);
+        let sql = emit_palette_with_limit(palette, limit);
         palette.record_emitted(&sql);
         self.editor.set_text(&sql);
         self.refresh_autocomplete();
@@ -628,51 +653,6 @@ impl App {
         }
     }
 
-    /// Recompute the autocomplete popup from the current query + cursor against the loaded schema,
-    /// and (P3.7) fetch distinct values through the worker when the cursor is in a value position
-    /// for a column not yet cached. Closes the popup when there is no schema (still loading) or no
-    /// candidate applies. Pure except for the out-of-band value fetch.
-    pub(crate) fn refresh_autocomplete(&mut self) {
-        let Some(schema) = self.schema.as_ref() else {
-            self.autocomplete.close();
-            return;
-        };
-        let query = self.editor.text();
-        let cursor = self.editor.cursor_byte();
-
-        // If the cursor is in a value position for an uncached, known column, fetch its distinct
-        // values through the worker (same channel/engine — autocomplete never opens its own
-        // connection, §5.5). The popup fills in once the response lands.
-        if let Some(col) = self.value_column_to_fetch(query, cursor, schema) {
-            let sql = build_distinct_sql_default(&col);
-            let _ = self.dispatcher.dispatch_value(sql, col);
-        }
-
-        let suggestions = get_suggestions(query, cursor, schema, OPERATORS, &self.value_cache);
-        self.autocomplete.open_with(suggestions);
-    }
-
-    /// The column whose distinct values should be fetched now: `Some(canonical_name)` when the
-    /// cursor is in a `ColumnValue` context for a column present in `schema` and not already cached;
-    /// `None` otherwise (no value position, unknown column, or already cached).
-    ///
-    /// The detected column text keeps the user's casing (`STATUS`), but DuckDB resolves unquoted
-    /// identifiers case-insensitively, so we resolve to the canonical header spelling (`status`)
-    /// and key the fetch + cache by it — keeping the fetch key, the cache key, and the candidate
-    /// generator's lookup all in lockstep (see [`Schema::column_ci`]).
-    fn value_column_to_fetch(&self, query: &str, cursor: usize, schema: &Schema) -> Option<String> {
-        let tokens = tokenize(query);
-        let CursorContext::ColumnValue { col, .. } = detect_context(query, &tokens, cursor) else {
-            return None;
-        };
-        let canonical = &schema.column_ci(&col)?.name;
-        if self.value_cache.contains(canonical) {
-            None
-        } else {
-            Some(canonical.clone())
-        }
-    }
-
     fn on_key_results(&mut self, ev: KeyEvent) {
         match ev.key {
             Key::Up if self.v_row_offset == 0 => self.focus = Focus::QueryBar,
@@ -740,16 +720,13 @@ impl App {
         let raw = self.editor.text().trim().to_string();
         if raw.is_empty() {
             // Clearing the bar returns to the pre-first-query empty state (the "type a query" hint),
-            // not a zero-row *result* — reset the run flag so the empty-state picks the right line.
-            self.result = None;
-            self.result_ciq_capped = false;
-            self.v_row_offset = 0;
-            self.h_col_offset = 0;
+            // not a zero-row *result* — drop the result so the empty-state picks the right line.
+            self.clear_result();
             self.status = "ready".to_string();
             self.phase = AppPhase::Ready;
             return false;
         }
-        match prepare_interactive(&raw, VIEWPORT_ROW_LIMIT) {
+        match prepare_interactive(&raw, self.viewport_row_limit) {
             Ok(sql) => match self.dispatcher.dispatch(sql) {
                 Ok(_id) => {
                     // Remember whether ciq wrapped this query in its viewport LIMIT (the user
@@ -779,8 +756,21 @@ impl App {
 
     fn set_query_error(&mut self, e: PreprocessError) {
         self.status = e.message().to_string();
-        // Stay Ready (the bar is still live) but show no stale grid for an invalid query.
+        // Stay Ready (the bar is still live) but show no stale grid for an invalid query — drop the
+        // last-good result so the pane falls to the neutral empty-state, matching this fn's contract
+        // and the `empty_state` doc ("a query that errored leaves no grid").
+        self.clear_result();
         self.phase = AppPhase::Ready;
+    }
+
+    /// Drop the displayed result and reset its scroll/cap bookkeeping so the results pane falls back
+    /// to the neutral empty-state. Used on both error paths (preprocess reject + engine `Error`) and
+    /// when the bar is cleared, so a stale grid never lingers under an error message.
+    fn clear_result(&mut self) {
+        self.result = None;
+        self.result_ciq_capped = false;
+        self.v_row_offset = 0;
+        self.h_col_offset = 0;
     }
 
     // --- response handling (stale-discard + state update) ---
@@ -800,7 +790,7 @@ impl App {
             ..
         } = &resp
         {
-            let values = distinct_values(&result.rows);
+            let values = autocomplete_app::distinct_values(&result.rows);
             self.value_cache.insert(column.clone(), values);
             self.refresh_autocomplete();
             return false; // value cache filled; the grid is unchanged
@@ -872,6 +862,9 @@ impl App {
                     Some(schema) => enhance_with_schema(&message, schema),
                     None => enhance(&message),
                 };
+                // Drop the last-good grid so an error never leaves a stale, mislabeled result (and
+                // its truncation banner) painted under the error message (empty_state contract).
+                self.clear_result();
                 self.phase = AppPhase::Ready;
                 true
             }
@@ -933,10 +926,11 @@ impl App {
         if !self.editor.text().is_empty() {
             return false;
         }
+        let limit = self.viewport_row_limit;
         let Some(palette) = self.palette.as_mut() else {
             return false;
         };
-        let sql = emit_palette(palette);
+        let sql = emit_palette_with_limit(palette, limit);
         palette.record_emitted(&sql);
         self.editor.set_text(&sql);
         self.refresh_autocomplete();
@@ -951,8 +945,9 @@ impl App {
     /// `… WHERE region='EU'` is discarded). Records the new emission as palette-owned and schedules
     /// it. No-op without a palette. Returns the emitted SQL it installed.
     pub fn replace_query_with_palette(&mut self, now_ms: u64) -> Option<String> {
+        let limit = self.viewport_row_limit;
         let palette = self.palette.as_mut()?;
-        let sql = emit_palette(palette);
+        let sql = emit_palette_with_limit(palette, limit);
         palette.record_emitted(&sql);
         self.editor.set_text(&sql);
         self.refresh_autocomplete();
@@ -993,21 +988,6 @@ impl App {
     pub fn render(&self, frame: &mut Frame) {
         app_render::render(self, frame);
     }
-}
-
-/// Extract the distinct value strings from a value-fetch result table — the **first** column (the
-/// `build_distinct_sql` shape is `SELECT "<col>", count(*) ...`, so column 0 holds the values, in
-/// the frequency order the query produced). NULLs are already filtered by the query; any that slip
-/// through render as the empty string and are skipped (a NULL is not a completable value).
-fn distinct_values(table: &crate::engine::Table) -> Vec<String> {
-    let Some(col) = table.columns().first() else {
-        return Vec::new();
-    };
-    col.cells
-        .iter()
-        .filter(|c| !c.is_null())
-        .map(|c| c.display())
-        .collect()
 }
 
 #[cfg(test)]

@@ -54,6 +54,22 @@ impl QueryOutcome {
     }
 }
 
+/// Engine-wide settings applied as DuckDB `SET` pragmas at load — the plain-data projection of the
+/// `[general]` config section the engine consumes (the engine boundary stays config-free: this is
+/// owned data, not a `Config` reference).
+///
+/// `threads` defaults to [`DEFAULT_THREADS`](crate::engine::duckdb_engine::DEFAULT_THREADS) when
+/// `None` (the A2-bounded fan-out cap), so a many-core host doesn't oversubscribe under rapid
+/// keystrokes. `memory_limit` is applied only when `Some`; a malformed size string surfaces as a
+/// clean `EngineError::Load`, never a panic.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EngineConfig {
+    /// DuckDB worker-thread bound (`SET threads=<n>`). `None` -> the engine's default cap.
+    pub threads: Option<u32>,
+    /// DuckDB memory cap as a DuckDB size string (e.g. `"4GB"`). `None` -> DuckDB's own default.
+    pub memory_limit: Option<String>,
+}
+
 /// A single cell value. `Null` is distinct from an empty text cell — the grid renders them
 /// differently and the empty-vs-NULL ingest semantics are a tracked decision (PLAN.md Q12).
 #[derive(Debug, Clone, PartialEq)]

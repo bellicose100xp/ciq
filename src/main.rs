@@ -11,7 +11,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use ciq::engine::{CsvOpts, DuckdbEngine, QueryEngine, QueryOutcome};
+use ciq::engine::{CsvOpts, DuckdbEngine, EngineConfig, QueryEngine, QueryOutcome};
 use ciq::ingest::{load_csv_config_str, merge, parse_types_spec, sniff_bytes};
 use ciq::output::{OutputFormat, render_output};
 use ciq::query::preprocess::prepare_interactive;
@@ -132,7 +132,8 @@ fn resolve_opts(cli: &Cli, path: &Path) -> Result<CsvOpts, String> {
 }
 
 /// Read the `[csv]` config layer from `~/.config/ciq/config.toml`, or the default if absent /
-/// unreadable. (Minimal `[csv]`-only loader; the full config schema is Phase 5 / Q5.)
+/// unreadable. (The `[csv]`-only projection; the full config is read via `load_config` for the
+/// other sections — the interactive path's [`crate::app::event_loop`] consumes them.)
 fn read_config_opts() -> CsvOpts {
     let Some(home) = std::env::var_os("HOME") else {
         return CsvOpts::default();
@@ -144,6 +145,16 @@ fn read_config_opts() -> CsvOpts {
     match std::fs::read_to_string(&path) {
         Ok(text) => load_csv_config_str(&text).to_opts(),
         Err(_) => CsvOpts::default(),
+    }
+}
+
+/// The `[general]` engine pragmas (threads / memory_limit) for the `--output` path, so a scripted
+/// run honors the same config the interactive session does. Resolved from the XDG config file.
+fn read_engine_config() -> EngineConfig {
+    let cfg = ciq::config::load_config().config;
+    EngineConfig {
+        threads: cfg.general().threads(),
+        memory_limit: cfg.general().memory_limit().map(str::to_string),
     }
 }
 
@@ -208,7 +219,7 @@ fn run_output(path: &Path, opts: &CsvOpts, fmt: &str, query: Option<&str>) -> Ex
         }
     };
 
-    let engine = match DuckdbEngine::open(path, opts) {
+    let engine = match DuckdbEngine::open_with(path, opts, &read_engine_config()) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("ciq: {e}");
