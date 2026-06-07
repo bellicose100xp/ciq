@@ -94,7 +94,15 @@ fn unknown_column_message(col: &str, schema: Option<&Schema>) -> String {
 /// (the user typed a prefix/abbreviation). Returns `None` when nothing is close enough — better no
 /// hint than a misleading one. Deterministic: ties break on table order (first column wins).
 fn nearest_column<'a>(typo: &str, schema: &'a Schema) -> Option<&'a str> {
-    let typo_lower = typo.to_ascii_lowercase();
+    let typo_lower = typo.trim().to_ascii_lowercase();
+    // Guard degenerate typos: an empty needle is vacuously a subsequence of every column, and a
+    // single stray char is a subsequence of (or within edit-distance-1 of) almost any column — both
+    // resolve to a vacuous/misleading "did you mean" (e.g. `""` -> the first column, `a` -> the
+    // shortest). Below two chars there is no signal, so suggest nothing (better no hint than a
+    // misleading one).
+    if typo_lower.len() < 2 {
+        return None;
+    }
     let mut best: Option<(usize, &str)> = None;
     for name in schema.names() {
         let name_lower = name.to_ascii_lowercase();

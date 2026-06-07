@@ -177,6 +177,28 @@ fn did_you_mean_omitted_when_nothing_close() {
 }
 
 #[test]
+fn did_you_mean_omitted_for_a_single_char_token() {
+    // A 1-char unknown column carries no real signal: it is a subsequence of (or within distance-1
+    // of) almost every column, so it would resolve to a vacuous/misleading guess. The bare message
+    // is correct.
+    for typo in ["a", "r", "z"] {
+        let raw = format!("Binder Error: Referenced column \"{typo}\" not found in FROM clause!");
+        assert_eq!(
+            enhance_with_schema(&raw, &schema()),
+            format!("unknown column: \"{typo}\"")
+        );
+    }
+}
+
+#[test]
+fn did_you_mean_omitted_for_an_empty_token() {
+    // An empty quoted token (effectively unreachable from DuckDB, but the function must be total)
+    // is vacuously a subsequence of every column — it must not suggest the first column.
+    let raw = "Binder Error: Referenced column \"\" not found in FROM clause!";
+    assert_eq!(enhance_with_schema(raw, &schema()), "unknown column: \"\"");
+}
+
+#[test]
 fn schema_variant_still_handles_non_column_errors() {
     // A non-column error is unaffected by the schema variant.
     let raw = "Parser Error: syntax error at or near \"FROM\"";
