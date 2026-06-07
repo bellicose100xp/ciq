@@ -33,7 +33,10 @@ src/autocomplete/clause_context.rs
 # identifier quoting) + plain owned data cache (no engine handle).
 src/autocomplete/value_source.rs
 
-# Phase 3+ (added as they land): candidates (P3.5).
-# src/autocomplete/candidates.rs
+# Phase 3 (present now): the candidate generator — pure `get_suggestions` over &Schema +
+# &OperatorTable + &ValueCache; a wrong source/branch silently corrupts every suggestion, so it
+# earns the hard floor.
+src/autocomplete/candidates.rs
+
 # sql_keywords.rs is static data (keyword/function/operator tables) — const-sanity-tested but
 # largely branchless, so it is left off the hard floor (judgment per the brief).

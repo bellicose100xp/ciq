@@ -19,6 +19,8 @@
 //! query through the worker channel — and even then the candidate generator takes the cache as an
 //! immutable argument, so unit/property tests pass a hand-built cache and never spin up DuckDB.
 
+pub mod autocomplete_state;
+pub mod candidates;
 pub mod clause_context;
 pub mod sql_keywords;
 pub mod value_source;

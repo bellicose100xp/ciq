@@ -40,6 +40,11 @@ pub struct OperatorEntry {
     pub label: &'static str,
 }
 
+/// The operator candidate table, passed to the candidate generator as `&OperatorTable` (§5.5):
+/// a borrowed slice of [`OperatorEntry`]. [`OPERATORS`] is the canonical static instance; tests can
+/// pass any slice. Named so the generator signature reads as `&Schema, &OperatorTable, &ValueCache`.
+pub type OperatorTable = [OperatorEntry];
+
 /// DuckDB SQL clause keywords offered in a bare [`crate::autocomplete::clause_context::CursorContext::Keyword`]
 /// position. Stable order: the common clause-builder sequence first, then modifiers. These are
 /// upper-cased for display (the conventional SQL keyword casing).
