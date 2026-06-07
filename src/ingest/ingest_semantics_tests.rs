@@ -14,6 +14,17 @@ use crate::engine::duckdb_engine::DuckdbEngine;
 use crate::engine::types::{Cell, QueryOutcome};
 use crate::engine::{CsvOpts, QueryEngine};
 use crate::error::EngineError;
+use crate::ingest::{merge, sniff_bytes};
+
+/// Resolve the effective ingest opts the way `main::resolve_opts` does for a default invocation
+/// (no CLI flags, no config): sniff the file's bytes and merge the sniffed layer in. This is the
+/// production default-load path the bare `ciq <file>` invocation takes, which the engine tests'
+/// `CsvOpts::default()` bypasses.
+fn sniffed_opts(name: &str) -> CsvOpts {
+    let bytes = std::fs::read(fixture_path(name)).expect("read fixture");
+    let sniffed = sniff_bytes(&bytes).to_opts();
+    merge(&CsvOpts::default(), &CsvOpts::default(), &sniffed)
+}
 
 /// Absolute path to a committed fixture under `tests/fixtures/`.
 fn fixture_path(name: &str) -> PathBuf {
@@ -51,6 +62,39 @@ fn q3_duplicate_and_empty_headers_are_deduped_by_duckdb() {
 
     // Exact dedup scheme DuckDB 1.10503.1 emits (pinned; a bump that changes it fails here).
     assert_eq!(names, vec!["id", "name", "column2", "name_1", "column4"]);
+}
+
+/// An all-text CSV (`first,last` over `alice,smith` …) opened with NO `--header` flag must keep
+/// its real header names. The sniffer can't contrast (no numeric body), so it leaves
+/// `header = None` and DuckDB's own header detection runs — recovering `first`/`last` rather than
+/// asserting `header = false` and renaming the columns to `column0`/`column1` (the swallowed-header
+/// bug). Mirrors the production default-load path (sniff -> merge), which the engine tests'
+/// `CsvOpts::default()` bypasses.
+#[test]
+fn q3_all_text_header_survives_default_load() {
+    let opts = sniffed_opts("all_text_header.csv");
+    // The sniffer deferred the header decision rather than asserting no-header.
+    assert_eq!(opts.header, None, "sniffer must defer the all-text header");
+
+    let engine =
+        DuckdbEngine::open(&fixture_path("all_text_header.csv"), &opts).expect("load all-text CSV");
+    let names: Vec<&str> = engine
+        .schema()
+        .columns()
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["first", "last"],
+        "the header row must survive as column names, not become column0/column1"
+    );
+
+    // The header row was NOT ingested as data: three data rows, none equal to the header text.
+    match engine.query("SELECT count(*) AS n FROM t") {
+        QueryOutcome::Rows(t) => assert_eq!(t.columns()[0].cells[0], Cell::Int(3)),
+        other => panic!("expected Rows, got {other:?}"),
+    }
 }
 
 // ---- Q7: ragged-row policy (lean on DuckDB's detector; fail-safe, never a panic) ----

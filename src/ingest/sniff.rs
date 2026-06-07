@@ -61,8 +61,11 @@ pub fn sniff(text: &str) -> SniffResult {
 ///     (highest count of lines sharing the modal field count, with `>1` field), tie-broken by
 ///     [`DELIMITER_CANDIDATES`] order — so a clean comma file beats a stray semicolon;
 ///  2. sets `quote = Some('"')` iff any `"` appears (DuckDB's default quote char);
-///  3. infers a header iff the first row's fields are all non-numeric while at least one later
-///     row has a numeric-looking field (a name row over a data body).
+///  3. infers `header = Some(true)` iff the first row's fields are all non-numeric while at least
+///     one later row has a numeric-looking field (a name row over a data body), `Some(false)` only
+///     when the first row itself contains a numeric field (a genuine headerless signal), and
+///     leaves it `None` (defer to DuckDB) when the first row is all-text with no numeric body to
+///     contrast against — an undetermined case, NOT a "no header" assertion.
 pub fn sniff_bytes(bytes: &[u8]) -> SniffResult {
     let text = String::from_utf8_lossy(bytes);
     let lines: Vec<&str> = text
@@ -81,7 +84,7 @@ pub fn sniff_bytes(bytes: &[u8]) -> SniffResult {
 
     let delimiter = detect_delimiter(&lines);
     let quote = if text.contains('"') { Some('"') } else { None };
-    let header = delimiter.map(|d| detect_header(&lines, d));
+    let header = delimiter.and_then(|d| detect_header(&lines, d));
 
     SniffResult {
         delimiter,
@@ -159,21 +162,34 @@ fn modal_value(counts: &[usize]) -> usize {
         .unwrap_or(0)
 }
 
-/// Infer whether row 0 is a header: true iff every field in row 0 is non-numeric **and** at least
-/// one field in a later row is numeric-looking. A file with numeric first-row fields, or with no
-/// numeric data at all, is reported as headerless-ambiguous (`false`) — the conservative choice,
-/// which DuckDB's own header detection refines at load anyway.
-fn detect_header(lines: &[&str], delim: char) -> bool {
-    if lines.len() < 2 {
-        return false;
-    }
+/// Infer whether row 0 is a header, as a three-way [`Option`]:
+///  - `Some(true)` — every field in row 0 is non-numeric **and** at least one later row has a
+///    numeric-looking field (a name row over a data body);
+///  - `Some(false)` — row 0 *itself* contains a numeric field (a genuine headerless signal: a real
+///    header row would not be numeric);
+///  - `None` — **undetermined**: row 0 is all-text but no later row is numeric, so the sniffer has
+///    nothing to contrast and **defers to DuckDB's own header detection** (which refines it at
+///    load). Returning `Some(false)` here would *assert* "no header" in the merge pipeline and
+///    override DuckDB's correct detection, swallowing the header row of an all-text CSV — the bug
+///    this three-way return fixes.
+fn detect_header(lines: &[&str], delim: char) -> Option<bool> {
     let first = split_fields(lines[0], delim);
-    if first.is_empty() || first.iter().any(|f| looks_numeric(f)) {
-        return false;
+    // A numeric first field is a real "no header" signal even on a single line.
+    if first.iter().any(|f| looks_numeric(f)) {
+        return Some(false);
     }
-    lines[1..]
+    if first.is_empty() {
+        return None;
+    }
+    let body_has_numeric = lines[1..]
         .iter()
-        .any(|l| split_fields(l, delim).iter().any(|f| looks_numeric(f)))
+        .any(|l| split_fields(l, delim).iter().any(|f| looks_numeric(f)));
+    if body_has_numeric {
+        Some(true)
+    } else {
+        // All-text first row, no numeric body to contrast: undetermined -> defer to DuckDB.
+        None
+    }
 }
 
 /// Split a line into trimmed, unquoted field strings on `delim` (quote-aware). Used by header

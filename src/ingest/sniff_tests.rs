@@ -94,17 +94,35 @@ fn no_header_when_first_row_is_numeric() {
 }
 
 #[test]
-fn no_header_when_all_rows_are_text() {
-    // No numeric body to contrast against -> conservative false (DuckDB refines at load).
+fn all_text_with_no_numeric_body_defers_header_to_duckdb() {
+    // All-text rows give the sniffer nothing to contrast -> undetermined (`None`), so it must
+    // DEFER to DuckDB's own header detection rather than assert `Some(false)` (which would
+    // override DuckDB and swallow the header row of a common all-text categorical CSV).
     let r = sniff("first,last\nalice,smith\nbob,jones\n");
+    assert_eq!(r.header, None);
+}
+
+#[test]
+fn all_text_single_column_list_defers_header() {
+    // A single-column text list (`name\nalice\nbob`) is the same undetermined case: defer.
+    let r = sniff("name\nalice\nbob\ncarol\n");
+    assert_eq!(r.header, None);
+}
+
+#[test]
+fn numeric_first_row_is_a_real_no_header_signal_even_single_line() {
+    // A first row that itself contains a number can't be a header row -> Some(false), not None.
+    let r = sniff("1,12.5\n");
+    assert_eq!(r.delimiter, Some(','));
     assert_eq!(r.header, Some(false));
 }
 
 #[test]
-fn header_false_for_single_line() {
+fn all_text_single_line_defers_header() {
+    // One all-text line, no body to contrast -> undetermined; defer to DuckDB.
     let r = sniff("a,b,c\n");
     assert_eq!(r.delimiter, Some(','));
-    assert_eq!(r.header, Some(false));
+    assert_eq!(r.header, None);
 }
 
 #[test]
