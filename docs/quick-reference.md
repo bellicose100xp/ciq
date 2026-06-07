@@ -1,0 +1,109 @@
+---
+title: Quick Reference
+layout: default
+nav_order: 3
+---
+
+# Quick Reference
+
+Every keyboard shortcut and every CLI flag in one place. For what each capability does, see the
+[Features](features/) pages.
+
+## CLI flags
+
+Usage: `ciq [OPTIONS] [FILE]`
+
+| Flag | Argument | Meaning |
+|---|---|---|
+| `FILE` | (positional) | CSV file to open. Omitting it is reserved for stdin ingest (a later phase). |
+| `--debug` | | Enable debug logging to `/tmp/ciq/ciq-debug.log` (file only; never the terminal). |
+| `--delim` | `<CHAR>` | Field delimiter (e.g. `;` or a tab). Overrides sniffing. |
+| `--quote` | `<CHAR>` | Quote character. Overrides sniffing. |
+| `--escape` | `<CHAR>` | Escape character inside quoted fields. |
+| `--header` | | Treat the first row as a header (inverse of `--no-header`). |
+| `--no-header` | | Treat the first row as data, not a header. |
+| `--null-string` | `<STR>` | String that ingests as SQL `NULL` (e.g. `NA`). |
+| `--sample-size` | `<N>` | Rows the type sniffer samples (`-1` scans the whole file). Alias: `--sniff-rows`. |
+| `--types` | `<SPEC>` | Per-column type overrides, e.g. `zip=VARCHAR,amount=DECIMAL(12,2)`. |
+| `--all-varchar` | | Ingest every column as `VARCHAR` (no type sniffing). |
+| `--date-format` | `<FMT>` | Explicit date parse format, e.g. `%d/%m/%Y`. |
+| `--output` | `<FORMAT>` | Run a query non-interactively, print the result in this format, then exit (no TUI). One of `csv`, `tsv`, `json`, `markdown`. |
+| `-q`, `--query` | `<SQL>` | The SQL to run on the `--output` path. Defaults to `SELECT * FROM t`. |
+| `-h`, `--help` | | Print help. |
+| `-V`, `--version` | | Print version. |
+
+## Keyboard shortcuts
+
+The table is always named `t`. Inside the session:
+
+### Global
+
+| Key | Action |
+|---|---|
+| `Ctrl+K` | Open the column palette (needs a loaded schema). |
+| `Ctrl+R` | Open the query-history popup (seeds its filter with the bar text). |
+| `Ctrl+G` | Open the AI natural-language popup (needs the AI feature configured + a schema). |
+| `Esc` | Quit (when no popup is open; closes the focused popup otherwise). |
+| `Ctrl+C` | Quit (from anywhere, including any open popup). |
+
+### Query bar (focus: query bar)
+
+| Key | Action |
+|---|---|
+| printable character | Insert the character. |
+| `Backspace` | Delete the character before the cursor. |
+| `Delete` | Delete the character at the cursor. |
+| `Left` / `Right` | Move the cursor one character. |
+| `Home` / `End` | Move the cursor to the start / end of the query. |
+| (paste) | Insert a bracketed-paste payload at the cursor. |
+| `Down` | Move focus to the results grid. |
+
+### Results grid (focus: results)
+
+| Key | Action |
+|---|---|
+| `Up` | Scroll up one row; at the top, return focus to the query bar. |
+| `Down` | Scroll down one row. |
+| `PageUp` / `PageDown` | Scroll ten rows up / down. |
+| `Left` / `Right` | Scroll one column left / right. |
+| `Home` | Jump to the first row. |
+| `f` | Open a facet for the leftmost visible column. |
+
+### Autocomplete popup (when open)
+
+| Key | Action |
+|---|---|
+| `Up` / `Down` | Move the selection (wraps). |
+| `Tab` / `Enter` | Accept the selected candidate and dismiss. |
+| `Esc` | Dismiss the popup (does not quit). |
+
+### Column palette (Ctrl+K)
+
+| Key | Action |
+|---|---|
+| `Space` | Toggle the column under the cursor (selection order drives projection order). |
+| `Up` / `Down` | Move the cursor through the filtered list. |
+| `Left` / `Right` | Reorder the cursor's checked column earlier / later. |
+| printable character | Append to the fuzzy filter. |
+| `Backspace` | Remove a character from the filter. |
+| `Enter` | Emit the generated query into the bar and close. |
+| `Esc` | Close without emitting. |
+
+### Query-history popup (Ctrl+R)
+
+| Key | Action |
+|---|---|
+| `Up` / `Down` | Move the selection through the filtered, newest-first list. |
+| `Enter` / `Tab` | Recall the selected query into the bar and close. |
+| printable character | Fuzzy-filter the list. |
+| `Backspace` | Remove a character from the filter. |
+| `Esc` | Close the popup. |
+
+### AI popup (Ctrl+G)
+
+| Key | Action |
+|---|---|
+| printable character | Append to the prompt. |
+| `Backspace` | Delete the character before the cursor. |
+| `Enter` | Submit the prompt to the model. |
+| `Esc` | Close the popup. |

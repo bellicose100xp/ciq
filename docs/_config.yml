@@ -1,0 +1,38 @@
+# Jekyll configuration for the ciq documentation site (GitHub Pages + just-the-docs).
+#
+# Built and served by GitHub Pages. `remote_theme` pulls just-the-docs without vendoring it,
+# the convention GitHub Pages recommends for theme gems it does not preinstall.
+title: ciq
+description: >-
+  CSV Interactive Query — type DuckDB SQL, watch an aligned grid update live,
+  against an in-memory columnar table parsed once at startup.
+remote_theme: just-the-docs/just-the-docs
+
+# Site-wide URL settings are intentionally left unset here; GitHub Pages fills baseurl/url from
+# the repository settings when the site is published.
+
+# just-the-docs options.
+search_enabled: true
+heading_anchors: true
+
+# Order the top-level nav so the landing page leads, then the reference pages.
+nav_sort: case_insensitive
+
+# Footer / repo link shown by the theme.
+aux_links:
+  "ciq on GitHub":
+    - "https://github.com/"
+
+# Collections / plugins kept minimal; the site is hand-authored markdown.
+plugins:
+  - jekyll-remote-theme
+
+# Exclude repository files that are not part of the published site.
+exclude:
+  - dev/
+  - src/
+  - tests/
+  - target/
+  - Cargo.toml
+  - Cargo.lock
+  - README.md
