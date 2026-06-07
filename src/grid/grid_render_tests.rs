@@ -4,10 +4,13 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 
+use super::style_body_line;
 use crate::engine::{Cell, Column, Table};
-use crate::grid::grid_layout::{GridView, layout_grid};
+use crate::grid::grid_layout::{BodyRow, GridView, layout_grid};
 use crate::grid::grid_render::{body_viewport_height, render_grid};
+use crate::theme;
 
 fn render_to_string(table: &Table, view: GridView, w: u16, h: u16, v_row_offset: usize) -> String {
     let frame = layout_grid(table, &view);
@@ -120,4 +123,98 @@ fn snapshot_null_glyph_distinct_from_empty() {
     )]);
     let screen = render_to_string(&t, GridView::new(20, 6), 20, 6, 0);
     insta::assert_snapshot!(screen);
+}
+
+/// True iff `style` carries the dim modifier the null style uses (and nothing else does).
+fn is_null_styled(style: ratatui::style::Style) -> bool {
+    style.add_modifier.contains(Modifier::DIM)
+}
+
+#[test]
+fn only_genuine_null_span_is_dimmed_not_literal_text_null() {
+    // Layout flags only the real `Cell::Null`; a present `Cell::Text("NULL")` and an "ANNULLED"
+    // value share the same glyph text but must NOT be dimmed (the Q12 null-vs-text distinction).
+    let t = Table::new(vec![
+        Column::new("a", crate::schema::ColumnType::Text, vec![Cell::Null]),
+        Column::new(
+            "b",
+            crate::schema::ColumnType::Text,
+            vec![Cell::Text("NULL".into())],
+        ),
+        Column::new(
+            "c",
+            crate::schema::ColumnType::Text,
+            vec![Cell::Text("ANNULLED".into())],
+        ),
+    ]);
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    let line = style_body_line(&frame.body[0]);
+
+    // Collect (text, dimmed) per span, then check exactly the first cell's "NULL" is dimmed.
+    let dimmed: String = line
+        .spans
+        .iter()
+        .filter(|s| is_null_styled(s.style))
+        .map(|s| s.content.as_ref())
+        .collect();
+    let present: String = line
+        .spans
+        .iter()
+        .filter(|s| !is_null_styled(s.style))
+        .map(|s| s.content.as_ref())
+        .collect();
+    // Only one "NULL" run is dimmed (the genuine null cell).
+    assert_eq!(dimmed.matches("NULL").count(), 1);
+    // The literal text "NULL" (column b) and "ANNULLED" (column c) are in the un-dimmed runs.
+    assert!(present.contains("ANNULLED"));
+    assert!(
+        present.contains("NULL"),
+        "column b's literal NULL stays normal"
+    );
+    // Sanity: the dim span uses the theme null style.
+    let null_span = line
+        .spans
+        .iter()
+        .find(|s| is_null_styled(s.style))
+        .expect("a dimmed span");
+    assert_eq!(null_span.style, theme::grid::null());
+}
+
+#[test]
+fn truncated_null_in_narrow_column_is_still_dimmed() {
+    // A NULL in a column capped below the 4-char glyph truncates to "N…" — the literal substring
+    // "NULL" is gone, but the cell is still dimmed because null-ness is carried from layout.
+    let t = Table::new(vec![Column::new(
+        "c",
+        crate::schema::ColumnType::Text,
+        vec![Cell::Null],
+    )]);
+    let frame = layout_grid(&t, &GridView::new(2, 24));
+    let line = style_body_line(&frame.body[0]);
+    let dimmed_text: String = line
+        .spans
+        .iter()
+        .filter(|s| is_null_styled(s.style))
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert!(
+        !dimmed_text.is_empty(),
+        "the truncated NULL glyph is dimmed"
+    );
+    assert!(
+        !dimmed_text.contains("NULL"),
+        "the dimmed text is the truncated glyph, not the literal NULL"
+    );
+}
+
+#[test]
+fn no_null_row_is_a_single_normal_span() {
+    let row = BodyRow {
+        text: "  1  Ada ".to_string(),
+        null_spans: Vec::new(),
+    };
+    let line = style_body_line(&row);
+    assert_eq!(line.spans.len(), 1);
+    assert_eq!(line.spans[0].style, theme::grid::cell());
+    assert!(!is_null_styled(line.spans[0].style));
 }

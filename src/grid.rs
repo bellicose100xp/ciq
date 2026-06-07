@@ -16,4 +16,4 @@ pub mod col_width;
 pub mod grid_layout;
 pub mod grid_render;
 
-pub use grid_layout::{Align, GridFrame, GridLayout, GridView, layout_grid};
+pub use grid_layout::{Align, BodyRow, GridFrame, GridLayout, GridView, layout_grid};

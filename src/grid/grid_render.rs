@@ -17,8 +17,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::theme;
 
-use super::col_width::NULL_GLYPH;
-use super::grid_layout::GridFrame;
+use super::grid_layout::{BodyRow, GridFrame};
 
 /// The body viewport height for a pane of `inner_height` rows: one row is reserved for the
 /// sticky header. Pure; unit-tested.
@@ -62,23 +61,34 @@ pub fn render_grid(f: &mut Frame, area: Rect, grid: &GridFrame, v_row_offset: us
     f.render_widget(Paragraph::new(lines), body_area);
 }
 
-/// Style one body line: dim any run of the null glyph so a `NULL` reads as absent. The line
-/// text is already laid out (aligned + padded) by `layout_grid`; here we only colorize.
-fn style_body_line(row: &str) -> Line<'static> {
-    if !row.contains(NULL_GLYPH) {
-        return Line::from(Span::styled(row.to_string(), theme::grid::cell()));
+/// Style one body line: dim the byte ranges `layout_grid` flagged as genuine SQL nulls so a
+/// `NULL` reads as absent, leaving everything else (including a present `Cell::Text("NULL")`) in
+/// the normal cell style. Null-ness comes from the layout mask, not from scanning the text — the
+/// text alone cannot distinguish an absent null from data that happens to read "NULL".
+fn style_body_line(row: &BodyRow) -> Line<'static> {
+    if row.null_spans.is_empty() {
+        return Line::from(Span::styled(row.text.clone(), theme::grid::cell()));
     }
     let mut spans: Vec<Span<'static>> = Vec::new();
-    let mut rest = row;
-    while let Some(pos) = rest.find(NULL_GLYPH) {
-        if pos > 0 {
-            spans.push(Span::styled(rest[..pos].to_string(), theme::grid::cell()));
+    let mut cursor = 0usize;
+    for span in &row.null_spans {
+        if span.start > cursor {
+            spans.push(Span::styled(
+                row.text[cursor..span.start].to_string(),
+                theme::grid::cell(),
+            ));
         }
-        spans.push(Span::styled(NULL_GLYPH.to_string(), theme::grid::null()));
-        rest = &rest[pos + NULL_GLYPH.len()..];
+        spans.push(Span::styled(
+            row.text[span.start..span.end].to_string(),
+            theme::grid::null(),
+        ));
+        cursor = span.end;
     }
-    if !rest.is_empty() {
-        spans.push(Span::styled(rest.to_string(), theme::grid::cell()));
+    if cursor < row.text.len() {
+        spans.push(Span::styled(
+            row.text[cursor..].to_string(),
+            theme::grid::cell(),
+        ));
     }
     Line::from(spans)
 }

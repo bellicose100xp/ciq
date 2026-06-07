@@ -60,9 +60,9 @@ fn numeric_column_right_aligned_text_left_aligned() {
     assert_eq!(frame.widths, vec![3, 4]);
     assert_eq!(frame.aligns, vec![Align::Right, Align::Left]);
     // Row 0: id=1 right-aligned in width 3 -> "  1"; name="Ada" left in 4 -> "Ada ".
-    assert_eq!(frame.body[0], "  1  Ada ");
+    assert_eq!(frame.body[0].text, "  1  Ada ");
     // Row 1: id=20 -> " 20"; name="Bo" -> "Bo  ".
-    assert_eq!(frame.body[1], " 20  Bo  ");
+    assert_eq!(frame.body[1].text, " 20  Bo  ");
 }
 
 #[test]
@@ -70,7 +70,57 @@ fn null_cell_renders_glyph_in_body() {
     let t = sample_table();
     let frame = layout_grid(&t, &GridView::new(80, 24));
     // Row 2: id=300 -> "300"; name=NULL -> "NULL".
-    assert_eq!(frame.body[2], "300  NULL");
+    assert_eq!(frame.body[2].text, "300  NULL");
+}
+
+#[test]
+fn null_span_marks_only_the_genuine_null_cell() {
+    // A row mixing a present value, a literal text "NULL", and a real SQL NULL: only the byte
+    // range of the genuine `Cell::Null` is flagged, so the renderer dims it alone.
+    let t = Table::new(vec![
+        Column::new("a", ColumnType::Text, vec![Cell::Text("x".into())]),
+        Column::new("b", ColumnType::Text, vec![Cell::Text("NULL".into())]),
+        Column::new("c", ColumnType::Text, vec![Cell::Null]),
+    ]);
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    let row = &frame.body[0];
+    // Exactly one null span, and it covers the third cell (the genuine NULL), not the literal
+    // text "NULL" in column b.
+    assert_eq!(row.null_spans.len(), 1, "only the real NULL is flagged");
+    let span = row.null_spans[0].clone();
+    assert_eq!(&row.text[span.clone()], "NULL");
+    // The flagged range is the LAST "NULL" in the row (column c), not column b's text "NULL".
+    assert_eq!(span.start, row.text.rfind("NULL").unwrap());
+}
+
+#[test]
+fn substring_null_inside_word_is_not_flagged() {
+    // "ANNULLED" contains the substring "NULL" but is a present value: no null span.
+    let t = Table::new(vec![Column::new(
+        "w",
+        ColumnType::Text,
+        vec![Cell::Text("ANNULLED".into())],
+    )]);
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    assert!(
+        frame.body[0].null_spans.is_empty(),
+        "a present value containing 'NULL' must not be flagged null"
+    );
+}
+
+#[test]
+fn truncated_null_glyph_still_flagged() {
+    // A NULL in a column narrower than the 4-char glyph truncates to "N…"/"NU…" — the literal
+    // substring "NULL" is gone, but the cell is still flagged so the renderer dims it.
+    let t = Table::new(vec![Column::new("c", ColumnType::Text, vec![Cell::Null])]);
+    // Cap the column below 4 chars via a 2-wide viewport budget.
+    let frame = layout_grid(&t, &GridView::new(2, 24));
+    let row = &frame.body[0];
+    assert_eq!(row.null_spans.len(), 1, "truncated NULL is still flagged");
+    assert!(
+        !row.text[row.null_spans[0].clone()].contains("NULL"),
+        "the flagged text is truncated, not the literal glyph"
+    );
 }
 
 #[test]

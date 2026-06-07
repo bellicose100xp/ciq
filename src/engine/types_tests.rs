@@ -148,4 +148,7 @@ fn interrupt_handle_is_clone_and_fires_underlying() {
     // Send + Sync: must be usable across threads (dispatcher holds it on another thread).
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<InterruptHandle>();
+
+    // The Debug impl is opaque (it can't print the inner Arc<dyn>), so it just names the type.
+    assert_eq!(format!("{:?}", InterruptHandle::noop()), "InterruptHandle");
 }
