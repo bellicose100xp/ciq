@@ -189,6 +189,57 @@ fn ai_popup_hints() {
     assert!(has_key(&hints, "Esc"), "close chord: {hints:?}");
 }
 
+#[test]
+fn facet_popup_hints() {
+    use crate::app::Focus;
+    use crate::engine::types::{Cell, Column, Table};
+    use crate::query::worker::types::{ProcessedResult, QueryResponse, RequestKind};
+    use crate::schema::ColumnType;
+
+    // Keep the request receiver alive so the facet dispatch (which rides the worker channel)
+    // succeeds — `loaded_app` drops it, which would silently no-op `open_facet`.
+    let (tx, _rx) = channel();
+    let mut app = App::new(tx, InterruptHandle::noop());
+    app.set_schema(test_schema());
+    app.on_loaded("ready");
+    // Put a result on screen so the `f` chord has a focused column to facet (`id` resolves against
+    // test_schema), then move focus to the results pane and press `f`.
+    for c in "SELECT * FROM t".chars() {
+        app.on_key(KeyEvent::char(c), 0);
+    }
+    app.tick(150);
+    let id = app.latest_request_id();
+    let table = Table::new(vec![Column::new(
+        "id",
+        ColumnType::Int,
+        vec![Cell::Int(1), Cell::Int(2)],
+    )]);
+    let schema = table.schema();
+    app.on_response(QueryResponse::ProcessedSuccess {
+        result: ProcessedResult::new(table, schema, 0),
+        request_id: id,
+        kind: RequestKind::Main,
+    });
+    if app.autocomplete().is_open() {
+        app.on_key(KeyEvent::plain(Key::Esc), 0);
+    }
+    app.on_key(KeyEvent::plain(Key::Down), 0); // focus results
+    assert_eq!(app.focus(), Focus::Results);
+    app.on_key(KeyEvent::char('f'), 0); // open the facet popup
+    assert!(app.is_facet_open(), "the `f` chord opened a facet");
+
+    let hints = get_context_hints(&app);
+    // The facet-open context shows Esc/Ctrl+C (and NOT the results-pane or query-bar hints).
+    assert!(has_key(&hints, "Esc"), "facet close chord: {hints:?}");
+    assert!(has_key(&hints, "Ctrl+C"), "facet quit chord: {hints:?}");
+    assert!(
+        !has_key(&hints, "Tab") && !has_key(&hints, "PgUp/PgDn"),
+        "the facet branch fired, not the query-bar or results-pane branch: {hints:?}"
+    );
+    // No mode badge when a facet popup is open (the query bar is not the focused editing surface).
+    assert_eq!(mode_label(&app), None);
+}
+
 // --- render (snapshot) ---
 
 #[test]
