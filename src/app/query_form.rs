@@ -108,6 +108,17 @@ impl Default for QueryForm {
     }
 }
 
+/// Build a fresh form already in Power mode. The App's input loop is still wired to the
+/// single-buffer `editor` (the Power editor's stand-in), so the form starts in Power mode to keep
+/// behavior unchanged until per-pane input routing lands. The autocomplete pipeline reads the
+/// form's mode + focused pane to compute pane-aware suggestions when (and only when) Simple mode
+/// is active.
+pub fn power_default() -> QueryForm {
+    let mut form = QueryForm::new();
+    form.mode = QueryMode::Power;
+    form
+}
+
 impl QueryForm {
     /// Build a fresh form: Simple mode, panes seeded `SELECT="*"`, `WHERE=""` (focused),
     /// `GROUP BY=""`, `ORDER BY=""`, `LIMIT="1000"`. The App overrides the LIMIT seed with the

@@ -122,6 +122,11 @@ pub struct App {
     pub(crate) phase: AppPhase,
     focus: Focus,
     pub(crate) editor: Editor,
+    /// The Simple/Power query form (the post-5 UX redesign foundation). Default is **Power** so the
+    /// `editor` above remains the authoritative input surface; Simple-mode panes only become live
+    /// when the form is toggled (a future input-routing change). The autocomplete pipeline already
+    /// routes per-pane through this when in Simple mode — see [`autocomplete_app`].
+    pub(crate) query_form: QueryForm,
     debouncer: Debouncer,
     dispatcher: Dispatcher,
     /// The latest accepted successful result, if any (None until the first query lands).
@@ -216,6 +221,7 @@ impl App {
             phase: AppPhase::Loading,
             focus: Focus::QueryBar,
             editor: Editor::new(),
+            query_form: query_form::power_default(),
             debouncer: Debouncer::new(),
             dispatcher: Dispatcher::new(request_tx, interrupt),
             result: None,
@@ -579,17 +585,32 @@ impl App {
     /// popup stays closed after an explicit accept (it does not re-open on the just-completed
     /// token); the next edit recomputes it for the new context. Closes without inserting if there
     /// is nothing selected.
+    ///
+    /// Targets the focused surface — the Simple-mode focused pane editor when the form is in
+    /// Simple mode, the Power editor (= the App's `editor`) otherwise — so the just-completed text
+    /// always lands where the user is typing.
     fn accept_suggestion(&mut self, now_ms: u64) {
         let Some(suggestion) = self.autocomplete.selected_suggestion().cloned() else {
             self.autocomplete.close();
             return;
         };
+        let target = self.suggestion_target_editor_mut();
         let (new_text, new_cursor) =
-            insert_suggestion(&self.editor.text(), self.editor.cursor_byte(), &suggestion);
-        self.editor.set_text_with_byte_cursor(new_text, new_cursor);
+            insert_suggestion(&target.text(), target.cursor_byte(), &suggestion);
+        target.set_text_with_byte_cursor(new_text, new_cursor);
         self.autocomplete.close();
         // The inserted text changed the query — schedule the debounced grid query for it.
         self.schedule(now_ms);
+    }
+
+    /// The editor where an accepted suggestion should land. In Simple mode that's the focused
+    /// pane's editor (the one the user is typing into); in Power mode that's the App's `editor`.
+    /// A single seam so the popup never inserts into the wrong surface.
+    fn suggestion_target_editor_mut(&mut self) -> &mut Editor {
+        match self.query_form.mode() {
+            QueryMode::Simple => self.query_form.focused_editor_mut(),
+            QueryMode::Power => &mut self.editor,
+        }
     }
 
     fn on_key_query_bar(&mut self, ev: KeyEvent, now_ms: u64) {

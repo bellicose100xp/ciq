@@ -635,6 +635,79 @@ fn numeric_lhs_is_not_treated_as_a_column() {
     ));
 }
 
+// ── completed FROM relation -> Keyword (next clause), not still FromTable ───────────────────────
+// `SELECT * FROM t wh|` had been silently classified as `FromTable { partial: "wh" }`, which made
+// the only candidate the table relation `t` — `wh` failed to match it and the popup never opened
+// for the obvious next-keyword `WHERE`. With a relation already typed, the cursor sits at a
+// `Keyword` position (the next clause) — the popup must offer keywords like `WHERE`/`GROUP BY`.
+
+#[test]
+fn after_from_relation_bare_position_is_keyword() {
+    // `FROM t ` (cursor on whitespace) — a bare position, expect Keyword.
+    assert_eq!(
+        ctx("SELECT * FROM t "),
+        CursorContext::Keyword {
+            partial: String::new()
+        }
+    );
+}
+
+#[test]
+fn after_from_relation_extending_token_is_keyword_partial() {
+    // `FROM t wh` (cursor extending `wh`) — the user is typing the next keyword (`WHERE`).
+    assert_eq!(
+        ctx("SELECT * FROM t wh"),
+        CursorContext::Keyword {
+            partial: "wh".into()
+        }
+    );
+    // Also after a JOIN-completed relation: `FROM a JOIN b wh|` -> Keyword.
+    assert_eq!(
+        ctx("SELECT * FROM a JOIN b wh"),
+        CursorContext::Keyword {
+            partial: "wh".into()
+        }
+    );
+}
+
+#[test]
+fn from_table_still_fires_inside_relation_partial() {
+    // `FROM us` (cursor extending the relation itself) — still FromTable. The fix must NOT regress
+    // the "user is typing the table name" path.
+    assert_eq!(
+        ctx("SELECT * FROM us"),
+        CursorContext::FromTable {
+            partial: "us".into()
+        }
+    );
+    // `FROM ` (no relation typed) — empty interval, still FromTable.
+    assert_eq!(
+        ctx("SELECT * FROM "),
+        CursorContext::FromTable {
+            partial: String::new()
+        }
+    );
+}
+
+#[test]
+fn comma_in_relation_list_reopens_from_table() {
+    // `FROM a, b` (cursor extending `b`) — the comma separates relations; the cursor is the second
+    // relation being typed, so still FromTable. (filled bit is cleared by the comma.)
+    assert_eq!(
+        ctx("SELECT * FROM a, b"),
+        CursorContext::FromTable {
+            partial: "b".into()
+        }
+    );
+    // `FROM a, ` (cursor on whitespace after the comma) — still FromTable, empty partial.
+    assert_eq!(
+        ctx("SELECT * FROM a, "),
+        CursorContext::FromTable {
+            partial: String::new()
+        }
+    );
+}
+
 // ── §5.6 property: never panics for any byte offset; partial present at cursor ──────────────────
 
 proptest::proptest! {

@@ -158,8 +158,19 @@ fn context_for_keyword(
         "select" | "distinct" => Some(CursorContext::SelectList {
             partial: partial.to_string(),
         }),
-        "from" | "join" => Some(CursorContext::FromTable {
-            partial: partial.to_string(),
+        // A FROM/JOIN whose relation slot is already filled (a content token sits between this
+        // keyword and the cursor's own in-progress token, at the keyword's depth) means the user has
+        // moved past the relation and is starting the next clause — `SELECT * FROM t wh|` wants the
+        // `WHERE` keyword, not another table. An empty interval (cursor still extending the relation,
+        // `SELECT * FROM us|`) keeps us in `FromTable` so partials still filter the table list.
+        "from" | "join" => Some(if from_slot_filled(src, tokens, kw_idx, scan_from) {
+            CursorContext::Keyword {
+                partial: partial.to_string(),
+            }
+        } else {
+            CursorContext::FromTable {
+                partial: partial.to_string(),
+            }
         }),
         // A predicate-opening keyword. The cursor is at a column (LHS) position *only* when no
         // top-level comparison has already filled the operand slot between this keyword and the
@@ -194,6 +205,51 @@ fn context_for_keyword(
         | "null" | "like" | "ilike" | "between" => None,
         _ => None,
     }
+}
+
+/// Whether the FROM/JOIN at `kw_idx` already has a relation token sitting between it and the
+/// cursor's own in-progress token (`scan_from`) at the keyword's paren depth. A filled slot means
+/// the user has typed the relation name; the next non-extending token is the start of a new clause,
+/// so the cursor sits at a `Keyword` position rather than still extending the table list.
+///
+/// An empty interval (no content tokens, just whitespace) keeps the cursor in FROM territory — the
+/// `SELECT * FROM us|` case where the cursor token IS the relation being typed (so it lives at
+/// `scan_from`, not inside this interval).
+///
+/// A trailing `,` reopens the relation slot (`FROM a, b|` is still typing the second relation), so
+/// it doesn't count as filled — the comma is the freshest content token, and the cursor is the
+/// start of the next relation.
+fn from_slot_filled(src: &str, tokens: &[Token], kw_idx: usize, scan_from: usize) -> bool {
+    let kw_depth = tokens[kw_idx].depth;
+    let mut filled = false;
+    let mut i = kw_idx + 1;
+    while i < scan_from {
+        let t = tokens[i];
+        i += 1;
+        if t.is_trivia() || t.depth != kw_depth {
+            continue; // ignore trivia and anything nested under a sub-paren
+        }
+        match t.kind {
+            // A relation name (or its qualifier dot) fills the slot.
+            TokenKind::Ident | TokenKind::QuotedIdent => filled = true,
+            TokenKind::Punct => match t.text(src) {
+                // `,` reopens the relation slot for the next entry — clears the fill.
+                "," => filled = false,
+                // `.` is part of a qualified name (`schema.t`), still filled.
+                "." => {}
+                // Any other punctuation at top depth (`;`, `*`) shouldn't appear in a FROM list, but
+                // if it does, leave the fill state as-is (don't open a hole).
+                _ => {}
+            },
+            // `JOIN` / `AS` keep the slot filled (the previous Ident already filled it; these are
+            // structural). Aliases (`AS x`) introduce another Ident which also fills.
+            TokenKind::Keyword => {}
+            // Numbers / strings have no place in a FROM list; treat conservatively as not changing
+            // the fill state so we don't misclassify a half-typed query.
+            _ => {}
+        }
+    }
+    filled
 }
 
 /// What slot of a predicate the cursor occupies, relative to its governing predicate keyword.

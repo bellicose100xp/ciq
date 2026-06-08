@@ -874,12 +874,81 @@ fn cancelled_main_lane_response_still_clears_in_flight() {
     );
 }
 
+// --- power-mode keyword popup regression (the "FROM t wh" bug) ---
+
+#[test]
+fn typing_keyword_after_completed_from_relation_opens_popup_with_where() {
+    // The Power-mode keyword-popup regression (`SELECT * FROM t wh|`): the relation token is
+    // already typed, so the cursor sits at the next clause keyword position. The popup must offer
+    // `WHERE` (and the other clause keywords), not the now-completed FROM relation.
+    let (mut app, _rx) = loaded_app();
+    type_str(&mut app, "SELECT * FROM t wh", 0);
+    assert!(
+        app.autocomplete().is_open(),
+        "popup must open with keyword candidates after `FROM t wh`"
+    );
+    let texts: Vec<&str> = app
+        .autocomplete()
+        .suggestions()
+        .iter()
+        .map(|s| s.text.as_str())
+        .collect();
+    assert!(
+        texts.contains(&"WHERE"),
+        "expected WHERE in keyword popup, got {texts:?}"
+    );
+}
+
+#[test]
+fn keyword_popup_after_from_offers_other_clause_keywords_too() {
+    // Same regression seen with empty partial: `SELECT * FROM t ` (trailing space) lands at a bare
+    // keyword position; the popup offers the §5.4 keyword set (WHERE / GROUP BY / ORDER BY / LIMIT
+    // / etc.) — none of which appeared before because the detector classified this as FromTable.
+    let (mut app, _rx) = loaded_app();
+    type_str(&mut app, "SELECT * FROM t ", 0);
+    let texts: Vec<&str> = app
+        .autocomplete()
+        .suggestions()
+        .iter()
+        .map(|s| s.text.as_str())
+        .collect();
+    assert!(texts.contains(&"WHERE"), "got {texts:?}");
+    assert!(texts.contains(&"GROUP BY"), "got {texts:?}");
+    assert!(texts.contains(&"ORDER BY"), "got {texts:?}");
+}
+
+#[test]
+fn power_mode_value_fetch_after_where_region_quote_dispatches() {
+    // The end-to-end value-completion path through Power mode: typing `WHERE region = '` fires a
+    // distinct-values fetch on the worker channel keyed to the canonical column name. (Mirrors the
+    // existing `status` case for a different schema column to guard against regressions in the
+    // canonical-name resolution.)
+    use crate::query::worker::types::RequestKind;
+    let (mut app, rx) = loaded_app();
+    // The `loaded_app` schema doesn't have `region`; install a richer one so the test exercises the
+    // fixture-shaped column the brief calls out.
+    app.set_schema(Schema::new(vec![
+        ColumnMeta::new("region", ColumnType::Text),
+        ColumnMeta::new("status", ColumnType::Text),
+    ]));
+    type_str(&mut app, "SELECT * FROM t WHERE region = '", 0);
+    let mut found = false;
+    while let Ok(r) = rx.try_recv() {
+        if matches!(&r.kind, RequestKind::Value { column } if column == "region") {
+            found = true;
+        }
+    }
+    assert!(found, "a Value fetch for `region` should be dispatched");
+}
+
 // The column-palette (P4.4/P4.5) and instant-facet (P4.6) App-shell tests live in focused
 // submodules — split out so each test file stays under the 1000-line limit. They reach the shared
 // App helpers above via `super`. Explicit `#[path]` because this file is itself `#[path]`-loaded,
 // so child modules would otherwise resolve against `src/app/`, not `src/app/app_tests/`.
 #[path = "app_tests/ai_tests.rs"]
 mod ai_tests;
+#[path = "app_tests/autocomplete_tests.rs"]
+mod autocomplete_tests;
 #[path = "app_tests/facet_tests.rs"]
 mod facet_tests;
 #[path = "app_tests/history_tests.rs"]

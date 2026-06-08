@@ -24,5 +24,6 @@ pub mod autocomplete_state;
 pub mod candidates;
 pub mod clause_context;
 pub mod insertion;
+pub mod pane_context;
 pub mod sql_keywords;
 pub mod value_source;
