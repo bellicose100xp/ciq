@@ -12,6 +12,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -28,16 +29,25 @@ pub fn body_viewport_height(inner_height: u16) -> u16 {
 /// Render `frame` (the laid-out grid) into `area`, scrolling the body by `v_row_offset` rows.
 ///
 /// `area` is the inner pane (already inside any border). Header occupies `area`'s top row;
-/// the body is rendered in the rows below it, sliced to the visible window.
-pub fn render_grid(f: &mut Frame, area: Rect, grid: &GridFrame, v_row_offset: usize) {
+/// the body is rendered in the rows below it, sliced to the visible window. When `stale` is
+/// `true`, the header + body cells carry [`theme::grid::stale_modifier`] (dim) so the user sees
+/// the last-good grid kept under the error message in the status line (jiq's
+/// error-keeps-last-result-dimmed behavior).
+pub fn render_grid(f: &mut Frame, area: Rect, grid: &GridFrame, v_row_offset: usize, stale: bool) {
     if area.height == 0 {
         return;
     }
 
+    let extra = if stale {
+        theme::grid::stale_modifier()
+    } else {
+        Modifier::empty()
+    };
+
     let header_area = Rect { height: 1, ..area };
     let header = Paragraph::new(Line::from(Span::styled(
         grid.header.clone(),
-        theme::grid::header(),
+        theme::grid::header().add_modifier(extra),
     )));
     f.render_widget(header, header_area);
 
@@ -57,17 +67,25 @@ pub fn render_grid(f: &mut Frame, area: Rect, grid: &GridFrame, v_row_offset: us
     } else {
         &[]
     };
-    let lines: Vec<Line> = visible.iter().map(|row| style_body_line(row)).collect();
+    let lines: Vec<Line> = visible
+        .iter()
+        .map(|row| style_body_line(row, extra))
+        .collect();
     f.render_widget(Paragraph::new(lines), body_area);
 }
 
 /// Style one body line: dim the byte ranges `layout_grid` flagged as genuine SQL nulls so a
 /// `NULL` reads as absent, leaving everything else (including a present `Cell::Text("NULL")`) in
 /// the normal cell style. Null-ness comes from the layout mask, not from scanning the text — the
-/// text alone cannot distinguish an absent null from data that happens to read "NULL".
-fn style_body_line(row: &BodyRow) -> Line<'static> {
+/// text alone cannot distinguish an absent null from data that happens to read "NULL". `extra` is
+/// OR'd into every span's modifier so a stale-dimmed render adds DIM uniformly without losing the
+/// per-span colors.
+fn style_body_line(row: &BodyRow, extra: Modifier) -> Line<'static> {
     if row.null_spans.is_empty() {
-        return Line::from(Span::styled(row.text.clone(), theme::grid::cell()));
+        return Line::from(Span::styled(
+            row.text.clone(),
+            theme::grid::cell().add_modifier(extra),
+        ));
     }
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut cursor = 0usize;
@@ -75,19 +93,19 @@ fn style_body_line(row: &BodyRow) -> Line<'static> {
         if span.start > cursor {
             spans.push(Span::styled(
                 row.text[cursor..span.start].to_string(),
-                theme::grid::cell(),
+                theme::grid::cell().add_modifier(extra),
             ));
         }
         spans.push(Span::styled(
             row.text[span.start..span.end].to_string(),
-            theme::grid::null(),
+            theme::grid::null().add_modifier(extra),
         ));
         cursor = span.end;
     }
     if cursor < row.text.len() {
         spans.push(Span::styled(
             row.text[cursor..].to_string(),
-            theme::grid::cell(),
+            theme::grid::cell().add_modifier(extra),
         ));
     }
     Line::from(spans)

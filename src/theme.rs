@@ -349,4 +349,13 @@ pub mod grid {
             .fg(Color::DarkGray)
             .add_modifier(Modifier::DIM)
     }
+
+    /// Modifier applied to the grid's header + body cells when the displayed result is stale —
+    /// kept on screen after a query-pipeline error so the user can still see what they had while
+    /// the error rides the status line (jiq's error-keeps-last-result-dimmed behavior). Returned
+    /// as a [`Modifier`] (not a [`Style`]) so callers can OR it into existing per-cell styles
+    /// (header/cell/null) without flattening their colors.
+    pub fn stale_modifier() -> Modifier {
+        Modifier::DIM
+    }
 }

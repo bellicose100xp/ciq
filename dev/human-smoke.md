@@ -312,6 +312,34 @@ CSV large enough that the result scrolls, with several columns):
 6. **No regression elsewhere.** Confirm clicking/scrolling does not interfere with typing, and that
    the mouse never quits the app or fires a query on its own (queries still run only on debounce).
 
+## Post-5 UX — error keeps last result dimmed (jiq-port)
+
+ciq mirrors jiq's behavior on a query error: the last successful grid stays on screen, **dimmed**,
+while the error rides the status line. The headless suite proves the state (`result_is_stale`) and
+that the rendered cells carry `Modifier::DIM` (counted in the `TestBackend` buffer). It does NOT
+prove the felt brightness shift on a real terminal or that the dim reads correctly in both polarities.
+Confirm by hand (light + dark terminal):
+
+1. **Successful grid lands at full brightness.** Run `SELECT * FROM t`. Confirm the header + body
+   cells render at normal brightness (the baseline).
+2. **Engine error dims the kept grid.** Edit the bar to an unknown column (e.g. `SELECT bogus FROM t`).
+   The status line shows `unknown column: "bogus"` (or the did-you-mean form), the **same grid stays
+   on screen**, and every header + body cell is visibly dimmer than before. The truncation banner (if
+   it was there) stays too, also dimmed.
+3. **Preprocess reject dims the kept grid.** From the same successful state, append `;DROP TABLE t`
+   to make the bar multi-statement. The status line shows `single statement only` (or `read-only
+   SELECT queries only` for plain DML), and the kept grid dims the same way. No empty-state hint
+   appears under the error.
+4. **A successful query restores full brightness.** Type a valid query (e.g. delete the bad chars).
+   The grid is replaced with the new rows at normal brightness — the dim drops the moment the new
+   result lands.
+5. **First-error has nothing to dim.** Open a CSV and immediately type `;DROP TABLE t` (no prior
+   successful grid). Confirm the empty-state hint (`type a SQL query above ...`) stays, the status
+   line shows the error, and there is no spurious dim styling.
+6. **Color polarity.** Repeat 2 in a light and a dark terminal — confirm the dim grid is still
+   readable in both, and the contrast against the un-dimmed status-line error is clear (the §4.7
+   polarity check).
+
 ---
 
 ## Showcase fixture — edge-case tour (tests/fixtures/showcase.csv)

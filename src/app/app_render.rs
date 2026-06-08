@@ -340,7 +340,13 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
             v_row_offset: app.v_row_offset(),
         };
         let grid = layout_grid(&result.rows, &view);
-        grid_render::render_grid(frame, grid_area, &grid, app.v_row_offset());
+        grid_render::render_grid(
+            frame,
+            grid_area,
+            &grid,
+            app.v_row_offset(),
+            app.result_is_stale(),
+        );
     }
 }
 

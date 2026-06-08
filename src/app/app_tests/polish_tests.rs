@@ -212,10 +212,10 @@ fn unknown_column_error_gets_did_you_mean_against_schema() {
 }
 
 #[test]
-fn engine_error_after_a_success_clears_the_stale_grid_and_banner() {
-    // Run a bare SELECT that fills (and caps) the grid, then a query that the engine rejects (an
-    // unknown column). The error must drop the last-good grid + its truncation banner so they aren't
-    // left painted under the error message — matching set_query_error / empty_state's contract.
+fn engine_error_after_a_success_keeps_the_grid_marked_stale() {
+    // jiq-port: an engine error after a successful grid keeps the last-good rows (and their
+    // truncation banner) on screen, marked stale so the render layer dims them. The error rides
+    // the status line — the user sees what they had while the new error is reported.
     let (mut app, _rx) = app();
     app.set_schema(Schema::new(vec![ColumnMeta::new("id", ColumnType::Int)]));
     app.on_loaded("ready");
@@ -231,6 +231,7 @@ fn engine_error_after_a_success_clears_the_stale_grid_and_banner() {
     });
     assert!(app.result().is_some());
     assert!(app.truncation_banner().is_some());
+    assert!(!app.result_is_stale());
 
     // (2) edit to an unknown-column query; the engine returns Error.
     type_str(&mut app, "x", 200); // any edit that re-dispatches
@@ -242,22 +243,32 @@ fn engine_error_after_a_success_clears_the_stale_grid_and_banner() {
         kind: RequestKind::Main,
     });
 
-    // The error is in the status line; the stale grid AND its banner are gone, and the pane falls
-    // back to the neutral empty-state (no grid).
+    // The error is in the status line; the grid stays in place but is now marked stale (the render
+    // layer will dim it). The truncation banner stays too — the user still sees the original cap.
     assert!(app.status().contains("unknown column"));
-    assert!(app.result().is_none(), "error must clear the stale grid");
-    assert_eq!(
-        app.truncation_banner(),
-        None,
-        "stale banner must be cleared"
+    assert!(
+        app.result().is_some(),
+        "error keeps the last-good grid in place"
     );
-    assert!(app.empty_state().is_some(), "the pane shows an empty-state");
+    assert!(
+        app.result_is_stale(),
+        "the kept grid is marked stale for the render layer"
+    );
+    assert!(
+        app.truncation_banner().is_some(),
+        "the kept grid keeps its banner"
+    );
+    assert!(
+        app.empty_state().is_none(),
+        "the populated grid still draws (dimmed), not an empty-state"
+    );
 }
 
 #[test]
-fn preprocess_reject_after_a_success_clears_the_stale_grid() {
-    // The other error path: a preprocess rejection (DML) after a successful grid must also drop the
-    // stale result so no grid lingers under the "read-only" status.
+fn preprocess_reject_after_a_success_keeps_the_grid_marked_stale() {
+    // The other error path: a preprocess rejection (DML) after a successful grid keeps the result
+    // in place and marks it stale (jiq-port). The "read-only"/multi-statement message rides the
+    // status line; the dimmed grid stays visible.
     let app0 = run_query("SELECT * FROM t", id_result(3));
     let mut app = app0;
     type_str(&mut app, ";DROP TABLE t", 200); // makes the bar multi-statement
@@ -268,9 +279,78 @@ fn preprocess_reject_after_a_success_clears_the_stale_grid() {
         app.status()
     );
     assert!(
-        app.result().is_none(),
-        "a preprocess reject must clear the stale grid"
+        app.result().is_some(),
+        "a preprocess reject keeps the last-good grid in place"
     );
+    assert!(
+        app.result_is_stale(),
+        "the kept grid is marked stale for the render layer"
+    );
+}
+
+#[test]
+fn successful_response_after_an_error_clears_stale_dim_and_replaces_grid() {
+    // After an error has dimmed the prior grid, a subsequent successful query replaces it and
+    // restores NORMAL polarity (`result_is_stale = false`).
+    let (mut app, _rx) = app();
+    app.on_loaded("ready");
+
+    // (1) a successful query lands a 3-row grid.
+    type_str(&mut app, "SELECT * FROM t", 0);
+    app.tick(150);
+    let id = app.latest_request_id();
+    app.on_response(QueryResponse::ProcessedSuccess {
+        result: id_result(3),
+        request_id: id,
+        kind: RequestKind::Main,
+    });
+    assert!(!app.result_is_stale());
+    assert_eq!(app.result().unwrap().rows.row_count(), 3);
+
+    // (2) an engine error dims the grid.
+    type_str(&mut app, "x", 200);
+    app.tick(400);
+    let id2 = app.latest_request_id();
+    app.on_response(QueryResponse::Error {
+        message: "Binder Error: Referenced column \"x\" not found".into(),
+        request_id: id2,
+        kind: RequestKind::Main,
+    });
+    assert!(app.result_is_stale());
+    assert_eq!(
+        app.result().unwrap().rows.row_count(),
+        3,
+        "the dimmed grid is the prior 3-row result"
+    );
+
+    // (3) a successful query replaces the grid and clears the dim.
+    type_str(&mut app, "y", 600);
+    app.tick(800);
+    let id3 = app.latest_request_id();
+    app.on_response(QueryResponse::ProcessedSuccess {
+        result: id_result(2),
+        request_id: id3,
+        kind: RequestKind::Main,
+    });
+    assert!(!app.result_is_stale(), "success clears the stale-dim");
+    assert_eq!(
+        app.result().unwrap().rows.row_count(),
+        2,
+        "the new result replaced the prior one"
+    );
+}
+
+#[test]
+fn first_error_with_no_prior_result_does_not_set_stale() {
+    // An error before any successful query has nothing to dim — the empty-state hint stays on
+    // and `result_is_stale` is left `false`.
+    let (mut app, _rx) = app();
+    app.on_loaded("ready");
+    type_str(&mut app, ";DROP TABLE t", 0); // multi-statement preprocess reject
+    app.tick(150);
+    assert!(app.result().is_none());
+    assert!(!app.result_is_stale());
+    assert!(app.empty_state().is_some());
 }
 
 #[test]

@@ -19,7 +19,7 @@ fn render_to_string(table: &Table, view: GridView, w: u16, h: u16, v_row_offset:
     terminal
         .draw(|f| {
             let area = Rect::new(0, 0, w, h);
-            render_grid(f, area, &frame, v_row_offset);
+            render_grid(f, area, &frame, v_row_offset, false);
         })
         .expect("draw to TestBackend");
     terminal.backend().to_string()
@@ -63,7 +63,7 @@ fn render_does_not_panic_on_zero_height() {
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
-        .draw(|f| render_grid(f, Rect::new(0, 0, 80, 0), &frame, 0))
+        .draw(|f| render_grid(f, Rect::new(0, 0, 80, 0), &frame, 0, false))
         .unwrap();
     // No panic; nothing asserted beyond that.
 }
@@ -148,7 +148,7 @@ fn only_genuine_null_span_is_dimmed_not_literal_text_null() {
         ),
     ]);
     let frame = layout_grid(&t, &GridView::new(80, 24));
-    let line = style_body_line(&frame.body[0]);
+    let line = style_body_line(&frame.body[0], Modifier::empty());
 
     // Collect (text, dimmed) per span, then check exactly the first cell's "NULL" is dimmed.
     let dimmed: String = line
@@ -190,7 +190,7 @@ fn truncated_null_in_narrow_column_is_still_dimmed() {
         vec![Cell::Null],
     )]);
     let frame = layout_grid(&t, &GridView::new(2, 24));
-    let line = style_body_line(&frame.body[0]);
+    let line = style_body_line(&frame.body[0], Modifier::empty());
     let dimmed_text: String = line
         .spans
         .iter()
@@ -213,7 +213,7 @@ fn no_null_row_is_a_single_normal_span() {
         text: "  1  Ada ".to_string(),
         null_spans: Vec::new(),
     };
-    let line = style_body_line(&row);
+    let line = style_body_line(&row, Modifier::empty());
     assert_eq!(line.spans.len(), 1);
     assert_eq!(line.spans[0].style, theme::grid::cell());
     assert!(!is_null_styled(line.spans[0].style));

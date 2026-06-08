@@ -416,6 +416,179 @@ fn enter_inserts_newline_and_bar_grows_a_row() {
     );
 }
 
+/// Count cells in the rendered buffer whose modifier carries `Modifier::DIM`. A stale-dimmed grid
+/// (`result_is_stale == true`) paints every header + body cell with this modifier, so the count
+/// strictly increases vs the un-dimmed render of the same grid.
+fn count_dim_cells(app: &App, w: u16, h: u16) -> usize {
+    let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
+    t.draw(|f| app.render(f)).unwrap();
+    let buffer = t.backend().buffer();
+    buffer
+        .content()
+        .iter()
+        .filter(|cell| cell.modifier.contains(Modifier::DIM))
+        .count()
+}
+
+/// An int-only result so the rendered grid carries no NULL cells (which already use DIM): every DIM
+/// cell counted in the buffer comes purely from the stale-result dim, not from null styling.
+fn int_only_result(rows: usize) -> ProcessedResult {
+    let cells: Vec<Cell> = (0..rows as i64).map(Cell::Int).collect();
+    let table = Table::new(vec![Column::new("id", ColumnType::Int, cells)]);
+    let s = table.schema();
+    ProcessedResult::new(table, s, 0)
+}
+
+#[test]
+fn engine_error_keeps_grid_visible_and_dims_its_cells() {
+    // Render a successful int-only grid (no NULL cells, so any DIM later is from stale-dim alone),
+    // then deliver an engine Error. The rendered grid must STILL be present (the rows survive) and
+    // its cells must now carry the DIM modifier — jiq's keep-last-result-dimmed behavior.
+    let mut a = app();
+    a.on_loaded("ready");
+    for c in "SELECT id FROM t".chars() {
+        a.on_key(KeyEvent::char(c), 0);
+    }
+    a.on_key(KeyEvent::plain(Key::Esc), 0); // dismiss the autocomplete popup
+    a.tick(150);
+    let id = a.latest_request_id();
+    a.on_response(QueryResponse::ProcessedSuccess {
+        result: int_only_result(3),
+        request_id: id,
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+    let dim_before = count_dim_cells(&a, 40, 10);
+    let screen_before = render(&a, 40, 10);
+    assert!(
+        screen_before.contains("id"),
+        "header pre-error, screen:\n{screen_before}"
+    );
+
+    // Now type-edit and deliver an engine Error for the new dispatch.
+    for c in "x".chars() {
+        a.on_key(KeyEvent::char(c), 200);
+    }
+    a.on_key(KeyEvent::plain(Key::Esc), 200); // dismiss the autocomplete popup
+    a.tick(400);
+    let id2 = a.latest_request_id();
+    a.on_response(QueryResponse::Error {
+        message: "Binder Error: Referenced column \"foo\" not found".into(),
+        request_id: id2,
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+
+    let screen_after = render(&a, 40, 10);
+    let dim_after = count_dim_cells(&a, 40, 10);
+    // The grid rows are still visible (the header survives the error).
+    assert!(
+        screen_after.contains("id"),
+        "header still visible post-error, screen:\n{screen_after}"
+    );
+    // The error message is in the status line.
+    assert!(
+        screen_after.contains("unknown column"),
+        "status carries the error, screen:\n{screen_after}"
+    );
+    // The DIM-cell count strictly increases — the stale-dim was applied to the kept grid.
+    assert!(
+        dim_after > dim_before,
+        "stale grid must have more DIM cells: before={dim_before}, after={dim_after}, screen:\n{screen_after}"
+    );
+}
+
+#[test]
+fn preprocess_reject_keeps_grid_visible_and_dims_its_cells() {
+    // Same shape as the engine-error test, but for the preprocess-reject path (a multi-statement
+    // bar). The kept grid must dim too; the "read-only"/multi-statement message rides the status.
+    let mut a = app();
+    a.on_loaded("ready");
+    for c in "SELECT id FROM t".chars() {
+        a.on_key(KeyEvent::char(c), 0);
+    }
+    a.on_key(KeyEvent::plain(Key::Esc), 0);
+    a.tick(150);
+    let id = a.latest_request_id();
+    a.on_response(QueryResponse::ProcessedSuccess {
+        result: int_only_result(3),
+        request_id: id,
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+    let dim_before = count_dim_cells(&a, 40, 10);
+
+    // Make the bar multi-statement -> preprocess reject (no engine call).
+    for c in ";DROP TABLE t".chars() {
+        a.on_key(KeyEvent::char(c), 200);
+    }
+    a.tick(400);
+
+    let screen_after = render(&a, 40, 10);
+    let dim_after = count_dim_cells(&a, 40, 10);
+    assert!(
+        screen_after.contains("id"),
+        "header still visible post-reject, screen:\n{screen_after}"
+    );
+    assert!(
+        screen_after.contains("statement") || screen_after.contains("read-only"),
+        "status carries the preprocess error, screen:\n{screen_after}"
+    );
+    assert!(
+        dim_after > dim_before,
+        "stale grid must have more DIM cells: before={dim_before}, after={dim_after}, screen:\n{screen_after}"
+    );
+}
+
+#[test]
+fn successful_response_after_an_error_clears_dim_in_render() {
+    // After an error has dimmed the grid, a subsequent success must restore NORMAL polarity.
+    let mut a = app();
+    a.on_loaded("ready");
+    for c in "SELECT id FROM t".chars() {
+        a.on_key(KeyEvent::char(c), 0);
+    }
+    a.on_key(KeyEvent::plain(Key::Esc), 0);
+    a.tick(150);
+    let id = a.latest_request_id();
+    a.on_response(QueryResponse::ProcessedSuccess {
+        result: int_only_result(3),
+        request_id: id,
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+    let dim_baseline = count_dim_cells(&a, 40, 10);
+
+    // Error -> dim.
+    for c in "x".chars() {
+        a.on_key(KeyEvent::char(c), 200);
+    }
+    a.on_key(KeyEvent::plain(Key::Esc), 200);
+    a.tick(400);
+    let id_err = a.latest_request_id();
+    a.on_response(QueryResponse::Error {
+        message: "Binder Error: Referenced column \"foo\" not found".into(),
+        request_id: id_err,
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+    let dim_after_err = count_dim_cells(&a, 40, 10);
+    assert!(dim_after_err > dim_baseline);
+
+    // Success -> dim drops back to baseline (no extra stale-dim cells).
+    for c in "y".chars() {
+        a.on_key(KeyEvent::char(c), 600);
+    }
+    a.on_key(KeyEvent::plain(Key::Esc), 600);
+    a.tick(800);
+    let id_ok = a.latest_request_id();
+    a.on_response(QueryResponse::ProcessedSuccess {
+        result: int_only_result(2),
+        request_id: id_ok,
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+    let dim_after_ok = count_dim_cells(&a, 40, 10);
+    assert!(
+        dim_after_ok <= dim_baseline,
+        "successful response clears stale-dim: baseline={dim_baseline}, after_err={dim_after_err}, after_ok={dim_after_ok}"
+    );
+}
+
 #[test]
 fn open_palette_overlays_columns_with_checkboxes() {
     use crate::schema::{ColumnMeta, Schema};

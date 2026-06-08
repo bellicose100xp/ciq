@@ -139,6 +139,13 @@ pub struct App {
     /// Whether the *displayed* result was ciq-capped (the accepted response's query was wrapped).
     /// Drives the truncation banner together with the result's row count.
     result_ciq_capped: bool,
+    /// Whether the displayed result is stale — kept on screen DIMMED after a query-pipeline error
+    /// (preprocess-reject of an attempted dispatch, or an engine `QueryResponse::Error`) so the
+    /// last-good grid stays visible while the error message rides the status line (jiq's
+    /// error-keeps-last-result-dimmed behavior). Cleared when the next successful response lands.
+    /// Pane-validation errors (e.g. a non-numeric LIMIT in Simple mode) do NOT flip this — they
+    /// never reach the engine, so the prior dispatched result keeps its NORMAL polarity.
+    result_is_stale: bool,
     /// Vertical row scroll offset into the result body.
     v_row_offset: usize,
     /// Horizontal column scroll offset (column-granular).
@@ -227,6 +234,7 @@ impl App {
             result: None,
             last_query_ciq_capped: false,
             result_ciq_capped: false,
+            result_is_stale: false,
             v_row_offset: 0,
             h_col_offset: 0,
             status: "loading CSV…".to_string(),
@@ -297,6 +305,14 @@ impl App {
 
     pub fn result(&self) -> Option<&ProcessedResult> {
         self.result.as_ref()
+    }
+
+    /// Whether the displayed result is stale (kept on screen dimmed after a query-pipeline error).
+    /// Read by the render layer to apply [`theme::grid::stale_modifier`] to the grid header + body
+    /// (and by Stage 4's row counter, which honors the same dim). `false` when there is no result
+    /// or the most recent successful response replaced it.
+    pub fn result_is_stale(&self) -> bool {
+        self.result_is_stale
     }
 
     pub fn v_row_offset(&self) -> usize {
@@ -780,19 +796,22 @@ impl App {
 
     fn set_query_error(&mut self, e: PreprocessError) {
         self.status = e.message().to_string();
-        // Stay Ready (the bar is still live) but show no stale grid for an invalid query — drop the
-        // last-good result so the pane falls to the neutral empty-state, matching this fn's contract
-        // and the `empty_state` doc ("a query that errored leaves no grid").
-        self.clear_result();
+        // Keep the last-good grid in place but mark it stale so the render layer dims it (jiq's
+        // error-keeps-last-result-dimmed behavior). Only flip the stale bit when there is something
+        // to dim — otherwise this is the first-query case and the empty-state hint is correct.
+        if self.result.is_some() {
+            self.result_is_stale = true;
+        }
         self.phase = AppPhase::Ready;
     }
 
     /// Drop the displayed result and reset its scroll/cap bookkeeping so the results pane falls back
-    /// to the neutral empty-state. Used on both error paths (preprocess reject + engine `Error`) and
-    /// when the bar is cleared, so a stale grid never lingers under an error message.
+    /// to the neutral empty-state. Used when the bar is cleared (a deliberate return to the pre-first-
+    /// query state). Errors do NOT clear the result anymore — they dim it via `result_is_stale`.
     fn clear_result(&mut self) {
         self.result = None;
         self.result_ciq_capped = false;
+        self.result_is_stale = false;
         self.v_row_offset = 0;
         self.h_col_offset = 0;
     }
@@ -875,6 +894,9 @@ impl App {
                 self.status = format!("{rows} row{}", if rows == 1 { "" } else { "s" });
                 self.result = Some(result);
                 self.result_ciq_capped = self.last_query_ciq_capped;
+                // A successful response replaces the grid and clears any prior stale-dim — the
+                // render layer goes back to NORMAL polarity for the new rows.
+                self.result_is_stale = false;
                 self.v_row_offset = 0;
                 self.phase = AppPhase::Ready;
                 true
@@ -886,9 +908,11 @@ impl App {
                     Some(schema) => enhance_with_schema(&message, schema),
                     None => enhance(&message),
                 };
-                // Drop the last-good grid so an error never leaves a stale, mislabeled result (and
-                // its truncation banner) painted under the error message (empty_state contract).
-                self.clear_result();
+                // Keep the last-good grid in place but mark it stale so the render layer dims it
+                // (jiq's error-keeps-last-result-dimmed behavior). The error rides the status line.
+                if self.result.is_some() {
+                    self.result_is_stale = true;
+                }
                 self.phase = AppPhase::Ready;
                 true
             }
