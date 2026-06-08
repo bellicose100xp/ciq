@@ -13,11 +13,20 @@
 //! taken, keeping this a dependency-free leaf — a wide-glyph refinement can land later without
 //! changing the surface).
 
-use crate::engine::{Cell, Table};
+use crate::engine::{Cell, Column, Table};
 
 /// The glyph rendered for a SQL `NULL` cell — visually distinct from an empty-string cell,
 /// which renders as nothing. ASCII only (theme convention, no emoji).
 pub const NULL_GLYPH: &str = "NULL";
+
+/// The sticky-header label for a column: `name (badge)`, e.g. `id (int)`, `created_at (date)`.
+///
+/// Folding the type badge into the one sticky header is what lets the grid show each column's
+/// sniffed type inline without a second (visually duplicate) schema-bar row. A column's width is
+/// sized to fit this label (see [`compute_widths`]) so the badge is never silently dropped.
+pub fn header_label(col: &Column) -> String {
+    format!("{} ({})", col.name, col.ty.badge())
+}
 
 /// The single-character ellipsis appended when a cell is truncated to fit its column.
 pub const ELLIPSIS: char = '…';
@@ -75,17 +84,19 @@ pub fn render_cell(cell: &Cell, width: usize) -> String {
 
 /// Compute the per-column display widths for a result page.
 ///
-/// For each column: `width = clamp(max(header_chars, max_sampled_cell_chars), MIN, max_cap)`.
-/// `max_cap` is the smaller of [`DEFAULT_MAX_COL_WIDTH`] and `viewport_budget` (a single
-/// column never exceeds the whole viewport). The returned vector has one entry per column in
-/// `table` order. An empty table yields header-only widths.
+/// For each column: `width = clamp(max(header_label_chars, max_sampled_cell_chars), MIN, max_cap)`.
+/// The header term is the full `name (badge)` label ([`header_label`]), not the bare name, so the
+/// type badge in the sticky header always fits. `max_cap` is the smaller of
+/// [`DEFAULT_MAX_COL_WIDTH`] and `viewport_budget` (a single column never exceeds the whole
+/// viewport). The returned vector has one entry per column in `table` order. An empty table
+/// yields header-only widths.
 pub fn compute_widths(table: &Table, viewport_budget: u16) -> Vec<u16> {
     let cap = DEFAULT_MAX_COL_WIDTH.min(viewport_budget.max(MIN_COL_WIDTH));
     table
         .columns()
         .iter()
         .map(|col| {
-            let header = col.name.chars().count();
+            let header = header_label(col).chars().count();
             let widest_cell = col.cells.iter().map(cell_char_len).max().unwrap_or(0);
             let natural = header.max(widest_cell) as u16;
             natural.clamp(MIN_COL_WIDTH, cap)

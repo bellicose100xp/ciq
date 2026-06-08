@@ -2,10 +2,10 @@
 source: src/grid/grid_render_tests.rs
 expression: screen
 ---
-" id  name  amount                                                               "
-"  1  Ada     12.5                                                               "
-"  2  Bo         7                                                               "
-"300  NULL    0.25                                                               "
+"id (int)  name (txt)  amount (num)                                              "
+"       1  Ada                 12.5                                              "
+"       2  Bo                     7                                              "
+"     300  NULL                0.25                                              "
 "                                                                                "
 "                                                                                "
 "                                                                                "

@@ -189,6 +189,19 @@ These are not repeated per-task; they apply to **every** task that writes Rust:
 > `human-smoke.md` Phase 4). **477 tests (was 463).** Remaining P4: P4.2–P4.5 (palette), P4.6
 > (facets), P4.8 (output modes).
 >
+> **Layout amendment (post-Phase-5, from the real-terminal smoke):** the separate schema-bar row
+> was **removed** — it duplicated the grid's sticky header (both printed the column names), reading
+> as a doubled header. The schema bar's real value-add (the per-column type badge) is now **folded
+> into the grid's single sticky header** as a `name (badge)` label (`col_width::header_label`, with
+> column widths sized to fit it). `src/schema_bar.rs` is deleted (its `summary` moved to
+> `ingest::dialect_summary`, still shown as the pane border title; `theme::schema_bar` → a single
+> `theme::app::dialect_summary`). Also per the same smoke: the **query bar moved from the top to the
+> bottom** of the screen (results pane fills the top, query bar second-to-last row, status line last;
+> popups now anchor just *above* the bottom bar). The grid's `layout_grid`/`col_width` pure-core
+> tests + the `grid_render` snapshots were updated for the type-annotated header; `app_render`
+> reordered; `schema_bar.rs` dropped from `lib.rs` + `core-modules.txt`. See the
+> `feat(ui)` commit on `phase1-scaffold-engine`.
+>
 > **Progress (P4.8 done — output modes + OSC52 clipboard):** `src/output/emit.rs` lands the pure
 > result-set serializer `render_output(&Table, &Schema, OutputFormat{Csv,Tsv,Json,Markdown}) ->
 > String` — CSV RFC-4180 quoting/escaping (`Cell::Null`→empty unquoted field), TSV backslash

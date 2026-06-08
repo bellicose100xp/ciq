@@ -9,15 +9,22 @@ Run with a released/`cargo run --release -- <file.csv>` build against a CSV that
 low-cardinality text column (e.g. `status`) and a date column, in **both** a light and a dark
 terminal.
 
+**Screen layout (top -> bottom):** the bordered results pane fills the screen (its border title
+shows the `delim , | header on` dialect summary; its first inner row is the single sticky header
+of `name (badge)` column labels), then the **query bar near the bottom** (`> ` prompt), then the
+status line at the very bottom. The query *input* is at the bottom; all popups (autocomplete /
+palette / facet / history / AI) anchor **just above** the query bar and grow upward over the
+results pane.
+
 ## Phase 3 — autocomplete popup (P3.6 / P3.7)
 
 The headless snapshot proves the popup's logical cells only (which glyphs / candidates / the
 right-aligned type-hint land where). It does NOT prove real glyphs, on-screen placement, or color
 polarity. Confirm by hand:
 
-1. **Popup opens + column candidates.** Type `SELECT st`. A popup appears under the query bar
-   listing columns matching `st` (e.g. `status`), each with its type badge right-aligned (`txt`,
-   `int`, `date`, …). Confirm the badge column is legible (not clipped, readable color).
+1. **Popup opens + column candidates.** Type `SELECT st`. A popup appears just above the bottom
+   query bar listing columns matching `st` (e.g. `status`), each with its type badge right-aligned
+   (`txt`, `int`, `date`, …). Confirm the badge column is legible (not clipped, readable color).
 2. **Tab inserts the selection.** With `status` highlighted, press `Tab`. The bar becomes
    `SELECT status` and the popup closes. No flicker, no stray characters.
 3. **Arrow selection.** Type `SELECT ` (trailing space) to list all columns. Press Down/Up and
@@ -32,23 +39,30 @@ polarity. Confirm by hand:
    shows the *distinct actual values* of `status` (fetched through the worker). Type a letter to
    filter; accept one and confirm it inserts as a single-quoted literal, e.g. `'active'`.
 7. **Placement / overflow.** Resize the window narrow and tall, and short and wide, while a popup is
-   open. Confirm the popup stays anchored under the query bar, does not overflow the screen edge,
-   and does not corrupt the grid behind it.
+   open. Confirm the popup stays anchored just above the bottom query bar, grows upward without
+   overflowing the top of the pane, and does not corrupt the grid behind it.
 8. **Color polarity.** Repeat 1 and 6 in a light terminal and a dark terminal. Confirm the popup
    border, the selected-row highlight, and the dimmed type-hint column are all legible in both
    (the §4.7 polarity check).
 
-## Phase 4 — schema bar (P4.1)
+## Phase 4 — single type-annotated header + bottom query bar (P4.1 / layout)
 
-The headless snapshot proves the schema bar's logical cells (the `name (badge)` entries, their
-alignment to the grid columns, the summary text). It does NOT prove the drawn underline on the
-active column or the literal delimiter glyph as a real terminal renders them. Confirm by hand:
+The grid's one sticky header carries each column's `name (badge)` label (the type badge folded in);
+there is **no separate schema-bar row** — the old design showed the column names twice (a dimmed
+name row above a bold name row), which is gone. The dialect summary moved to the pane border title.
+The headless snapshots prove the single header's logical cells and that the query bar is the
+second-to-last row; they do NOT prove real glyphs or color polarity. Confirm by hand:
 
-1. **Bar shows + aligns.** Run a query that returns a grid. Above the grid header sits a row of
-   `name (badge)` labels (e.g. `id (int)   name (txt)   amount (num)`), each sitting dead-on over
-   its data column. Scroll the grid horizontally (Right/Left while the grid has focus) and confirm
-   the bar scrolls in lockstep (same columns drop off the left as the grid's).
-2. **Delimiter/header summary.** The pane border title reads `delim , | header on` (or the actual
+1. **One header, type-annotated.** Run a query that returns a grid (e.g. `SELECT * FROM t`). The
+   first inner row of the results pane is a single row of `name (badge)` labels (e.g.
+   `id (int)   name (txt)   amount (num)`), each sitting dead-on over its data column. Confirm the
+   column names appear **exactly once** — there is no duplicate header row above or below it.
+2. **Header stays sticky.** Scroll the grid vertically (Down/Up while the grid has focus) and
+   confirm the header row stays put while the body scrolls under it.
+3. **Query bar at the bottom.** Confirm the `> ` query input sits near the **bottom** of the screen
+   (with the status line below it), not at the top. Typing updates the bar at the bottom and the
+   grid above it refreshes live.
+4. **Delimiter/header summary.** The pane border title reads `delim , | header on` (or the actual
    delimiter for your file; a TSV shows `delim \t`). Confirm it is legible in a light and a dark
    terminal (the §4.7 polarity check).
 
@@ -61,7 +75,7 @@ badges land where). It does NOT prove the drawn popup glyphs, the real `Space`/a
 terminal delivers them, or the Replace-transition feel. Confirm by hand (open a CSV with a few
 typed columns including a reserved-word column if you can, e.g. `order`):
 
-1. **Open + checkboxes.** Press `Ctrl+K`. A bordered "columns" popup appears under the query bar
+1. **Open + checkboxes.** Press `Ctrl+K`. A bordered "columns" popup appears just above the bottom query bar
    listing every column with a `[ ]` checkbox and a right-aligned type badge (`int`/`txt`/`date`/…).
    Confirm the badges are legible and the box does not overflow the screen edge.
 2. **Space toggles.** Move the cursor (Up/Down) to a column and press `Space`. Confirm the checkbox
@@ -96,7 +110,7 @@ real `f`/`Esc` chords as the terminal delivers them. Confirm by hand (open a CSV
 low-cardinality text column like `region` and a numeric/date column like `amount`/`created_at`):
 
 1. **Open a facet.** Run a query so the grid has rows, press `Down` to focus the results pane, then
-   press `f`. A bordered "facet: <column> (<badge>)" popup appears under the query bar for the
+   press `f`. A bordered "facet: <column> (<badge>)" popup appears just above the bottom query bar for the
    leftmost visible column. Confirm it briefly shows "computing…" then fills (the worker round-trip).
 2. **Numeric/date summary.** With the focused column numeric or a date, confirm the popup shows
    `min` / `max` / `distinct` / `nulls` lines, the values legible and the labels dimmed.
@@ -135,7 +149,8 @@ What a real terminal must confirm is the §4.7 residue — true-terminal glyphs/
 reverse-video color, the real `Ctrl+R` chord, and color polarity. Confirm by hand:
 
 1. **Open the popup.** With a few queries run, press `Ctrl+R`. A bordered "history (N)" popup appears
-   under the query bar, listing prior queries newest-first, the top row highlighted (reverse-video).
+   just above the bottom query bar, listing prior queries newest-first, the top row highlighted
+   (reverse-video).
 2. **Navigate + recall.** Press `Down`/`Up` to move the highlight; confirm it tracks and the window
    scrolls once you pass the bottom. Press `Enter` on an entry — the popup closes and that SQL drops
    into the query bar, and the grid updates (it fired through the normal debounce/dispatch path).

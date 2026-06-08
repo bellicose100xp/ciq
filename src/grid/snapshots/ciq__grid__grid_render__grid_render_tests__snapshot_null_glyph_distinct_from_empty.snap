@@ -2,7 +2,7 @@
 source: src/grid/grid_render_tests.rs
 expression: screen
 ---
-"val                 "
+"val (txt)           "
 "NULL                "
 "                    "
 "x                   "

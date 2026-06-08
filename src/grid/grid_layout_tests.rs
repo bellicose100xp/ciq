@@ -45,32 +45,34 @@ fn one_body_line_per_row() {
 }
 
 #[test]
-fn header_carries_column_names() {
+fn header_carries_column_names_with_type_badges() {
     let t = sample_table();
     let frame = layout_grid(&t, &GridView::new(80, 24));
-    assert!(frame.header.contains("id"));
-    assert!(frame.header.contains("name"));
+    // The single sticky header now carries `name (badge)` per column (the folded-in type label).
+    assert!(frame.header.contains("id (int)"));
+    assert!(frame.header.contains("name (txt)"));
 }
 
 #[test]
 fn numeric_column_right_aligned_text_left_aligned() {
     let t = sample_table();
     let frame = layout_grid(&t, &GridView::new(80, 24));
-    // id width = max("id"=2, "300"=3) = 3; name width = max("name"=4,"Ada"=3,"NULL"=4)=4.
-    assert_eq!(frame.widths, vec![3, 4]);
+    // Widths are sized to the `name (badge)` header label: id = max("id (int)"=8, cells<=3) = 8;
+    // name = max("name (txt)"=10, "Ada"=3,"NULL"=4) = 10.
+    assert_eq!(frame.widths, vec![8, 10]);
     assert_eq!(frame.aligns, vec![Align::Right, Align::Left]);
-    // Row 0: id=1 right-aligned in width 3 -> "  1"; name="Ada" left in 4 -> "Ada ".
-    assert_eq!(frame.body[0].text, "  1  Ada ");
-    // Row 1: id=20 -> " 20"; name="Bo" -> "Bo  ".
-    assert_eq!(frame.body[1].text, " 20  Bo  ");
+    // Row 0: id=1 right-aligned in width 8 -> "       1"; name="Ada" left in 10 -> "Ada       ".
+    assert_eq!(frame.body[0].text, "       1  Ada       ");
+    // Row 1: id=20 -> "      20"; name="Bo" -> "Bo        ".
+    assert_eq!(frame.body[1].text, "      20  Bo        ");
 }
 
 #[test]
 fn null_cell_renders_glyph_in_body() {
     let t = sample_table();
     let frame = layout_grid(&t, &GridView::new(80, 24));
-    // Row 2: id=300 -> "300"; name=NULL -> "NULL".
-    assert_eq!(frame.body[2].text, "300  NULL");
+    // Row 2: id=300 right-aligned in width 8 -> "     300"; name=NULL left in 10 -> "NULL      ".
+    assert_eq!(frame.body[2].text, "     300  NULL      ");
 }
 
 #[test]
@@ -88,7 +90,8 @@ fn null_span_marks_only_the_genuine_null_cell() {
     // text "NULL" in column b.
     assert_eq!(row.null_spans.len(), 1, "only the real NULL is flagged");
     let span = row.null_spans[0].clone();
-    assert_eq!(&row.text[span.clone()], "NULL");
+    // The flagged range is column c's padded cell, which contains the glyph "NULL".
+    assert!(row.text[span.clone()].contains("NULL"));
     // The flagged range is the LAST "NULL" in the row (column c), not column b's text "NULL".
     assert_eq!(span.start, row.text.rfind("NULL").unwrap());
 }
@@ -127,10 +130,10 @@ fn truncated_null_glyph_still_flagged() {
 fn col_x_tracks_gutters() {
     let t = sample_table();
     let frame = layout_grid(&t, &GridView::new(80, 24));
-    // first col starts at 0; second at width(3) + gap(2) = 5.
-    assert_eq!(frame.col_x, vec![0, 5]);
-    // total = col1(3) + gap(2) + col2(4) = 9.
-    assert_eq!(frame.total_width, 9);
+    // first col (`id (int)` width 8) starts at 0; second at width(8) + gap(2) = 10.
+    assert_eq!(frame.col_x, vec![0, 10]);
+    // total = col1(8) + gap(2) + col2(10) = 20.
+    assert_eq!(frame.total_width, 20);
 }
 
 #[test]
@@ -177,8 +180,9 @@ fn viewport_truncates_trailing_columns_that_dont_fit() {
         Column::new("b", ColumnType::Text, vec![Cell::Text("bbbb".into())]),
         Column::new("c", ColumnType::Text, vec![Cell::Text("cccc".into())]),
     ]);
-    // each col width 4, gutter 2. Two cols = 4+2+4 = 10. Three = 16. Viewport 12 fits two.
-    let frame = layout_grid(&t, &GridView::new(12, 24));
+    // Each col is sized to its `x (txt)`=7 header label, gutter 2. Two cols = 7+2+7 = 16;
+    // three = 7+2+7+2+7 = 25. Viewport 18 fits two.
+    let frame = layout_grid(&t, &GridView::new(18, 24));
     assert_eq!(frame.widths.len(), 2);
 }
 

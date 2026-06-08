@@ -181,13 +181,21 @@ pub fn layout_grid(table: &Table, view: &GridView) -> GridFrame {
     }
     let total_width = x;
 
-    // Header line: column names, aligned by type, joined by the gutter.
+    // Header line: each column's `name (badge)` label, aligned by type, joined by the gutter.
+    // The badge is folded in here so the one sticky header carries the column's sniffed type;
+    // `compute_widths` sized each column to fit this label.
     let header = join_cells(
         visible
             .iter()
             .zip(&widths)
             .zip(&aligns)
-            .map(|((&idx, &w), &a)| pad(&render_str(&columns[idx].name, w), w, a)),
+            .map(|((&idx, &w), &a)| {
+                pad(
+                    &render_str(&super::col_width::header_label(&columns[idx]), w),
+                    w,
+                    a,
+                )
+            }),
     );
 
     // Body lines: one per row, each a join of the visible cells. Track which byte ranges came

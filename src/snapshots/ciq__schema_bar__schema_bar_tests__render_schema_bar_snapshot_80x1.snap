@@ -1,5 +1,0 @@
----
-source: src/schema_bar_tests.rs
-expression: terminal.backend().to_string()
----
-"id (int)    name (txt)    amount (num)                                          "

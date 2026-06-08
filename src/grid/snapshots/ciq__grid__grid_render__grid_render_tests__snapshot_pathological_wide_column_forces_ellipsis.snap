@@ -2,9 +2,9 @@
 source: src/grid/grid_render_tests.rs
 expression: screen
 ---
-"huge                                      n                                     "
-"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…  1                                     "
-"short                                     2                                     "
+"huge (txt)                                n (int)                               "
+"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…        1                               "
+"short                                           2                               "
 "                                                                                "
 "                                                                                "
 "                                                                                "

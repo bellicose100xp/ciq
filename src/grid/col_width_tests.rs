@@ -86,8 +86,8 @@ fn width_is_max_of_header_and_widest_cell() {
         ColumnType::Int,
         vec![Cell::Int(1), Cell::Int(123456)],
     )]);
-    // header "id" = 2, widest cell "123456" = 6 -> 6
-    assert_eq!(compute_widths(&t, 80), vec![6]);
+    // header label "id (int)" = 8, widest cell "123456" = 6 -> 8 (the label now dominates).
+    assert_eq!(compute_widths(&t, 80), vec![8]);
 }
 
 #[test]
@@ -97,7 +97,8 @@ fn width_uses_header_when_cells_are_narrow() {
         ColumnType::Text,
         vec![Cell::Text("x".into())],
     )]);
-    assert_eq!(compute_widths(&t, 80), vec![10]);
+    // header label "longheader (txt)" = 16, cell "x" = 1 -> 16.
+    assert_eq!(compute_widths(&t, 80), vec![16]);
 }
 
 #[test]
@@ -126,11 +127,10 @@ fn width_capped_at_viewport_when_smaller_than_default() {
 #[test]
 fn width_null_cell_counts_glyph_width() {
     let t = table(vec![Column::new("c", ColumnType::Text, vec![Cell::Null])]);
-    // header "c" = 1, NULL glyph = 4 -> 4
-    assert_eq!(
-        compute_widths(&t, 80),
-        vec![NULL_GLYPH.chars().count() as u16]
-    );
+    // header label "c (txt)" = 7 dominates the 4-char NULL glyph -> 7. (The glyph still counts
+    // toward the width; here the label is simply wider.)
+    assert!(compute_widths(&t, 80)[0] >= NULL_GLYPH.chars().count() as u16);
+    assert_eq!(compute_widths(&t, 80), vec![7]);
 }
 
 #[test]
@@ -142,16 +142,20 @@ fn empty_table_yields_no_widths() {
 #[test]
 fn empty_column_falls_back_to_header_width() {
     let t = table(vec![Column::new("hdr", ColumnType::Text, vec![])]);
-    assert_eq!(compute_widths(&t, 80), vec![3]);
+    // header label "hdr (txt)" = 9, no cells -> 9.
+    assert_eq!(compute_widths(&t, 80), vec![9]);
 }
 
 #[test]
 fn min_col_width_floor_applies() {
-    // A zero-length header with empty cells still gets the floor.
+    // Even an empty column name still carries its `(txt)` badge label (" (txt)" = 6 chars), which
+    // is comfortably above MIN_COL_WIDTH — so the floor never binds once the badge is folded in.
     let t = table(vec![Column::new(
         "",
         ColumnType::Text,
         vec![Cell::Text(String::new())],
     )]);
-    assert_eq!(compute_widths(&t, 80), vec![MIN_COL_WIDTH]);
+    let w = compute_widths(&t, 80);
+    assert!(w[0] >= MIN_COL_WIDTH);
+    assert_eq!(w, vec![6]);
 }

@@ -265,6 +265,22 @@ fn split_top_level_commas(spec: &str) -> Vec<String> {
     parts
 }
 
+/// The compact delimiter/header indicator shown in the results-pane border title, e.g.
+/// `delim , | header on`. Pure: built from the active dialect the App holds.
+///
+/// `delimiter` is `None` when DuckDB auto-detected it (shown as `auto`); `header` reflects whether
+/// the first row was treated as a header. ASCII only (no emoji); the literal delimiter glyph is
+/// shown verbatim (a tab is shown as `\t` so it stays visible).
+pub fn dialect_summary(delimiter: Option<char>, header: bool) -> String {
+    let delim = match delimiter {
+        Some('\t') => "\\t".to_string(),
+        Some(c) => c.to_string(),
+        None => "auto".to_string(),
+    };
+    let header = if header { "on" } else { "off" };
+    format!("delim {delim} | header {header}")
+}
+
 #[cfg(test)]
 #[path = "csv_opts_tests.rs"]
 mod csv_opts_tests;

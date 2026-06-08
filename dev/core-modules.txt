@@ -72,13 +72,6 @@ src/ingest/sniff.rs
 src/ingest/csv_opts.rs
 src/sql_ident.rs
 
-# Phase 4 (present now): the schema bar — pure `layout_schema_bar` (name+badge entries fit to the
-# grid's per-column widths, aligned to its col_x) + the `summary` string. A wrong width-fit or a
-# misaligned col_x silently breaks the grid alignment, so the layout earns the hard floor. The thin
-# `render_schema_bar` blit shares the file but is fully exercised by the TestBackend snapshot +
-# zero-area tests, so it doesn't erode the floor.
-src/schema_bar.rs
-
 # Phase 4 (present now): output modes — pure `render_output` (CSV RFC-4180 quoting, TSV escaping,
 # JSON null-vs-"" type fidelity, Markdown alignment). Every branch is a real format-correctness
 # case (a mis-quoted field corrupts the export; a wrong JSON shape loses the §8/Q12 null-vs-empty

@@ -77,7 +77,7 @@ fn populated_grid_renders_header_body_and_null_glyph() {
 }
 
 #[test]
-fn schema_bar_and_summary_render_above_grid() {
+fn single_type_annotated_header_and_dialect_summary() {
     use crate::schema::{ColumnMeta, Schema};
     let mut a = app();
     a.set_schema(Schema::new(vec![
@@ -89,7 +89,7 @@ fn schema_bar_and_summary_render_above_grid() {
     for c in "SELECT * FROM t".chars() {
         a.on_key(KeyEvent::char(c), 0);
     }
-    // Dismiss the autocomplete popup so it doesn't overlay the schema bar in this render.
+    // Dismiss the autocomplete popup so it doesn't overlay the header in this render.
     a.on_key(KeyEvent::plain(Key::Esc), 0);
     a.tick(150);
     let id = a.latest_request_id();
@@ -119,33 +119,24 @@ fn schema_bar_and_summary_render_above_grid() {
         screen.contains("delim , | header on"),
         "delimiter/header summary in border title, screen:\n{screen}"
     );
-    // The schema bar shows name + type badge above the grid.
+    // The single sticky header carries name + type badge.
     assert!(
         screen.contains("id (int)"),
-        "schema-bar id badge, screen:\n{screen}"
+        "header id badge, screen:\n{screen}"
     );
     assert!(
         screen.contains("name (txt)"),
-        "schema-bar name badge, screen:\n{screen}"
+        "header name badge, screen:\n{screen}"
     );
-    // The grid still renders its body cells below the bar (one extra reserved row didn't crowd
-    // them out).
     assert!(screen.contains("ada"), "grid cell value, screen:\n{screen}");
     assert!(screen.contains("2 rows"), "status, screen:\n{screen}");
 
-    // The schema bar's `id (int)` lands ABOVE the grid's bare `id` header row: the first line on
-    // which the decorated badge appears precedes the first line on which the bare header appears.
-    let bar_line = screen
-        .lines()
-        .position(|l| l.contains("id (int)"))
-        .expect("schema bar line");
-    let header_line = screen
-        .lines()
-        .position(|l| l.contains("id") && !l.contains("id (int)") && !l.contains("SELECT"))
-        .expect("grid header line");
-    assert!(
-        bar_line < header_line,
-        "schema bar (line {bar_line}) above grid header (line {header_line}), screen:\n{screen}"
+    // The header row appears EXACTLY ONCE — the old duplicate (a dimmed schema-bar name row + a
+    // bold grid header) is gone. There is one line carrying the column names, not two.
+    let header_lines = screen.lines().filter(|l| l.contains("name (txt)")).count();
+    assert_eq!(
+        header_lines, 1,
+        "exactly one header row (no duplicate), screen:\n{screen}"
     );
 }
 
@@ -229,6 +220,29 @@ fn query_text_appears_in_bar() {
     let screen = render(&a, 40, 6);
     assert!(screen.contains("SELECT 42"), "screen:\n{screen}");
     assert!(screen.contains('>'), "prompt glyph, screen:\n{screen}");
+}
+
+#[test]
+fn query_bar_sits_at_the_bottom() {
+    // The query input is anchored near the bottom of the screen (status line below it), not at
+    // the top. The prompt line must fall in the lower portion of the frame.
+    let mut a = app();
+    a.on_loaded("ready");
+    a.on_key(KeyEvent::plain(Key::Paste("SELECT 42".into())), 0);
+    let h = 10u16;
+    let screen = render(&a, 40, h);
+    let lines: Vec<&str> = screen.lines().collect();
+    let bar_line = lines
+        .iter()
+        .position(|l| l.contains("SELECT 42"))
+        .expect("query bar line");
+    // Bar is the second-to-last row (status line is the very last); definitively in the bottom
+    // half, not row 0 as it used to be.
+    assert_eq!(
+        bar_line,
+        lines.len() - 2,
+        "query bar is the second-to-last row (status below it), screen:\n{screen}"
+    );
 }
 
 #[test]

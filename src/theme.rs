@@ -54,6 +54,15 @@ pub mod app {
     pub fn empty_state() -> Style {
         Style::default().fg(Color::DarkGray)
     }
+
+    /// The `delim , | header on` dialect indicator shown in the results-pane border title — dimmed
+    /// context, distinct from the grid's bold header. Color polarity (legibility light vs dark) is
+    /// the §4.7 human-validated concern.
+    pub fn dialect_summary() -> Style {
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM)
+    }
 }
 
 /// Autocomplete popup colors and styles (`dev/PLAN.md` §5.1/§5.6).
@@ -84,38 +93,6 @@ pub mod autocomplete {
     /// The right-aligned type-hint label (`int`/`kw`/`fn`/…) — dimmed as secondary metadata.
     pub fn type_hint() -> Style {
         Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM)
-    }
-}
-
-/// Schema bar colors and styles (`dev/PLAN.md` §6.3).
-///
-/// The always-visible row of column names + type badges pinned above the grid. The non-active
-/// labels read as quiet metadata (so the data body draws the eye); the active column is
-/// underlined + bold so the focused column stands out. The summary (`delim , | header on`) is
-/// dimmed context. Color polarity (legibility light vs dark) is the §4.7 human-validated concern
-/// — centralizing here keeps it a single-file change.
-pub mod schema_bar {
-    use ratatui::style::{Color, Modifier, Style};
-
-    /// A normal (non-active) column label: `name (badge)`. The accent color ties it to the grid
-    /// header, slightly dimmed so it reads as the schema bar, not a second data row.
-    pub fn label() -> Style {
-        Style::default().fg(Color::Cyan)
-    }
-
-    /// The active column's label — underlined + bold so the focused column is unmistakable. The
-    /// underline is the §4.7 human-validated terminal-render residue.
-    pub fn active() -> Style {
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-    }
-
-    /// The `delim , | header on` summary string — dimmed context.
-    pub fn summary() -> Style {
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::DIM)
     }
 }
 

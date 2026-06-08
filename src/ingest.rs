@@ -33,7 +33,9 @@ pub mod csv_opts;
 pub mod sniff;
 
 pub use csv_config::{CsvConfig, load_csv_config_str};
-pub use csv_opts::{ColumnTypeOverride, CsvOpts, merge, parse_types_spec, to_read_csv_sql};
+pub use csv_opts::{
+    ColumnTypeOverride, CsvOpts, dialect_summary, merge, parse_types_spec, to_read_csv_sql,
+};
 pub use sniff::{SniffResult, sniff, sniff_bytes};
 
 // Q3/Q7/Q12 resolution: end-to-end fixture tests that pin the *engine's* observed ingest
