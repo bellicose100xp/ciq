@@ -1,5 +1,6 @@
-//! Tests for the pure query-bar [`Editor`] — character-granular edits, cursor clamping, and
-//! UTF-8 safety (no byte-boundary slicing on multi-byte input).
+//! Tests for the query-bar [`Editor`] (the `tui_textarea` wrapper): character-granular edits,
+//! cursor clamping, UTF-8 safety, the multiline newline path, and the byte<->(row,col) bridge the
+//! SQL lexer / autocomplete index the query by.
 
 use super::Editor;
 
@@ -8,7 +9,9 @@ fn new_editor_is_empty() {
     let e = Editor::new();
     assert_eq!(e.text(), "");
     assert_eq!(e.cursor(), 0);
+    assert_eq!(e.cursor_byte(), 0);
     assert!(e.is_empty());
+    assert_eq!(e.line_count(), 1);
 }
 
 #[test]
@@ -16,6 +19,7 @@ fn with_text_places_cursor_at_end() {
     let e = Editor::with_text("SELECT 1");
     assert_eq!(e.text(), "SELECT 1");
     assert_eq!(e.cursor(), 8);
+    assert_eq!(e.cursor_byte(), 8);
 }
 
 #[test]
@@ -117,6 +121,105 @@ fn set_text_and_clear() {
     e.clear();
     assert_eq!(e.text(), "");
     assert_eq!(e.cursor(), 0);
+    assert_eq!(e.line_count(), 1);
+}
+
+// --- multiline: Enter inserts a newline; text() joins lines with `\n`. ---
+
+#[test]
+fn insert_newline_splits_into_lines() {
+    let mut e = Editor::with_text("SELECT *");
+    e.insert_newline();
+    e.insert_str("FROM t");
+    assert_eq!(e.text(), "SELECT *\nFROM t");
+    assert_eq!(e.line_count(), 2);
+    // cursor is char index into the joined text: "SELECT *" (8) + newline (1) + "FROM t" (6) = 15.
+    assert_eq!(e.cursor(), 15);
+}
+
+#[test]
+fn newline_in_paste_splits_lines() {
+    let mut e = Editor::new();
+    e.insert_str("a\nb\nc");
+    assert_eq!(e.text(), "a\nb\nc");
+    assert_eq!(e.line_count(), 3);
+}
+
+#[test]
+fn move_up_down_between_lines() {
+    let mut e = Editor::new();
+    e.insert_str("one\ntwo");
+    assert!(e.is_on_last_line());
+    assert!(!e.is_on_first_line());
+    e.move_up();
+    assert!(e.is_on_first_line());
+    assert!(!e.is_on_last_line());
+    e.move_down();
+    assert!(e.is_on_last_line());
+}
+
+#[test]
+fn move_up_on_first_line_is_noop() {
+    let mut e = Editor::with_text("only");
+    assert!(e.is_on_first_line() && e.is_on_last_line());
+    e.move_up();
+    assert!(e.is_on_first_line());
+}
+
+#[test]
+fn backspace_at_line_head_joins_previous_line() {
+    let mut e = Editor::new();
+    e.insert_str("ab\ncd");
+    e.move_home(); // head of line "cd"
+    e.backspace(); // joins onto the previous line
+    assert_eq!(e.text(), "abcd");
+    assert_eq!(e.line_count(), 1);
+}
+
+// --- byte <-> (row, col) bridge: cursor_byte() into the joined text, and the inverse. ---
+
+#[test]
+fn cursor_byte_accounts_for_newline_bytes_and_multibyte_chars() {
+    let mut e = Editor::new();
+    // Line 0: "é" (2 bytes). Line 1: "xy" — cursor will sit after the 'x'.
+    e.insert_str("é\nxy");
+    e.move_left(); // cursor between x and y on line 1
+    // byte offset = len("é")=2 + 1 (the `\n`) + len("x")=1 = 4.
+    assert_eq!(e.cursor_byte(), 4);
+    // char index = 1 (é) + 1 (newline) + 1 (x) = 3.
+    assert_eq!(e.cursor(), 3);
+}
+
+#[test]
+fn set_text_with_byte_cursor_maps_offset_into_multiline_text() {
+    let mut e = Editor::new();
+    // Bytes of "ab\ncdef": a=0 b=1 \n=2 c=3 d=4 e=5 f=6. Byte offset 6 is between 'e' and 'f' on
+    // the second line ("ab"=2 + "\n"=1 + "cde"=3 = 6).
+    e.set_text_with_byte_cursor("ab\ncdef", 6);
+    assert_eq!(e.text(), "ab\ncdef");
+    assert_eq!(e.row_col(), (1, 3)); // line 1, after "cde"
+    // Round-trip: cursor_byte() reproduces the byte offset we set.
+    assert_eq!(e.cursor_byte(), 6);
+    // Inserting here lands at the right place in the multiline text.
+    e.insert_char('X');
+    assert_eq!(e.text(), "ab\ncdeXf");
+}
+
+#[test]
+fn set_text_with_byte_cursor_clamps_past_end() {
+    let mut e = Editor::with_text("hi");
+    e.set_text_with_byte_cursor("short", 999);
+    assert_eq!(e.text(), "short");
+    assert_eq!(e.cursor(), 5); // clamped to end
+}
+
+#[test]
+fn set_text_with_byte_cursor_snaps_into_char_boundary() {
+    let mut e = Editor::new();
+    // "é" is 2 bytes; a byte offset of 1 lands mid-char and must snap to char index 0.
+    e.set_text_with_byte_cursor("éx", 1);
+    assert_eq!(e.row_col(), (0, 0));
+    assert_eq!(e.cursor_byte(), 0);
 }
 
 // --- UTF-8 safety: cursor is a CHAR index; mutations never split a code point. ---
@@ -152,4 +255,11 @@ fn multibyte_delete_at_cursor() {
     e.delete(); // removes the leading é, not a stray byte
     assert_eq!(e.text(), "日x");
     assert_eq!(e.cursor(), 0);
+}
+
+#[test]
+fn char_count_matches_joined_text() {
+    let mut e = Editor::new();
+    e.insert_str("ab\ncd"); // 2 + 1 (newline) + 2 = 5 chars
+    assert_eq!(e.char_count(), 5);
 }

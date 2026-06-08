@@ -11,10 +11,11 @@ terminal.
 
 **Screen layout (top -> bottom):** the bordered results pane fills the screen (its border title
 shows the `delim , | header on` dialect summary; its first inner row is the single sticky header
-of `name (badge)` column labels), then the **query bar near the bottom** (`> ` prompt), then the
-status line at the very bottom. The query *input* is at the bottom; all popups (autocomplete /
-palette / facet / history / AI) anchor **just above** the query bar and grow upward over the
-results pane.
+of `name (badge)` column labels), then the **query bar near the bottom** (`> ` prompt + a
+**multiline** editing area with a **visible block cursor**), then the status line at the very
+bottom. The query *input* is at the bottom; all popups (autocomplete / palette / facet / history /
+AI) anchor **just above** the query bar and grow upward over the results pane. The query bar grows
+downward by one row per added line (capped at 5 rows, then it scrolls internally).
 
 ## Phase 3 — autocomplete popup (P3.6 / P3.7)
 
@@ -202,3 +203,29 @@ network dependency yet — see `src/ai/provider.rs`), so step 4 will surface a c
 provider … is not built into this binary" message rather than a real completion. The chord/popup/
 guard/polarity checks (1-3, 5, 6) are fully exercisable now; the live-completion quality check (4)
 applies once the HTTP body is wired.
+
+## Post-5 input UX — multiline query box + visible cursor (tui-textarea)
+
+The query bar is now a `tui_textarea`-backed editor (multiline, with a visible block cursor cell).
+The headless suite proves the joined text, the byte<->(row,col) bridge, the multiline routing, and
+that a reverse-video cursor cell lands in the `TestBackend` buffer. It does NOT prove the real
+on-screen cursor glyph, the felt typing experience, or color polarity. Confirm by hand:
+
+1. **Visible cursor.** Open a CSV. Without typing, confirm a block cursor is visible at the start of
+   the query bar (the old build showed no cursor at all). Type a few characters and confirm the
+   cursor sits after the last typed character and moves as you type.
+2. **Cursor follows edits.** Use Left/Right/Home/End and Backspace/Delete; confirm the cursor lands
+   where expected and the block cursor is always drawn over the correct cell (no off-by-one, no
+   missing cursor at end-of-line).
+3. **Enter adds a newline (no submit).** Type `SELECT *`, press `Enter`, type `FROM t`. Confirm the
+   query bar grows to two rows (`> SELECT *` on top, `  FROM t` below), the query still runs live on
+   debounce (the grid updates — there is no "submit" key), and Enter never clears or runs-and-resets
+   the bar. Shift+Enter behaves the same (newline).
+4. **Multiline navigation.** In a two-line query, Up/Down move the cursor between lines. From the
+   **last** line, Down hands focus to the results grid (as before); from the first line, Up stays in
+   the bar.
+5. **Bar growth + scroll cap.** Add several lines (Enter repeatedly). Confirm the bar grows one row
+   per line up to ~5 rows, the results pane shrinks to make room, and beyond the cap the textarea
+   scrolls internally rather than growing further. Confirm the status line stays the very last row.
+6. **Color polarity.** Repeat 1-3 in a light terminal and a dark terminal — confirm the reverse-video
+   cursor cell and the query text are legible in both (the §4.7 polarity check).

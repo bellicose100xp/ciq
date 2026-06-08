@@ -19,13 +19,17 @@ src/engine/types.rs
 # hard floor.
 src/engine/value_render.rs
 
-# Phase 2 (present now): SQL preprocess, query_state stale-discard, grid layout/col_width math,
-# and the query-bar editor (pure char-indexed buffer + cursor — fully covered by its tests).
+# Phase 2 (present now): SQL preprocess, query_state stale-discard, grid layout/col_width math.
 src/query/preprocess.rs
 src/query/query_state.rs
 src/grid/grid_layout.rs
 src/grid/col_width.rs
-src/app/editor.rs
+
+# Post-5 input UX: the query-bar editor is now a thin wrapper around `tui_textarea::TextArea`
+# (multiline + a visible cursor cell) — a render-widget *seam*, not pure core, so it is off the
+# hard floor (its behavior, incl. the byte<->(row,col) bridge, is covered by editor_tests + the
+# app routing/render tests). The pure insertion logic it feeds (`autocomplete/insertion.rs`) stays
+# on the floor below.
 
 # Phase 2/5 (present now): DuckDB-error -> friendly-message mapping + the P5.3 did-you-mean (a
 # bounded edit-distance over the schema headers). Pure `&str -> String`, one golden row per known

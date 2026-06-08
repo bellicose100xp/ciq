@@ -241,7 +241,9 @@ impl App {
         self.focus
     }
 
-    pub fn query(&self) -> &str {
+    /// The full query text (the textarea lines joined with `\n`). Owned because the multiline
+    /// buffer joins on demand; equality assertions against a `&str` still work.
+    pub fn query(&self) -> String {
         self.editor.text()
     }
 
@@ -621,7 +623,7 @@ impl App {
             return;
         };
         let (new_text, new_cursor) =
-            insert_suggestion(self.editor.text(), self.editor.cursor_byte(), &suggestion);
+            insert_suggestion(&self.editor.text(), self.editor.cursor_byte(), &suggestion);
         self.editor.set_text_with_byte_cursor(new_text, new_cursor);
         self.autocomplete.close();
         // The inserted text changed the query — schedule the debounced grid query for it.
@@ -632,7 +634,7 @@ impl App {
         if matches!(self.phase, AppPhase::LoadError(_)) {
             return; // bar is frozen once load failed
         }
-        let before = self.editor.text().to_string();
+        let before = self.editor.text();
         match ev.key {
             Key::Char(c) => self.editor.insert_char(c),
             Key::Backspace => self.editor.backspace(),
@@ -641,8 +643,22 @@ impl App {
             Key::Right => self.editor.move_right(),
             Key::Home => self.editor.move_home(),
             Key::End => self.editor.move_end(),
+            // Within a multiline query, Up moves between lines; on the first line it is a no-op
+            // (there is nowhere above the bar to go).
+            Key::Up => self.editor.move_up(),
+            // Enter (and Shift+Enter) insert a newline — newline universally, since queries run
+            // live on debounce and there is no submit key (locked decision).
+            Key::Enter => self.editor.insert_newline(),
             Key::Paste(ref s) => self.editor.insert_str(s),
-            Key::Down => self.focus = Focus::Results, // hand off navigation to the grid
+            // Down moves between lines in a multiline query; from the last line it hands navigation
+            // off to the results grid (the single-line case, so the felt behavior is unchanged).
+            Key::Down => {
+                if self.editor.is_on_last_line() {
+                    self.focus = Focus::Results;
+                } else {
+                    self.editor.move_down();
+                }
+            }
             _ => {}
         }
         // Recompute autocomplete on any edit/cursor move (the popup tracks the cursor context).
@@ -913,7 +929,7 @@ impl App {
     pub fn palette_owns_query(&self) -> bool {
         self.palette
             .as_ref()
-            .is_some_and(|p| p.owns(self.editor.text()))
+            .is_some_and(|p| p.owns(&self.editor.text()))
     }
 
     /// Pre-seed the query bar with the palette's own emission (`SELECT * FROM t LIMIT n`) so the

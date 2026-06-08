@@ -6,6 +6,7 @@ use std::sync::mpsc::channel;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::style::Modifier;
 
 use crate::app::{App, Key, KeyEvent};
 use crate::engine::InterruptHandle;
@@ -22,6 +23,19 @@ fn render(app: &App, w: u16, h: u16) -> String {
     let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
     t.draw(|f| app.render(f)).unwrap();
     t.backend().to_string()
+}
+
+/// Whether any cell in the rendered buffer carries the `REVERSED` modifier — the query-bar cursor
+/// cell's distinguishing style (`theme::app::cursor()`). Proves the cursor is visible headlessly
+/// (a `frame.set_cursor` cursor would leave no styled cell in a `TestBackend` buffer).
+fn has_reversed_cell(app: &App, w: u16, h: u16) -> bool {
+    let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
+    t.draw(|f| app.render(f)).unwrap();
+    let buffer = t.backend().buffer();
+    buffer
+        .content()
+        .iter()
+        .any(|cell| cell.modifier.contains(Modifier::REVERSED))
 }
 
 fn result() -> ProcessedResult {
@@ -273,6 +287,71 @@ fn open_popup_overlays_the_screen() {
     assert!(
         screen.contains("status"),
         "popup candidate overlaid, screen:\n{screen}"
+    );
+}
+
+#[test]
+fn query_bar_renders_a_visible_cursor_cell() {
+    // The textarea paints a reverse-video cursor cell into the buffer (headless-snapshotable),
+    // unlike the old hand-rolled bar which drew plain text with no cursor.
+    let mut a = app();
+    a.on_loaded("ready");
+    a.on_key(KeyEvent::plain(Key::Paste("SELECT 42".into())), 0);
+    assert!(
+        has_reversed_cell(&a, 40, 6),
+        "expected a reverse-video cursor cell in the query bar"
+    );
+}
+
+#[test]
+fn empty_query_bar_still_shows_a_cursor() {
+    // Even with no text typed, the cursor cell is visible at the start of the (empty) bar.
+    let mut a = app();
+    a.on_loaded("ready");
+    assert!(
+        has_reversed_cell(&a, 40, 6),
+        "expected a cursor cell even in an empty query bar"
+    );
+}
+
+#[test]
+fn enter_inserts_newline_and_bar_grows_a_row() {
+    let mut a = app();
+    a.on_loaded("ready");
+    for c in "SELECT *".chars() {
+        a.on_key(KeyEvent::char(c), 0);
+    }
+    // Dismiss any popup so it doesn't crowd the small frame.
+    a.on_key(KeyEvent::plain(Key::Esc), 0);
+    a.on_key(KeyEvent::plain(Key::Enter), 0); // newline
+    for c in "FROM t".chars() {
+        a.on_key(KeyEvent::char(c), 0);
+    }
+    a.on_key(KeyEvent::plain(Key::Esc), 0);
+    // The query now contains a newline (text() joins lines with \n).
+    assert!(a.query().contains('\n'), "query: {:?}", a.query());
+
+    // The query bar occupies two rows now: both line fragments render, on adjacent rows, in the
+    // lower portion of the frame (status line is the very last row).
+    let h = 10u16;
+    let screen = render(&a, 40, h);
+    let lines: Vec<&str> = screen.lines().collect();
+    // Match the prompt-prefixed bar line (`> SELECT *`) — the empty-state hint above also contains
+    // "SELECT *", but only the bar's first line carries the `> ` prompt.
+    let row_a = lines
+        .iter()
+        .position(|l| l.contains("> SELECT *"))
+        .expect("first query line");
+    let row_b = lines
+        .iter()
+        .position(|l| l.contains("FROM t") && !l.contains("query"))
+        .expect("second query line");
+    assert_eq!(row_b, row_a + 1, "second line directly below the first");
+    // Two query rows + a status row at the bottom: the second query line is the third-to-last row.
+    assert_eq!(
+        row_b,
+        lines.len() - 2,
+        "the multiline bar sits just above the status line, screen:\n{screen}"
     );
 }
 

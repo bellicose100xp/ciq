@@ -86,6 +86,64 @@ fn paste_inserts_decoded_payload() {
 }
 
 #[test]
+fn enter_inserts_newline_not_submit() {
+    // Enter is a newline universally — there is no submit key. Typing across a newline yields a
+    // multiline query, and the joined text carries the `\n`.
+    let (mut app, _rx) = app();
+    app.on_loaded("ready");
+    type_str(&mut app, "SELECT *", 0);
+    app.on_key(KeyEvent::plain(Key::Enter), 0);
+    type_str(&mut app, "FROM t", 0);
+    assert_eq!(app.query(), "SELECT *\nFROM t");
+    assert_eq!(app.editor().line_count(), 2);
+    // Still in the query bar (Enter did not change focus or dispatch on its own).
+    assert_eq!(app.focus(), Focus::QueryBar);
+}
+
+#[test]
+fn multiline_query_dispatches_joined_text() {
+    // A newline in the query is fine end-to-end: the debounced query fires on the joined text and
+    // the preprocess/lexer tolerate the newline as whitespace.
+    let (mut app, rx) = app();
+    app.on_loaded("ready");
+    type_str(&mut app, "SELECT *", 0);
+    app.on_key(KeyEvent::plain(Key::Enter), 0);
+    type_str(&mut app, "FROM t", 0);
+    app.tick(150);
+    let dispatched = drain(&rx);
+    assert_eq!(dispatched.len(), 1, "one query dispatched");
+    // The dispatched SQL is the LIMIT-wrapped joined query (newline preserved in the inner SQL).
+    assert!(
+        dispatched[0].contains("SELECT *") && dispatched[0].contains("FROM t"),
+        "dispatched: {:?}",
+        dispatched[0]
+    );
+}
+
+#[test]
+fn down_within_multiline_query_moves_cursor_then_hands_off() {
+    // In a two-line query with the cursor on the first line, Down moves to the second line and
+    // stays in the bar; a second Down from the last line hands focus to the results pane.
+    let (mut app, _rx) = app();
+    app.on_loaded("ready");
+    type_str(&mut app, "a", 0);
+    app.on_key(KeyEvent::plain(Key::Enter), 0);
+    type_str(&mut app, "b", 0);
+    app.on_key(KeyEvent::plain(Key::Up), 0); // cursor to line 0
+    assert!(app.editor().is_on_first_line());
+    assert_eq!(app.focus(), Focus::QueryBar);
+    app.on_key(KeyEvent::plain(Key::Down), 0); // line 0 -> line 1, stays in bar
+    assert!(app.editor().is_on_last_line());
+    assert_eq!(
+        app.focus(),
+        Focus::QueryBar,
+        "Down moved between lines, not focus"
+    );
+    app.on_key(KeyEvent::plain(Key::Down), 0); // from last line -> results
+    assert_eq!(app.focus(), Focus::Results);
+}
+
+#[test]
 fn quit_keys_signal_quit() {
     let (mut a, _rx) = app();
     assert!(a.on_key(KeyEvent::plain(Key::Esc), 0));

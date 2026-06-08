@@ -24,6 +24,11 @@ clap = { version = "4.5", features = ["derive"] }
 # `TestBackend`, which lets the entire render path be snapshot-tested with no real terminal.
 ratatui = "0.29"
 
+# Multiline query-bar editor with a visible cursor cell (rendered into the TestBackend buffer, so
+# editing stays headless-snapshotable). Ported from jiq's `input/input_state.rs` (same version);
+# vim-style modal editing is layered on top in a later stage, not provided by the crate.
+tui-textarea = "0.7"
+
 # Debug logging (--debug). `log` is the zero-cost facade (no-op when no logger is installed);
 # `env_logger` is the file sink. Output goes to /tmp/ciq/ only, never stdout/stderr.
 log = "0.4"

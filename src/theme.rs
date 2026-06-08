@@ -22,6 +22,15 @@ pub mod app {
         Style::default()
     }
 
+    /// The query-bar cursor cell. Reverse-video so it reads as a visible block cursor regardless of
+    /// terminal theme — and, crucially, so it shows up as a styled cell in a headless `TestBackend`
+    /// snapshot (a `frame.set_cursor` cursor would not). Mirrors jiq's Insert-mode cursor; the
+    /// vim-mode cursor colors (a later stage) will extend this surface. Color polarity is the §4.7
+    /// human-validated concern.
+    pub fn cursor() -> Style {
+        Style::default().add_modifier(Modifier::REVERSED)
+    }
+
     /// A normal (informational) status line: "N rows", "ready", "running…".
     pub fn status() -> Style {
         Style::default().fg(Color::DarkGray)

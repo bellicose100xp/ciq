@@ -142,7 +142,7 @@ fn generated_sql_drops_into_bar_and_dispatches() {
 
     // The generated SQL passes the read-only single-statement guard (the same one a typed query
     // hits) and LIMIT-wraps — so firing the debounce would dispatch it through the normal path.
-    let wrapped = prepare_interactive(app.query(), VIEWPORT_ROW_LIMIT).expect("valid SELECT");
+    let wrapped = prepare_interactive(&app.query(), VIEWPORT_ROW_LIMIT).expect("valid SELECT");
     assert!(wrapped.contains("status = 'active'"));
     assert!(wrapped.contains("LIMIT"), "viewport-wrapped: {wrapped}");
 }
@@ -166,7 +166,7 @@ fn fenced_select_reply_lands_as_runnable_sql() {
 
     // The fence noise is gone — the bar holds clean SQL that passes the read-only guard.
     assert_eq!(app.query(), "SELECT * FROM t WHERE region = 'EU'");
-    let wrapped = prepare_interactive(app.query(), VIEWPORT_ROW_LIMIT)
+    let wrapped = prepare_interactive(&app.query(), VIEWPORT_ROW_LIMIT)
         .expect("a fenced SELECT must land as a runnable read-only query");
     assert!(wrapped.contains("region = 'EU'"));
 }
@@ -189,7 +189,7 @@ fn dml_reply_is_rejected_by_the_read_only_guard() {
     // guard rejects it — it never reaches the engine.
     assert_eq!(app.query(), "DROP TABLE t");
     assert!(
-        prepare_interactive(app.query(), VIEWPORT_ROW_LIMIT).is_err(),
+        prepare_interactive(&app.query(), VIEWPORT_ROW_LIMIT).is_err(),
         "the read-only guard rejects DROP — the model cannot smuggle DML"
     );
     // Firing the debounce surfaces the rejection as a status-line error, not an engine call.
@@ -216,7 +216,7 @@ fn multi_statement_reply_is_rejected() {
         0,
     );
     assert!(
-        prepare_interactive(app.query(), VIEWPORT_ROW_LIMIT).is_err(),
+        prepare_interactive(&app.query(), VIEWPORT_ROW_LIMIT).is_err(),
         "a multi-statement reply is rejected before any engine call"
     );
 }

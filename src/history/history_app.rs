@@ -22,7 +22,7 @@ impl App {
         }
         self.autocomplete.close();
         self.palette_open = false;
-        let seed = self.editor.text().to_string();
+        let seed = self.editor.text();
         self.history.open(Some(&seed));
         self.history_open = true;
     }

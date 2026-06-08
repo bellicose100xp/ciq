@@ -33,15 +33,26 @@ use crate::theme;
 /// case; a summary (4 lines) fits comfortably inside it. The popup is height-clamped to the pane.
 const FACET_POPUP_ROWS: u16 = 12;
 
+/// How tall the query bar may grow as the query gains lines (the multiline policy). A single-line
+/// query keeps the bar one row (so the felt geometry is unchanged); each additional line adds a
+/// row up to this cap, after which the textarea scrolls within the fixed window. Chosen small so a
+/// long query never crowds out the results pane.
+const MAX_BAR_ROWS: u16 = 5;
+
+/// The query bar height for the current query: one row per line, clamped to [1, [`MAX_BAR_ROWS`]].
+fn bar_height(app: &App) -> u16 {
+    (app.editor().line_count() as u16).clamp(1, MAX_BAR_ROWS)
+}
+
 /// Render the whole app into `frame`.
 pub fn render(app: &App, frame: &mut Frame) {
     let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),    // results pane (fills the space)
-            Constraint::Length(1), // query bar (near the bottom)
-            Constraint::Length(1), // status line (very bottom)
+            Constraint::Min(1),                  // results pane (fills the space)
+            Constraint::Length(bar_height(app)), // query bar (grows with line count, capped)
+            Constraint::Length(1),               // status line (very bottom)
         ])
         .split(area);
 
@@ -147,13 +158,34 @@ fn popup_width(pane_width: u16) -> u16 {
     pane_width.clamp(MIN.min(pane_width.max(1)), MAX.min(pane_width.max(1)))
 }
 
-/// The query bar: a prompt glyph followed by the current query text.
+/// Width of the leading `> ` prompt column reserved at the left of the query bar.
+const PROMPT_WIDTH: u16 = 2;
+
+/// The query bar: a `> ` prompt glyph in a fixed left column, then the multiline editing textarea
+/// (which paints its own visible cursor cell into the buffer — headless-snapshotable). The prompt
+/// pins to the top row so it reads as a single baseline marker even when the textarea spans rows.
 fn render_query_bar(app: &App, frame: &mut Frame, area: Rect) {
-    let line = Line::from(vec![
-        Span::styled("> ", theme::app::prompt()),
-        Span::styled(app.query().to_string(), theme::app::query_text()),
-    ]);
-    frame.render_widget(Paragraph::new(line), area);
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let prompt_w = PROMPT_WIDTH.min(area.width);
+    let prompt_area = Rect {
+        height: 1,
+        width: prompt_w,
+        ..area
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled("> ", theme::app::prompt()))),
+        prompt_area,
+    );
+    let text_area = Rect {
+        x: area.x.saturating_add(prompt_w),
+        width: area.width.saturating_sub(prompt_w),
+        ..area
+    };
+    if text_area.width > 0 {
+        frame.render_widget(app.editor().textarea(), text_area);
+    }
 }
 
 /// The results pane: a bordered box containing the aligned grid, a loading indicator, or an

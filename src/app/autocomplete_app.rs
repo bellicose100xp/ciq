@@ -32,12 +32,12 @@ impl App {
         // If the cursor is in a value position for an uncached, known column, fetch its distinct
         // values through the worker (same channel/engine — autocomplete never opens its own
         // connection, §5.5). The popup fills in once the response lands.
-        if let Some(col) = self.value_column_to_fetch(query, cursor, schema) {
+        if let Some(col) = self.value_column_to_fetch(&query, cursor, schema) {
             let sql = build_distinct_sql_default(&col);
             let _ = self.dispatcher.dispatch_value(sql, col);
         }
 
-        let suggestions = get_suggestions(query, cursor, schema, OPERATORS, &self.value_cache);
+        let suggestions = get_suggestions(&query, cursor, schema, OPERATORS, &self.value_cache);
         self.autocomplete.open_with(suggestions);
     }
 

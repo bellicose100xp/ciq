@@ -278,6 +278,14 @@ These are not repeated per-task; they apply to **every** task that writes Rust:
 
 ---
 
+## Post-5 UX polish (not numbered Phase tasks — incremental input/feel work)
+
+These ride after Phase 5; they refine the felt input experience rather than add a planned phase deliverable. Tracked here so a future session can resume them.
+
+> **Progress (input UX foundation — multiline query box + visible cursor):** replaced the hand-rolled single-line `src/app/editor.rs` buffer with a thin wrapper around `tui_textarea::TextArea<'static>` (matching jiq's `input/input_state.rs`, `tui-textarea = "0.7"`). This fixes the **missing cursor** (the textarea paints a reverse-video cursor cell straight into the buffer — `theme::app::cursor()` REVERSED + `set_cursor_line_style(Style::default())` to kill the line highlight — so it is visible in a real terminal AND in a `TestBackend` snapshot, no `frame.set_cursor`) and unblocks the next **vim** stage (multiline editing). **Enter = newline universally** (locked decision): plain Enter and Shift+Enter both insert `\n`; there is no submit key (queries run live on debounce). `Editor::text()` now returns the lines joined with `\n`; a byte<->(row,col) bridge (`cursor_byte` / `set_text_with_byte_cursor`, both char-boundary-safe) keeps the SQL lexer / autocomplete / palette indexing the joined query by byte offset. The render layer (`app_render.rs`) draws a fixed 2-col `> ` prompt + the `&TextArea` widget; the query bar **grows one row per line up to 5 rows, then the textarea scrolls** (`MAX_BAR_ROWS`), with the results-pane height math accounting for it. Down from the last bar line still hands focus to the grid; within a multiline query Up/Down move between lines. Autocomplete/palette/history/AI all set or insert into the bar through the same accessors. `editor.rs` is now a **seam** (it owns a render widget) so it was **removed from `dev/core-modules.txt`'s hard floor**; its behavior (incl. the byte bridge) is covered by `editor_tests` + the app routing/render tests, and the pure `insertion.rs` it feeds stays on the floor. **`App::query()` now returns `String`** (joined text). Full gate green: fmt + clippy (incl. determinism gate) clean, release + debug 0-warning, **873 lib + 8 integration tests** (`--test-threads=1`, never `--lib`; was 869+8). New tests: editor multiline/newline/byte-bridge cases, app-level Enter-is-newline / multiline-dispatch / Down-line-vs-handoff routing, and render-layer visible-cursor (a REVERSED cell lands in the buffer) + multiline-bar-growth. `dev/human-smoke.md` gains a "Post-5 input UX" section (visible cursor / Enter-newline / multiline nav / bar growth / polarity). The §4.7 human-validation of the real-terminal cursor glyph + feel remains pending (batched). **Next:** vim-style modal editing layered on the textarea (jiq's `src/editor/`).
+
+---
+
 ## Cross-phase invariants (re-checked every phase)
 
 | Invariant | Asserted by |
