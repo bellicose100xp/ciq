@@ -18,7 +18,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::ai::ai_render::render_ai;
-use crate::app::{App, AppPhase};
+use crate::app::{App, AppPhase, Focus};
 use crate::autocomplete::autocomplete_render::{MAX_VISIBLE_ROWS, render_popup};
 use crate::facets::facet_render::render_facet;
 use crate::grid::{GridView, grid_render, layout_grid};
@@ -273,7 +273,9 @@ fn split_off_banner(inner: Rect, banner: Option<&str>) -> (Option<Rect>, Rect) {
     (Some(banner_area), rest)
 }
 
-/// The status line: error-styled when the phase is a load error, normal otherwise.
+/// The status line: the status text (error-styled on a load error, normal otherwise) at the left,
+/// and the vim mode badge (`INSERT` / `NORMAL` / `d(` …) pinned to the right when the query bar has
+/// focus — so the editing mode is always visible (the help bar will consume the same badge later).
 fn render_status(app: &App, frame: &mut Frame, area: Rect) {
     let style = if matches!(app.phase(), AppPhase::LoadError(_)) {
         theme::app::status_error()
@@ -284,6 +286,22 @@ fn render_status(app: &App, frame: &mut Frame, area: Rect) {
         Paragraph::new(Span::styled(app.status().to_string(), style)),
         area,
     );
+
+    if app.focus() == Focus::QueryBar {
+        let badge = app.editor_mode().display();
+        let badge_w = (badge.chars().count() as u16).min(area.width);
+        if badge_w > 0 {
+            let badge_area = Rect {
+                x: area.x + area.width - badge_w,
+                width: badge_w,
+                ..area
+            };
+            frame.render_widget(
+                Paragraph::new(Span::styled(badge, theme::app::mode_indicator())),
+                badge_area,
+            );
+        }
+    }
 }
 
 #[cfg(test)]

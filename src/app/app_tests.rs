@@ -144,11 +144,60 @@ fn down_within_multiline_query_moves_cursor_then_hands_off() {
 }
 
 #[test]
-fn quit_keys_signal_quit() {
-    let (mut a, _rx) = app();
-    assert!(a.on_key(KeyEvent::plain(Key::Esc), 0));
+fn ctrl_c_quits_but_esc_enters_normal_mode() {
+    // Ctrl-C is the single quit key from anywhere.
     let (mut b, _rx2) = app();
     assert!(b.on_key(KeyEvent::new(Key::Char('c'), super::KeyMods::CTRL), 0));
+    // Esc in the query bar drops to vim Normal mode rather than quitting (the vim contract).
+    let (mut a, _rx) = app();
+    assert!(!a.on_key(KeyEvent::plain(Key::Esc), 0));
+    assert_eq!(a.editor_mode(), crate::app::editor::EditorMode::Normal);
+}
+
+// --- vim modal routing through the App (P-input-UX) ---
+
+#[test]
+fn esc_then_normal_motions_route_to_vim_not_text() {
+    use crate::app::editor::EditorMode;
+    let (mut app, rx) = app();
+    app.on_loaded("ready");
+    type_str(&mut app, "SELECT 1", 0);
+    assert_eq!(app.editor_mode(), EditorMode::Insert);
+    // Esc drops to Normal.
+    app.on_key(KeyEvent::plain(Key::Esc), 0);
+    assert_eq!(app.editor_mode(), EditorMode::Normal);
+    // In Normal mode, printable keys are commands, not inserted text: `0` is a motion (line start),
+    // `x` deletes the char under the cursor — the query text shrinks, it does not gain a "0".
+    app.on_key(KeyEvent::char('0'), 0);
+    app.on_key(KeyEvent::char('x'), 0);
+    assert_eq!(
+        app.query(),
+        "ELECT 1",
+        "x deleted the leading S in Normal mode"
+    );
+    // `i` re-enters Insert; now a printable char IS inserted.
+    app.on_key(KeyEvent::char('i'), 0);
+    assert_eq!(app.editor_mode(), EditorMode::Insert);
+    app.on_key(KeyEvent::char('S'), 0);
+    assert_eq!(app.query(), "SELECT 1");
+    let _ = drain(&rx);
+}
+
+#[test]
+fn normal_mode_edit_schedules_a_debounced_query() {
+    use crate::app::editor::EditorMode;
+    let (mut app, rx) = app();
+    app.on_loaded("ready");
+    type_str(&mut app, "SELECT 1", 0);
+    app.on_key(KeyEvent::plain(Key::Esc), 0); // -> Normal
+    assert_eq!(app.editor_mode(), EditorMode::Normal);
+    // `dd` clears the line — a text change, so a query is scheduled and fires on tick past the
+    // debounce window. An empty query clears the result (no dispatch), so assert the bar is empty.
+    app.on_key(KeyEvent::char('d'), 0);
+    app.on_key(KeyEvent::char('d'), 0);
+    assert_eq!(app.query(), "");
+    app.tick(1000);
+    let _ = drain(&rx);
 }
 
 // --- debounce-fire wiring (P2.8) ---
@@ -650,8 +699,13 @@ fn esc_dismisses_popup_without_quitting() {
         "Esc closes the popup, does not quit, while it is open"
     );
     assert!(!app.autocomplete().is_open());
-    // A second Esc (popup now closed) quits as usual.
-    assert!(app.on_key(KeyEvent::plain(Key::Esc), 0));
+    // The popup-dismiss Esc leaves the editor in Insert mode (it never reached the bar routing).
+    assert_eq!(app.editor_mode(), crate::app::editor::EditorMode::Insert);
+    // A second Esc (popup now closed) drops the query bar to vim Normal mode — it does NOT quit
+    // (Ctrl-C is the single quit key with the vim bar).
+    let quit2 = app.on_key(KeyEvent::plain(Key::Esc), 0);
+    assert!(!quit2, "Esc enters Normal mode, it does not quit");
+    assert_eq!(app.editor_mode(), crate::app::editor::EditorMode::Normal);
 }
 
 // --- value-completion through the worker (P3.7) ---

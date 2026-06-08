@@ -58,6 +58,23 @@ fn loading_phase_shows_loading_indicator() {
 }
 
 #[test]
+fn status_line_shows_vim_mode_badge() {
+    let mut a = app();
+    a.on_loaded("ready");
+    // Default mode is Insert — the badge is visible on the status line.
+    let screen = render(&a, 40, 8);
+    assert!(screen.contains("INSERT"), "INSERT badge missing:\n{screen}");
+    // Esc drops to Normal — the badge updates.
+    a.on_key(KeyEvent::plain(Key::Esc), 0);
+    let screen = render(&a, 40, 8);
+    assert!(screen.contains("NORMAL"), "NORMAL badge missing:\n{screen}");
+    assert!(
+        !screen.contains("INSERT"),
+        "stale INSERT badge still shown:\n{screen}"
+    );
+}
+
+#[test]
 fn ready_empty_shows_hint() {
     let mut a = app();
     a.on_loaded("ready");
@@ -318,16 +335,18 @@ fn empty_query_bar_still_shows_a_cursor() {
 fn enter_inserts_newline_and_bar_grows_a_row() {
     let mut a = app();
     a.on_loaded("ready");
+    // Build a two-line query entirely in Insert mode (the default on focus). Enter inserts a
+    // newline in Insert mode (the locked decision); an autocomplete popup, if any, overlays the
+    // results pane ABOVE the bar, so it never crowds the bar rows this test inspects. (We avoid Esc
+    // here on purpose: with the vim bar, Esc would drop to Normal mode where Enter is the `j`
+    // motion, not a newline.)
     for c in "SELECT *".chars() {
         a.on_key(KeyEvent::char(c), 0);
     }
-    // Dismiss any popup so it doesn't crowd the small frame.
-    a.on_key(KeyEvent::plain(Key::Esc), 0);
     a.on_key(KeyEvent::plain(Key::Enter), 0); // newline
     for c in "FROM t".chars() {
         a.on_key(KeyEvent::char(c), 0);
     }
-    a.on_key(KeyEvent::plain(Key::Esc), 0);
     // The query now contains a newline (text() joins lines with \n).
     assert!(a.query().contains('\n'), "query: {:?}", a.query());
 

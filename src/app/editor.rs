@@ -17,16 +17,43 @@
 //!
 //! Enter inserts a newline; there is no "submit" key — queries run live on debounce. [`text`]
 //! joins the textarea's lines with `\n`, and the SQL preprocess/lexer already tolerate newlines as
-//! whitespace, so a multiline query flows through the debounced query loop unchanged.
+//! whitespace, so a multiline query flows through the debounced query loop unchanged. (In vim
+//! **Normal** mode, Enter is the `j` motion, not a newline — see [`vim`].)
+//!
+//! ## Vim layer (ported from jiq)
+//!
+//! The editor is **modal** like jiq's: it carries an [`EditorMode`] (default [`Insert`] so casual
+//! typing works), and `Esc` drops to [`Normal`] for vim navigation/edits. The pure decision logic
+//! (the mode machine, char-search column math, text-object bounds) lives in the [`mode`],
+//! [`char_search`], and [`text_objects`] submodules; the key dispatch is [`vim::apply_vim_key`],
+//! which drives the small set of vim primitives the `Editor` exposes below
+//! (`move_word_*`, `delete_whole_line`, `cut_col_range`, …). All of it is headless and `App`-free.
+//!
+//! [`Insert`]: EditorMode::Insert
+//! [`Normal`]: EditorMode::Normal
 
 use ratatui::style::Style;
 use tui_textarea::{CursorMove, TextArea};
 
 use crate::theme;
 
-/// A multiline text buffer + visible cursor, backed by [`tui_textarea::TextArea`].
+pub mod char_search;
+pub mod mode;
+pub mod text_objects;
+pub mod vim;
+
+pub use char_search::{CharSearchState, SearchDirection, SearchType};
+pub use mode::{EditorMode, TextObjectScope};
+pub use text_objects::TextObjectTarget;
+
+/// A multiline text buffer + visible cursor, backed by [`tui_textarea::TextArea`], with a vim mode
+/// machine on top (`Insert` by default; `Esc` -> `Normal`).
 pub struct Editor {
     textarea: TextArea<'static>,
+    /// The current vim editing mode. `Insert` until `Esc`; see [`vim`].
+    mode: EditorMode,
+    /// The last `f`/`F`/`t`/`T` char-search, for `;` (repeat) and `,` (repeat reversed).
+    last_char_search: Option<CharSearchState>,
 }
 
 impl Default for Editor {
@@ -39,7 +66,11 @@ impl Editor {
     pub fn new() -> Self {
         let mut textarea = TextArea::default();
         style_textarea(&mut textarea);
-        Self { textarea }
+        Self {
+            textarea,
+            mode: EditorMode::Insert,
+            last_char_search: None,
+        }
     }
 
     /// An editor pre-filled with `text`, cursor at the end.
@@ -135,16 +166,18 @@ impl Editor {
         self.textarea.insert_newline();
     }
 
-    /// Delete the character before the cursor (Backspace). No-op at the very start of the buffer.
-    /// At the head of a non-first line this joins it onto the previous line.
-    pub fn backspace(&mut self) {
-        self.textarea.delete_char();
+    /// Delete the character before the cursor (Backspace / vim `X`). No-op at the very start of the
+    /// buffer. At the head of a non-first line this joins it onto the previous line. Returns whether
+    /// anything was removed.
+    pub fn backspace(&mut self) -> bool {
+        self.textarea.delete_char()
     }
 
-    /// Delete the character at the cursor (Delete). No-op at the very end of the buffer. At the end
-    /// of a non-last line this pulls the next line up.
-    pub fn delete(&mut self) {
-        self.textarea.delete_next_char();
+    /// Delete the character at the cursor (Delete / vim `x`). No-op at the very end of the buffer.
+    /// At the end of a non-last line this pulls the next line up. Returns whether anything was
+    /// removed.
+    pub fn delete(&mut self) -> bool {
+        self.textarea.delete_next_char()
     }
 
     /// Move the cursor one character left (wrapping to the end of the previous line). Clamped at
@@ -194,13 +227,195 @@ impl Editor {
         self.textarea.lines().len()
     }
 
+    // --- vim mode machine (ported from jiq; see the `vim` submodule) ---
+
+    /// The current vim editing mode (`Insert` until `Esc`). Surfaced in the status line so the mode
+    /// is visible.
+    pub fn mode(&self) -> EditorMode {
+        self.mode
+    }
+
+    /// Set the vim mode (used by [`vim`] transitions and by the App's focus reset), updating the
+    /// cursor cell color so the mode is legible at the cursor itself (vim's block-cursor signal).
+    pub fn set_mode(&mut self, mode: EditorMode) {
+        self.mode = mode;
+        self.textarea.set_cursor_style(cursor_style_for(mode));
+    }
+
+    /// Reset to Insert mode — called when the query bar regains focus or is set wholesale, so the
+    /// user always lands in the typing mode they expect.
+    pub fn reset_to_insert(&mut self) {
+        self.set_mode(EditorMode::Insert);
+    }
+
+    /// Route one key through the vim mode machine. The App calls this for every non-Insert mode
+    /// key, plus `Esc` from Insert (to drop to Normal). Returns `true` if the buffer text changed.
+    pub fn on_vim_key(&mut self, ev: &crate::app::key::KeyEvent) -> bool {
+        vim::apply_vim_key(self, ev)
+    }
+
+    /// The cursor's char column within its current line (0-based). Vim motions and the char-column
+    /// cut operate per line.
+    pub fn cursor_col(&self) -> usize {
+        self.textarea.cursor().1
+    }
+
+    /// The text of the cursor's current line (owned; the vim char-search / text-object math reads
+    /// it as a `&str`).
+    pub fn current_line(&self) -> String {
+        let (row, _) = self.textarea.cursor();
+        self.textarea.lines().get(row).cloned().unwrap_or_default()
+    }
+
+    /// The last char-search, if any (for the App / tests).
+    pub fn last_char_search(&self) -> Option<CharSearchState> {
+        self.last_char_search
+    }
+
+    /// Record the last char-search (so `;` / `,` can repeat it).
+    pub fn set_last_char_search(&mut self, search: CharSearchState) {
+        self.last_char_search = Some(search);
+    }
+
+    /// Move to the next word boundary (`w`).
+    pub fn move_word_forward(&mut self) {
+        self.textarea.move_cursor(CursorMove::WordForward);
+    }
+
+    /// Move to the previous word boundary (`b`).
+    pub fn move_word_back(&mut self) {
+        self.textarea.move_cursor(CursorMove::WordBack);
+    }
+
+    /// Move to the end of the current/next word (`e`).
+    pub fn move_word_end(&mut self) {
+        self.textarea.move_cursor(CursorMove::WordEnd);
+    }
+
+    /// Move to the very top of the buffer (`gg`): first line, line start.
+    pub fn move_top(&mut self) {
+        self.textarea.move_cursor(CursorMove::Top);
+        self.textarea.move_cursor(CursorMove::Head);
+    }
+
+    /// Move to the very bottom of the buffer (`G`): last line, line start.
+    pub fn move_bottom(&mut self) {
+        self.textarea.move_cursor(CursorMove::Bottom);
+        self.textarea.move_cursor(CursorMove::Head);
+    }
+
+    /// Open a new empty line below the cursor and move onto it (`o`).
+    pub fn open_line_below(&mut self) {
+        self.textarea.move_cursor(CursorMove::End);
+        self.textarea.insert_newline();
+    }
+
+    /// Open a new empty line above the cursor and move onto it (`O`).
+    pub fn open_line_above(&mut self) {
+        self.textarea.move_cursor(CursorMove::Head);
+        self.textarea.insert_newline();
+        self.textarea.move_cursor(CursorMove::Up);
+    }
+
+    /// Delete from the cursor to the end of the line (`D` / `d$` / `C`). Returns whether anything
+    /// was removed.
+    pub fn delete_to_line_end(&mut self) -> bool {
+        self.textarea.delete_line_by_end()
+    }
+
+    /// Delete the cursor's whole line content (`dd` / `cc`). On a single-line buffer this clears
+    /// the line. Returns whether anything was removed.
+    pub fn delete_whole_line(&mut self) -> bool {
+        let head = self.textarea.delete_line_by_head();
+        let end = self.textarea.delete_line_by_end();
+        head || end
+    }
+
+    /// Move the cursor `target` char-search and return whether the target was found. Translates the
+    /// pure column result from [`char_search`] into a textarea cursor move.
+    pub fn char_search(
+        &mut self,
+        target: char,
+        direction: SearchDirection,
+        search_type: SearchType,
+    ) -> bool {
+        let line = self.current_line();
+        let cursor_col = self.cursor_col();
+        match char_search::find_char_position(&line, cursor_col, target, direction, search_type) {
+            Some(new_col) => {
+                self.set_cursor_col(new_col);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Repeat the last char-search (`;`), or reversed (`,`). No-op if there was none.
+    pub fn repeat_char_search(&mut self, reverse: bool) {
+        let Some(search) = self.last_char_search else {
+            return;
+        };
+        let direction = if reverse {
+            search.direction.opposite()
+        } else {
+            search.direction
+        };
+        self.char_search(search.character, direction, search.search_type);
+    }
+
+    /// Cut the `[start, end)` char-column span on the current line (used by operator + motion /
+    /// char-search). Leaves the cursor at `start`. Returns whether anything was removed.
+    pub fn cut_col_range(&mut self, start: usize, end: usize) -> bool {
+        if start >= end {
+            return false;
+        }
+        self.textarea.cancel_selection();
+        self.set_cursor_col(start);
+        self.textarea.start_selection();
+        for _ in start..end {
+            self.textarea.move_cursor(CursorMove::Forward);
+        }
+        self.textarea.cut()
+    }
+
+    /// Cut the text object (`diw`, `ci"`, `da(`, …) around the cursor. Returns whether one was
+    /// found and removed. Translates the pure bounds from [`text_objects`] into a char-column cut.
+    pub fn cut_text_object(&mut self, target: TextObjectTarget, scope: TextObjectScope) -> bool {
+        let line = self.current_line();
+        let cursor_col = self.cursor_col();
+        match text_objects::find_text_object_bounds(&line, cursor_col, target, scope) {
+            Some((start, end)) => self.cut_col_range(start, end),
+            None => false,
+        }
+    }
+
+    /// Undo the last edit (`u`). Returns whether the buffer changed.
+    pub fn undo(&mut self) -> bool {
+        self.textarea.undo()
+    }
+
+    /// Redo the last undone edit (`Ctrl-r`). Returns whether the buffer changed.
+    pub fn redo(&mut self) -> bool {
+        self.textarea.redo()
+    }
+
+    /// Move the cursor to char column `col` within its current line (clamped by the textarea).
+    fn set_cursor_col(&mut self, col: usize) {
+        self.textarea.move_cursor(CursorMove::Head);
+        for _ in 0..col {
+            self.textarea.move_cursor(CursorMove::Forward);
+        }
+    }
+
     /// Replace the entire buffer with `text`, placing the cursor at the end. Used when the palette
-    /// / history / AI sets the query wholesale.
+    /// / history / AI sets the query wholesale; resets to Insert mode so the user lands in the
+    /// typing mode they expect after a wholesale set.
     pub fn set_text(&mut self, text: impl Into<String>) {
         let text = text.into();
         self.replace_all(&text);
         self.textarea.move_cursor(CursorMove::Bottom);
         self.textarea.move_cursor(CursorMove::End);
+        self.mode = EditorMode::Insert;
     }
 
     /// Clear the buffer and reset the cursor.
@@ -209,11 +424,13 @@ impl Editor {
     }
 
     /// Replace the textarea's contents with `text` (split on `\n` into lines), preserving the
-    /// cursor/line styles. The cursor lands at the start; callers reposition it as needed.
+    /// cursor/line styles and the current mode's cursor color. The cursor lands at the start;
+    /// callers reposition it as needed.
     fn replace_all(&mut self, text: &str) {
         let lines: Vec<String> = text.split('\n').map(str::to_owned).collect();
         let mut textarea = TextArea::new(lines);
         style_textarea(&mut textarea);
+        textarea.set_cursor_style(cursor_style_for(self.mode));
         self.textarea = textarea;
     }
 
@@ -225,12 +442,22 @@ impl Editor {
 }
 
 /// Apply ciq's centralized query-bar styling to a fresh textarea: the base text style, a visible
-/// reverse-video cursor cell, and a disabled cursor-line highlight (so the cursor line reads like
-/// any other — jiq does the same). All styles come from [`theme::app`].
+/// reverse-video cursor cell (Insert-mode color), and a disabled cursor-line highlight (so the
+/// cursor line reads like any other — jiq does the same). All styles come from [`theme::app`].
 fn style_textarea(textarea: &mut TextArea<'static>) {
     textarea.set_style(theme::app::query_text());
     textarea.set_cursor_line_style(Style::default());
-    textarea.set_cursor_style(theme::app::cursor());
+    textarea.set_cursor_style(cursor_style_for(EditorMode::Insert));
+}
+
+/// The cursor cell style for a vim mode: Insert is the plain reverse-video block; every command
+/// mode (Normal and the pending-key modes) uses the colored block so the mode reads at the cursor.
+fn cursor_style_for(mode: EditorMode) -> Style {
+    if mode.is_insert() {
+        theme::app::cursor()
+    } else {
+        theme::app::cursor_normal()
+    }
 }
 
 /// The byte offset of the `char_idx`-th character in `line` (clamped to `line.len()`). Always a

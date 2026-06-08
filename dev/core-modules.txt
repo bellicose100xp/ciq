@@ -31,6 +31,16 @@ src/grid/col_width.rs
 # app routing/render tests). The pure insertion logic it feeds (`autocomplete/insertion.rs`) stays
 # on the floor below.
 
+# Post-5 input UX: the vim mode machine (ported from jiq). The mode enum (display labels), the
+# char-search column math (f/F/t/T + ; ,), and the text-object boundary finders (iw/aw/i"/a(...)
+# are pure data-in/data-out decision logic — a wrong till-clamp or a wrong text-object span is a
+# real edit-corruption bug — so they earn the hard floor. The `vim.rs` dispatch + the `Editor`
+# vim primitives mutate the in-memory textarea (a seam, like the editor wrapper itself), so they
+# stay off the floor but are fully covered by vim_tests.
+src/app/editor/mode.rs
+src/app/editor/char_search.rs
+src/app/editor/text_objects.rs
+
 # Phase 2/5 (present now): DuckDB-error -> friendly-message mapping + the P5.3 did-you-mean (a
 # bounded edit-distance over the schema headers). Pure `&str -> String`, one golden row per known
 # error category — every branch is a real mapping case, so it earns the hard floor.

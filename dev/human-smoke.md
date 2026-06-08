@@ -229,3 +229,28 @@ on-screen cursor glyph, the felt typing experience, or color polarity. Confirm b
    scrolls internally rather than growing further. Confirm the status line stays the very last row.
 6. **Color polarity.** Repeat 1-3 in a light terminal and a dark terminal — confirm the reverse-video
    cursor cell and the query text are legible in both (the §4.7 polarity check).
+
+## Post-5 input UX — vim keybindings in the query box (ported from jiq)
+
+The query bar is modal like jiq's: it starts in **INSERT** (type normally), and `Esc` drops to
+**NORMAL** for vim navigation/edits. The headless suite proves every mode transition + each
+motion/edit through synthetic keys and asserts on `text()`/cursor/mode, and that the mode badge
+renders on the status line. It does NOT prove the felt modal experience or the per-mode cursor
+color on a real terminal. Confirm by hand:
+
+1. **Esc -> Normal, mode indicator.** Open a CSV, type `SELECT * FROM t`. Press `Esc`. Confirm the
+   status line (bottom-right) flips from `INSERT` to `NORMAL`, and the block cursor changes color
+   (yellow block in Normal vs the plain reverse block in Insert). `Esc` must NOT quit the app
+   (only `Ctrl-C` quits now).
+2. **Motions (hjkl / w b / 0 $).** In Normal mode, `h`/`l` move left/right, `w`/`b` jump by word,
+   `0` to line start, `$` to line end. Confirm no characters are inserted (these are commands, not
+   text).
+3. **Insert entries (i / a / o).** From Normal: `i` inserts at the cursor, `a` after it, `o` opens
+   a new line below — each returns the badge to `INSERT` and lets you type. `Esc` back to Normal.
+4. **Edits (x / dd / dw).** In Normal: `x` deletes the char under the cursor, `dd` clears the line,
+   `dw` deletes a word. Confirm the grid re-runs live on debounce after each edit (no submit key).
+5. **Char-search + text objects (optional spot-check).** `f,` jumps to the next comma; `ci'`
+   inside a `'value'` literal clears it and enters Insert; `di(` inside `count(...)` clears the
+   args. Confirm the cursor/selection behaves like vim.
+6. **Casual typing still just works.** A fresh bar is in INSERT, so opening a file and typing a
+   query needs no vim knowledge — the modal layer is opt-in via `Esc`.

@@ -79,10 +79,11 @@ impl KeyEvent {
         Self::plain(Key::Char(c))
     }
 
-    /// Whether this event should quit the app: `Esc`, or `Ctrl-C`.
+    /// Whether this event should quit the app: **`Ctrl-C` only**. With the vim query bar, `Esc`
+    /// drops to Normal mode (or closes an open popup) rather than quitting, so `Esc` is no longer a
+    /// quit key — `Ctrl-C` is the single quit from anywhere (matching jiq).
     pub fn is_quit(&self) -> bool {
-        matches!(self.key, Key::Esc)
-            || (self.mods.ctrl && matches!(self.key, Key::Char('c') | Key::Char('C')))
+        self.mods.ctrl && matches!(self.key, Key::Char('c') | Key::Char('C'))
     }
 }
 

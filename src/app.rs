@@ -251,6 +251,12 @@ impl App {
         &self.editor
     }
 
+    /// The query bar's current vim mode (`INSERT`/`NORMAL`/…), surfaced in the status line and
+    /// (later) the help bar so the mode is always visible.
+    pub fn editor_mode(&self) -> crate::app::editor::EditorMode {
+        self.editor.mode()
+    }
+
     pub fn status(&self) -> &str {
         &self.status
     }
@@ -634,11 +640,28 @@ impl App {
         if matches!(self.phase, AppPhase::LoadError(_)) {
             return; // bar is frozen once load failed
         }
+        // Vim modal routing: in any non-Insert mode, the key is a vim command (motion / edit /
+        // mode flip), not text. `Esc` in Insert mode drops to Normal (the one Insert key vim owns).
+        // Everything else in Insert mode is the text-editing path below (typing, Enter=newline,
+        // autocomplete) — unchanged, so the live-query + completion wiring is untouched.
+        if !self.editor.mode().is_insert() || matches!(ev.key, Key::Esc) {
+            let changed = self.editor.on_vim_key(&ev);
+            // A vim edit changed the cursor context (and possibly the text) — recompute the popup.
+            self.refresh_autocomplete();
+            if changed {
+                self.schedule(now_ms);
+            }
+            return;
+        }
         let before = self.editor.text();
         match ev.key {
             Key::Char(c) => self.editor.insert_char(c),
-            Key::Backspace => self.editor.backspace(),
-            Key::Delete => self.editor.delete(),
+            Key::Backspace => {
+                self.editor.backspace();
+            }
+            Key::Delete => {
+                self.editor.delete();
+            }
             Key::Left => self.editor.move_left(),
             Key::Right => self.editor.move_right(),
             Key::Home => self.editor.move_home(),
@@ -671,7 +694,11 @@ impl App {
 
     fn on_key_results(&mut self, ev: KeyEvent) {
         match ev.key {
-            Key::Up if self.v_row_offset == 0 => self.focus = Focus::QueryBar,
+            Key::Up if self.v_row_offset == 0 => {
+                // Returning focus to the bar lands in Insert mode so typing resumes immediately.
+                self.focus = Focus::QueryBar;
+                self.editor.reset_to_insert();
+            }
             Key::Up => self.v_row_offset = self.v_row_offset.saturating_sub(1),
             Key::Down => self.scroll_down(1),
             Key::PageUp => self.v_row_offset = self.v_row_offset.saturating_sub(10),

@@ -22,13 +22,30 @@ pub mod app {
         Style::default()
     }
 
-    /// The query-bar cursor cell. Reverse-video so it reads as a visible block cursor regardless of
-    /// terminal theme — and, crucially, so it shows up as a styled cell in a headless `TestBackend`
-    /// snapshot (a `frame.set_cursor` cursor would not). Mirrors jiq's Insert-mode cursor; the
-    /// vim-mode cursor colors (a later stage) will extend this surface. Color polarity is the §4.7
-    /// human-validated concern.
+    /// The query-bar cursor cell in **Insert** mode. Reverse-video so it reads as a visible block
+    /// cursor regardless of terminal theme — and, crucially, so it shows up as a styled cell in a
+    /// headless `TestBackend` snapshot (a `frame.set_cursor` cursor would not). Mirrors jiq's
+    /// Insert-mode cursor. Color polarity is the §4.7 human-validated concern.
     pub fn cursor() -> Style {
         Style::default().add_modifier(Modifier::REVERSED)
+    }
+
+    /// The query-bar cursor cell in vim **Normal** mode (and the other command modes). A colored
+    /// reverse-video block (vs Insert's plain reverse) so the mode is legible at the cursor itself
+    /// — the vim convention where the block cursor signals command mode. Mirrors jiq's per-mode
+    /// cursor styling.
+    pub fn cursor_normal() -> Style {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::REVERSED)
+    }
+
+    /// The vim mode badge shown at the right of the status line (`INSERT` / `NORMAL` / `d(` …) —
+    /// bold accent so the current mode reads at a glance, distinct from the quiet status text.
+    pub fn mode_indicator() -> Style {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     }
 
     /// A normal (informational) status line: "N rows", "ready", "running…".

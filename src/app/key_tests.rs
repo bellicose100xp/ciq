@@ -10,8 +10,10 @@ fn char_constructor_is_unmodified() {
 }
 
 #[test]
-fn esc_is_quit() {
-    assert!(KeyEvent::plain(Key::Esc).is_quit());
+fn esc_is_not_quit() {
+    // With the vim query bar, Esc drops to Normal mode (or closes a popup), it does not quit —
+    // Ctrl-C is the single quit key.
+    assert!(!KeyEvent::plain(Key::Esc).is_quit());
 }
 
 #[test]
