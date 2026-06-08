@@ -10,38 +10,81 @@ low-cardinality text column (e.g. `status`) and a date column, in **both** a lig
 terminal.
 
 **Screen layout (top -> bottom):** the bordered results pane fills the screen (its border title
-shows the `delim , | header on` dialect summary; its first inner row is the single sticky header
-of `name (badge)` column labels), then the **bordered query box near the bottom** (`> ` prompt + a
-**multiline** editing area with a **visible block cursor**) whose **bottom border carries the
-context-sensitive keyboard help hints** (jiq-style), then the status line at the very bottom. The
-query *input* is near the bottom; all popups (autocomplete / palette / facet / history / AI) anchor
-**just above** the query box and grow upward over the results pane. The query box grows downward by
-one row per added line (capped at 5 text rows, then it scrolls internally).
+shows the `delim , | header on` dialect summary on the left and the jiq-style `<rendered>/<total>`
+**row counter** on the right — `12/12` when the result is uncapped, `1000+` when ciq applied its
+viewport `LIMIT`; its first inner row is the single sticky header of `name (badge)` column labels,
+no separate truncation-banner row anymore). Then the **bordered query box near the bottom** (`> `
+prompt + a **multiline** editing area with a **visible block cursor**) whose **top border carries
+the vim mode badge** (`INSERT` / `NORMAL` / per-mode color, jiq-style) and whose **bottom border
+carries the context-sensitive keyboard help hints, centered**, then the status line at the very
+bottom. The query *input* is near the bottom; all popups (autocomplete / palette / facet / history
+/ AI) anchor **just above** the query box and grow upward over the results pane. The query box
+grows downward by one row per added line (capped at 5 text rows, then it scrolls internally).
 
-## Post-5 UX — keyboard-shortcut help on the query box bottom border (§4.1)
+**Bright "galaxy" theme.** Borders are **focus-aware**: the focused pane (results pane vs query box)
+lights up in **bright cyan** (`Color::Rgb(0, 217, 255)`); the unfocused pane recedes in muted slate.
+Popups (autocomplete / column palette / facets / history) use the same bright cyan border; the AI
+popup uses purple. Every color is the verbatim galaxy palette from jiq's `theme/galaxy.rs::galaxy_dark`.
 
-The headless snapshot proves the *logical* cells (which key/desc text + the mode badge land on the
-query box's bottom border per context, and that trailing hints drop on a narrow box). It does NOT
-prove real glyphs, color polarity, or the on-screen feel. Confirm by hand (light + dark terminal):
+## Post-5 UX — keyboard-shortcut help + vim mode badge on the query box border (§4.1)
 
-1. **Hints are present on the box border + read cleanly.** The query box's **bottom border** carries
-   a legend of `key  desc` pairs joined by a `\u{2022}` bullet (like jiq), not a separate row. Keys
-   stand out (accented/bold), descriptions are quiet, the bullet is dimmer still. No emoji.
-2. **Mode badge leads when the query bar is focused.** With the query bar focused, the border starts
-   with the vim mode (`INSERT`). Press `Esc` -> the badge flips to `NORMAL` and the hint set changes
-   to vim motions (`hjkl move`, `i insert`, `dd/dw delete`). Press `i` -> back to `INSERT` hints
-   (`Tab complete`, `Ctrl+K columns`, `Ctrl+G AI`, `Ctrl+R history`).
-3. **Hints follow the open popup.** Open each popup and confirm the box border shows that popup's keys:
-   autocomplete (`Tab complete`, `Up/Down select`, `Esc dismiss`); `Ctrl+K` palette (`Space toggle`,
-   `Left/Right reorder`, `Enter apply`); `Ctrl+R` history (`Enter recall`); `Ctrl+G` AI (`Enter
-   generate`); `f` facet in the results pane (`Esc close`).
-4. **Results-pane hints.** Press Down past the last query line to focus the grid -> the box border
-   shows scroll/page/column hints (`Up/Down scroll`, `PgUp/PgDn page`, `Left/Right columns`, `f
-   facet`) and **no** mode badge. Press Up at the top -> focus returns to the bar and the mode badge
-   is back.
-5. **Narrow terminal.** Shrink the terminal width; confirm low-priority trailing hints drop whole
-   (no clipped mid-word text, no overflow past the box's right corner) while the mode badge + the
-   highest-priority hint stay.
+The headless snapshot proves the *logical* cells (which key/desc text lands on the box's bottom
+border per context, that trailing hints drop on a narrow box, that the mode badge rides the box's
+TOP border, and that the bottom-border hints are centered). It does NOT prove real glyphs, color
+polarity, or the on-screen feel. Confirm by hand (light + dark terminal):
+
+1. **Hints are present on the box bottom border, centered, + read cleanly.** The query box's
+   **bottom border** carries a legend of `key  desc` pairs joined by a `\u{2022}` bullet (like jiq),
+   not a separate row. The legend is **centered** on the bottom border (no longer left-aligned).
+   Keys stand out (bright cyan + bold), descriptions are normal text, the bullet is muted. No emoji.
+2. **Mode badge rides the TOP border.** With the query bar focused, the box's **top border** shows
+   the vim mode badge (`INSERT` left-aligned, in a per-mode color). Press `Esc` -> the badge on the
+   top border flips to `NORMAL` (yellow) and the bottom-border hints swap to vim motions (`hjkl
+   move`, `i insert`, `dd/dw delete`). Press `i` -> back to `INSERT` (cyan) on the top border. The
+   badge is NOT duplicated on the bottom border anymore.
+3. **Per-mode badge color.** Confirm Insert is cyan, Normal is yellow, an operator-pending state
+   like `d(` is green, and a char-search-pending state like `f` is pink (jiq's per-mode palette).
+4. **Hints follow the open popup.** Open each popup and confirm the box bottom border shows that
+   popup's keys: autocomplete (`Tab complete`, `Up/Down select`, `Esc dismiss`); `Ctrl+K` palette
+   (`Space toggle`, `Left/Right reorder`, `Enter apply`); `Ctrl+R` history (`Enter recall`);
+   `Ctrl+G` AI (`Enter generate`); `f` facet in the results pane (`Esc close`).
+5. **Results-pane hints.** Press Down past the last query line to focus the grid -> the bottom
+   border shows scroll/page/column hints (`Up/Down scroll`, `PgUp/PgDn page`, `Left/Right columns`,
+   `f facet`) and **no** mode badge on the top border (the editor is not the focused surface). Press
+   Up at the top -> focus returns to the bar and the mode badge is back on the top border.
+6. **Narrow terminal.** Shrink the terminal width; confirm low-priority trailing hints drop whole
+   (no clipped mid-word text, no overflow past the box's right corner) while the highest-priority
+   hint stays. The mode badge stays as long as the label fits the top border.
+
+## Post-5 UX — focus-aware borders (bright cyan)
+
+The headless suite proves the focused pane's border carries `Color::Rgb(0, 217, 255)` and the
+unfocused pane's border carries the muted-slate fg. It does NOT prove the felt brightness or color
+polarity. Confirm by hand (light + dark terminal):
+
+1. **Focused pane is bright cyan.** With focus on the query bar, the query box's border is bright
+   cyan; the results pane border is muted slate. Press Down past the last line to hand focus to the
+   results pane -> the cyan accent jumps to the results pane border, and the query box dims.
+2. **Popup borders are bright cyan.** Open the autocomplete / palette / history popups — confirm
+   their borders are bright cyan (the AI popup is purple instead).
+3. **Color polarity.** Repeat 1 in a light and a dark terminal — the bright-cyan accent must read
+   clearly in both.
+
+## Post-5 UX — row counter on the results pane border (jiq-style)
+
+The headless suite proves the row counter text (`<rendered>/<total>` for uncapped, `<rendered>+`
+for ciq-capped) lands on the top-right of the results pane border, and that there is no separate
+"showing first N rows" interior banner row anymore. It does NOT prove the on-screen reading. Confirm
+by hand:
+
+1. **Uncapped result.** Run a query that returns < 1000 rows (e.g. `SELECT * FROM t LIMIT 12`).
+   Confirm the top-right of the results pane border reads `12/12` and there is no truncation banner
+   row inside the pane (the body gets the row back).
+2. **Capped result.** Run `SELECT * FROM t` against the showcase fixture (5000 rows). Confirm the
+   counter reads `1000+` (the `+` carries the cap signal — the old `showing first 1000 rows` banner
+   row is gone). The grid header sits at the very top of the inner pane now, not below a banner.
+3. **Stale dim.** Trigger an error (e.g. `SELECT bogus`). Confirm the kept grid dims AND the row
+   counter on the border dims along with it (it is part of the kept-result polarity).
 
 ## Phase 3 — autocomplete popup (P3.6 / P3.7)
 

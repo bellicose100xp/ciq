@@ -243,10 +243,15 @@ fn facet_popup_hints() {
 // --- render (snapshot) ---
 
 #[test]
-fn render_shows_mode_and_a_hint() {
+fn render_shows_a_hint() {
+    // The help row no longer carries the mode badge — that lives on the query box's TOP border
+    // (`app_render::render_query_box`). The hints themselves still render with their bullet.
     let app = loaded_app();
     let row = render_help(&app, 80);
-    assert!(row.contains("INSERT"), "mode badge on the help bar:\n{row}");
+    assert!(
+        !row.contains("INSERT"),
+        "mode badge does NOT live on the help row anymore:\n{row}"
+    );
     assert!(
         row.contains("complete"),
         "a hint description renders:\n{row}"
@@ -258,12 +263,14 @@ fn render_shows_mode_and_a_hint() {
 }
 
 #[test]
-fn render_updates_with_mode() {
+fn render_updates_with_mode_hints() {
+    // Switching vim mode swaps the hint set (Normal-mode `move` replaces Insert-mode `complete`),
+    // even though the badge itself rides the box top border instead of the help row.
     let app = query_bar_normal_no_popup();
     let row = render_help(&app, 80);
     assert!(
-        row.contains("NORMAL"),
-        "mode badge follows the vim mode:\n{row}"
+        !row.contains("NORMAL"),
+        "mode badge does NOT live on the help row:\n{row}"
     );
     assert!(row.contains("move"), "a vim hint renders:\n{row}");
 }
@@ -271,10 +278,9 @@ fn render_updates_with_mode() {
 #[test]
 fn render_drops_trailing_hints_on_a_narrow_terminal() {
     let app = loaded_app();
-    // Wide enough only for the badge + the first hint or two; the low-priority trailing hints must
-    // be dropped, not clipped mid-word.
+    // Wide enough for the first hint or two; the low-priority trailing hints must be dropped,
+    // not clipped mid-word. (The mode badge no longer competes for the row's width.)
     let row = render_help(&app, 22);
-    assert!(row.contains("INSERT"), "badge always fits first:\n{row}");
     assert!(
         row.contains("Tab"),
         "the highest-priority hint survives:\n{row}"

@@ -6,13 +6,14 @@ use std::sync::mpsc::channel;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::style::Modifier;
+use ratatui::style::{Color, Modifier};
 
-use crate::app::{App, Key, KeyEvent};
+use crate::app::{App, Focus, Key, KeyEvent};
 use crate::engine::InterruptHandle;
 use crate::engine::types::{Cell, Column, Table};
 use crate::query::worker::types::{ProcessedResult, QueryResponse};
 use crate::schema::ColumnType;
+use crate::theme;
 
 fn app() -> App {
     let (tx, _rx) = channel();
@@ -196,10 +197,10 @@ fn zero_row_result_renders_no_rows_match() {
 }
 
 #[test]
-fn capped_result_renders_truncation_banner() {
+fn capped_result_renders_row_counter_with_plus_suffix() {
     use crate::app::VIEWPORT_ROW_LIMIT;
     // Keep the worker receiver alive so the dispatch succeeds and the ciq-capped flag is recorded
-    // (the banner is gated on a *successful* dispatch having applied ciq's viewport LIMIT — a
+    // (the cap signal is gated on a *successful* dispatch having applied ciq's viewport LIMIT — a
     // dropped receiver fails the send and never records the flag).
     let (tx, _rx) = std::sync::mpsc::channel();
     let mut a = App::new(tx, InterruptHandle::noop());
@@ -220,12 +221,41 @@ fn capped_result_renders_truncation_banner() {
         kind: crate::query::worker::types::RequestKind::Main,
     });
     let screen = render(&a, 60, 12);
+    // jiq-style row counter on the results pane top-right border: `1000+` when capped (no
+    // separate "showing first N rows" interior banner row anymore).
     assert!(
-        screen.contains("showing first 1000 rows"),
-        "truncation banner, screen:\n{screen}"
+        screen.contains("1000+"),
+        "capped row counter on the results border, screen:\n{screen}"
     );
-    // The grid still renders its header below the banner.
+    assert!(
+        !screen.contains("showing first"),
+        "no inline truncation banner row, screen:\n{screen}"
+    );
+    // The grid still renders its header.
     assert!(screen.contains("id"), "grid header, screen:\n{screen}");
+}
+
+#[test]
+fn uncapped_result_renders_rendered_over_total_row_counter() {
+    // Non-capped results show `<rendered>/<total>` on the results pane top-right border.
+    let mut a = app();
+    a.on_loaded("ready");
+    for c in "SELECT * FROM t".chars() {
+        a.on_key(KeyEvent::char(c), 0);
+    }
+    a.on_key(KeyEvent::plain(Key::Esc), 0); // dismiss the autocomplete popup
+    a.tick(150);
+    let id = a.latest_request_id();
+    a.on_response(QueryResponse::ProcessedSuccess {
+        result: result(),
+        request_id: id,
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+    let screen = render(&a, 60, 12);
+    assert!(
+        screen.contains("2/2"),
+        "row counter shows rendered/total, screen:\n{screen}"
+    );
 }
 
 #[test]
@@ -278,11 +308,11 @@ fn query_bar_sits_at_the_bottom() {
 }
 
 #[test]
-fn keyboard_hints_render_on_the_query_box_bottom_border() {
-    // The context-sensitive help hints live on the query box's BOTTOM BORDER (jiq-style), not a
-    // standalone row. With a single-line query the box spans the last three rows above the status
-    // line — top border, the text line, then the bottom border carrying the hints. The hint text
-    // must land on that bottom-border row, directly below the text line and above the status row.
+fn keyboard_hints_render_centered_on_the_query_box_bottom_border() {
+    // Hints live on the box's BOTTOM border, CENTERED (so the legend reads as one compact unit).
+    // The top border carries the per-mode badge — left-aligned — separately. With a single-line
+    // query the box spans the last three rows above the status line: top border (mode badge),
+    // text line, bottom border (hints).
     let mut a = app();
     a.on_loaded("ready");
     a.on_key(KeyEvent::plain(Key::Paste("SELECT 42".into())), 0);
@@ -310,10 +340,59 @@ fn keyboard_hints_render_on_the_query_box_bottom_border() {
         lines.len() - 2,
         "the help-bearing bottom border sits just above the status row:\n{screen}"
     );
-    // The mode badge also rides the border (INSERT by default), and the bullet separator renders.
+    // The mode badge does NOT ride the bottom border anymore — it lives on the TOP border.
     assert!(
-        lines[hint_line].contains("INSERT"),
-        "mode badge on the box border:\n{screen}"
+        !lines[hint_line].contains("INSERT"),
+        "mode badge does NOT ride the bottom border:\n{screen}"
+    );
+    // The bottom-border hints are CENTERED — the run of hint chars is preceded by leading
+    // border/padding chars rather than starting at column 1 (the ratatui Block::title_bottom +
+    // Line::centered placement). With a 60-col line and a few short hints the centered legend
+    // sits well inside the row, so there is non-empty padding (border `─` glyphs and spaces) on
+    // the left of the hints.
+    let bottom = lines[hint_line];
+    let first_hint_col = bottom
+        .find("complete")
+        .expect("hint substring on the bottom border");
+    assert!(
+        first_hint_col > 4,
+        "centered hints leave non-trivial left padding (col={first_hint_col}):\n{screen}"
+    );
+}
+
+#[test]
+fn vim_mode_badge_rides_the_query_box_top_border() {
+    // The mode badge is on the TOP border of the query box — left-aligned, per-mode color. With a
+    // single-line query the box spans rows h-3..=h-1 above the status row: top border (mode), text
+    // line, bottom border (hints). The badge text lands on the top-border row.
+    let mut a = app();
+    a.on_loaded("ready");
+    a.on_key(KeyEvent::plain(Key::Paste("SELECT 42".into())), 0);
+    let h = 10u16;
+    let screen = render(&a, 60, h);
+    let lines: Vec<&str> = screen.lines().collect();
+    let text_line = lines
+        .iter()
+        .position(|l| l.contains("SELECT 42"))
+        .expect("query text line");
+    // The top border row sits directly above the text line.
+    let top_border = text_line.checked_sub(1).expect("top border above text");
+    assert!(
+        lines[top_border].contains("INSERT"),
+        "INSERT badge on the box top border:\n{screen}"
+    );
+    // Switch to Normal mode — the badge text follows.
+    a.on_key(KeyEvent::plain(Key::Esc), 0);
+    let screen = render(&a, 60, h);
+    let lines: Vec<&str> = screen.lines().collect();
+    let text_line = lines
+        .iter()
+        .position(|l| l.contains("SELECT 42"))
+        .expect("query text line");
+    let top_border = text_line.checked_sub(1).expect("top border above text");
+    assert!(
+        lines[top_border].contains("NORMAL"),
+        "NORMAL badge on the box top border:\n{screen}"
     );
 }
 
@@ -605,4 +684,124 @@ fn open_palette_overlays_columns_with_checkboxes() {
     assert!(screen.contains("[ ]"), "checkbox rows, screen:\n{screen}");
     assert!(screen.contains("status"), "column row, screen:\n{screen}");
     assert!(screen.contains("columns"), "title, screen:\n{screen}");
+}
+
+/// Whether any cell in the rendered buffer carries `fg == Color::Rgb(r, g, b)`. Used to prove
+/// the bright galaxy palette renders verbatim through `theme::base::*` (a 16-color terminal palette
+/// would surface as `Color::Cyan`, not the explicit RGB triple).
+fn has_rgb_fg(app: &App, w: u16, h: u16, r: u8, g: u8, b: u8) -> bool {
+    let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
+    t.draw(|f| app.render(f)).unwrap();
+    let buffer = t.backend().buffer();
+    buffer
+        .content()
+        .iter()
+        .any(|cell| cell.fg == Color::Rgb(r, g, b))
+}
+
+#[test]
+fn bright_galaxy_palette_lands_in_the_buffer() {
+    // The bright cyan accent (`Color::Rgb(0, 217, 255)`) must surface in the rendered buffer:
+    // the focused query box border and/or the help-bar key style both reach for it. Proves the
+    // theme rewrite swapped the legacy palette colors (`Color::Cyan`, `Color::DarkGray`) for the
+    // verbatim galaxy RGB triples.
+    let mut a = app();
+    a.on_loaded("ready");
+    a.on_key(KeyEvent::plain(Key::Paste("SELECT 42".into())), 0);
+    a.on_key(KeyEvent::plain(Key::Esc), 0); // dismiss the autocomplete popup so it doesn't repaint
+    assert!(
+        has_rgb_fg(&a, 60, 10, 0, 217, 255),
+        "bright cyan (0,217,255) must appear somewhere on screen"
+    );
+    // The TEXT color (236,236,244) drives the cell + description styles — should also land.
+    assert!(
+        has_rgb_fg(&a, 60, 10, 236, 236, 244),
+        "TEXT (236,236,244) must appear (description + cell text)"
+    );
+}
+
+#[test]
+fn focused_query_box_border_uses_bright_cyan() {
+    // With focus on the query bar (the default), the box border carries the focused style — the
+    // bright-cyan border RGB. Switching focus to the results pane swaps the colors: the box border
+    // dims, the results pane border picks up the bright cyan.
+    let mut a = app();
+    a.on_loaded("ready");
+    // QueryBar focused -> the box border is bright cyan.
+    let mut t = Terminal::new(TestBackend::new(60, 10)).unwrap();
+    t.draw(|f| a.render(f)).unwrap();
+    let buf = t.backend().buffer();
+    // The box's top-left corner cell carries the border style. With single-line query, box
+    // occupies rows h-3..=h-1; top-left corner is at column 0, row h-3 = 7.
+    let corner = buf.cell((0, 7)).unwrap();
+    let focused_fg = match theme::border::focused().fg {
+        Some(c) => c,
+        None => panic!("focused border style must carry an fg color"),
+    };
+    let unfocused_fg = match theme::border::unfocused().fg {
+        Some(c) => c,
+        None => panic!("unfocused border style must carry an fg color"),
+    };
+    assert_eq!(
+        corner.fg, focused_fg,
+        "focused query-box border carries the focused-cyan fg"
+    );
+    assert_ne!(
+        focused_fg, unfocused_fg,
+        "focused vs unfocused borders must differ in color"
+    );
+    assert_eq!(a.focus(), Focus::QueryBar, "default focus is the query bar");
+}
+
+#[test]
+fn unfocused_query_box_border_uses_muted_slate() {
+    // Hand focus to the results pane (Down from the query bar with one line, after dismissing the
+    // autocomplete popup). The query-box border now uses the unfocused (muted) style; the results
+    // pane border uses focused.
+    let mut a = app();
+    a.on_loaded("ready");
+    // Push a result on so navigation lands inside the grid (otherwise empty-state takes focus).
+    for c in "SELECT * FROM t".chars() {
+        a.on_key(KeyEvent::char(c), 0);
+    }
+    a.on_key(KeyEvent::plain(Key::Esc), 0); // dismiss popup -> Normal mode
+    // Esc again drops to a state where re-running might re-open; force Insert mode and dismiss
+    // popup before the focus transfer.
+    a.tick(150);
+    let id = a.latest_request_id();
+    a.on_response(QueryResponse::ProcessedSuccess {
+        result: result(),
+        request_id: id,
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+    // After Esc the editor is Normal; press 'i' to return to Insert, then dismiss any popup the
+    // refresh re-opened, then Down to hand focus to the results pane.
+    a.on_key(KeyEvent::char('i'), 0);
+    if a.autocomplete().is_open() {
+        a.on_key(KeyEvent::plain(Key::Esc), 0);
+        a.on_key(KeyEvent::char('i'), 0); // back to Insert
+    }
+    if a.autocomplete().is_open() {
+        a.on_key(KeyEvent::plain(Key::Esc), 0);
+    }
+    a.on_key(KeyEvent::plain(Key::Down), 0); // hand focus to the results pane
+    assert_eq!(a.focus(), Focus::Results);
+
+    let mut t = Terminal::new(TestBackend::new(60, 10)).unwrap();
+    t.draw(|f| a.render(f)).unwrap();
+    let buf = t.backend().buffer();
+    let focused_fg = theme::border::focused().fg.unwrap();
+    let unfocused_fg = theme::border::unfocused().fg.unwrap();
+    // Query box top-left corner at row 7 — should now be the unfocused color.
+    let qbox_corner = buf.cell((0, 7)).unwrap();
+    assert_eq!(
+        qbox_corner.fg, unfocused_fg,
+        "unfocused query-box border uses the muted slate"
+    );
+    // The results pane top-left corner sits at row 0 col 0 — focused now.
+    let results_corner = buf.cell((0, 0)).unwrap();
+    assert_eq!(
+        results_corner.fg, focused_fg,
+        "focused results pane border uses the bright cyan"
+    );
 }

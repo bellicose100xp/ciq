@@ -9,9 +9,10 @@
 //!    for the current focus / vim mode / open popup. Most-important hints come first, so a narrow
 //!    terminal drops the *trailing* (lowest-priority) hints rather than overflowing. It sits on the
 //!    pure-core hard floor (`dev/core-modules.txt`) — one table-test row per context.
-//!  - [`render_line`] blits the mode badge (when the query bar is focused) + the styled hints onto
-//!    the help row. A `TestBackend`-snapshot seam like the other `*_render` surfaces; it never names
-//!    a `Color` (all styles come from [`theme::help_line`] / [`theme::app`]).
+//!  - [`render_line`] blits the styled hints onto the help row. A `TestBackend`-snapshot seam like
+//!    the other `*_render` surfaces; it never names a `Color` (all styles come from
+//!    [`theme::help_line`]). The mode badge no longer rides the help row — it lives on the query
+//!    box's TOP border (`app_render::render_query_box`), so this layer is hint-only.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -69,8 +70,6 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
         ];
     }
     if app.focus() == Focus::Results {
-        // The leading Up hint doubles as "edit query" when already scrolled to the top, but the
-        // single most useful affordance here is returning to the bar, so it leads.
         return hints![
             "Up/Down" => "scroll",
             "PgUp/PgDn" => "page",
@@ -103,7 +102,7 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
     }
 }
 
-/// The vim mode badge shown at the head of the help bar when the query bar is focused (`INSERT` /
+/// The vim mode badge shown on the query box's TOP border when the query bar is focused (`INSERT` /
 /// `NORMAL` / a pending-key hint like `d(`); `None` when the results pane is focused (no editing
 /// mode applies there). Pure — a thin projection of [`App::editor_mode`].
 pub fn mode_label(app: &App) -> Option<String> {
@@ -114,35 +113,34 @@ pub fn mode_label(app: &App) -> Option<String> {
     }
 }
 
-/// Build the styled spans for `hints`, dropping the lowest-priority *trailing* hints (and, last,
-/// the mode badge) so the line never overflows `max_width`. Returns the spans plus their total
-/// display width. The leading mode badge (when present) is styled like the status-line indicator
-/// (`theme::app::mode_indicator`); each hint is `key` (accented) + space + `desc` (quiet), joined
-/// by a ` \u{2022} ` bullet in the separator style — jiq's layout, ciq's theme.
+/// Pick the per-mode badge style (Insert / Normal / Operator-pending / CharSearch-pending). Mirrors
+/// jiq's per-mode badge color so the mode reads at a glance independent of the chord text.
+pub fn mode_badge_style(app: &App) -> ratatui::style::Style {
+    use crate::app::editor::EditorMode;
+    match app.editor_mode() {
+        EditorMode::Insert => theme::app::mode_insert(),
+        EditorMode::Normal => theme::app::mode_normal(),
+        EditorMode::Operator(_) | EditorMode::TextObject(_, _) => theme::app::mode_operator(),
+        EditorMode::CharSearch(_, _) | EditorMode::OperatorCharSearch(_, _, _, _) => {
+            theme::app::mode_char_search()
+        }
+    }
+}
+
+/// Build the styled hint spans, dropping the lowest-priority *trailing* hints so the line never
+/// overflows `max_width`. Each hint is `key` (accented) + space + `desc` (quiet); the bullet
+/// `\u{2022}` between hints is rendered in the separator style. The leading bullet stays even when
+/// the line is centered, so the legend reads as one compact unit.
 fn build_styled_spans(
-    mode: Option<&str>,
     hints: &[(&'static str, &'static str)],
     max_width: usize,
 ) -> Vec<Span<'static>> {
     let key_style = theme::help_line::key();
     let desc_style = theme::help_line::description();
     let sep_style = theme::help_line::separator();
-    let mode_style = theme::app::mode_indicator();
 
-    let mut spans: Vec<Span<'static>> = Vec::with_capacity(hints.len() * 4 + 3);
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(hints.len() * 4);
     let mut width = 0usize;
-
-    // " MODE" leads (a space, then the badge) when the query bar is focused.
-    if let Some(mode) = mode {
-        let lead = format!(" {mode}");
-        let w = lead.chars().count();
-        if w <= max_width {
-            spans.push(Span::styled(lead, mode_style));
-            width = w;
-        } else {
-            return spans; // not even the badge fits — render nothing rather than clip mid-word.
-        }
-    }
 
     for (key, desc) in hints {
         // Each hint after the first content element is preceded by " \u{2022} " (the bullet); the
@@ -164,20 +162,19 @@ fn build_styled_spans(
     spans
 }
 
-/// The styled help spans for the current context — the mode badge (when the query bar is focused)
-/// followed by the context hints, laid out width-aware so the lowest-priority *trailing* hints drop
-/// (rather than overflow) when `max_width` is tight. Pure: `App` state + a width in, styled spans
-/// out. This is what the query box renders on its **bottom border** (§4.1, jiq-style); `max_width`
-/// is the usable border-title width (the box width minus its two corner glyphs).
+/// The styled help spans for the current context — context hints only, laid out width-aware so the
+/// lowest-priority *trailing* hints drop when `max_width` is tight. Pure: `App` state + a width in,
+/// styled spans out. The mode badge is no longer included here — it rides the query box's TOP
+/// border (`app_render::render_query_box`).
 pub fn hint_spans(app: &App, max_width: usize) -> Vec<Span<'static>> {
     let hints = get_context_hints(app);
-    let mode = mode_label(app);
-    build_styled_spans(mode.as_deref(), &hints, max_width)
+    build_styled_spans(&hints, max_width)
 }
 
 /// Render the help hints onto a one-row `area` as a standalone line (kept for direct
 /// `TestBackend`-snapshot testing of the hint layout). No-op on a zero-size area. The live app
-/// renders the same [`hint_spans`] on the query box's bottom border instead of calling this.
+/// renders the same [`hint_spans`] on the query box's bottom border (centered) instead of calling
+/// this — but tests still drive this seam directly.
 pub fn render_line(app: &App, frame: &mut Frame, area: Rect) {
     if area.width == 0 || area.height == 0 {
         return;

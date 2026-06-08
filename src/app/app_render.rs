@@ -16,13 +16,14 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::ai::ai_render::render_ai;
 use crate::app::help_line;
 use crate::app::layout_regions::{LayoutRegions, PopupKind};
-use crate::app::{App, AppPhase};
+use crate::app::{App, AppPhase, Focus};
 use crate::autocomplete::autocomplete_render::{MAX_VISIBLE_ROWS, render_popup};
 use crate::facets::facet_render::render_facet;
 use crate::grid::{GridView, grid_render, layout_grid};
@@ -235,16 +236,28 @@ fn render_query_box(app: &App, frame: &mut Frame, area: Rect) -> Rect {
     if area.width == 0 || area.height == 0 {
         return Rect::new(area.x, area.y, 0, 0);
     }
-    // The help hints render on the bottom border as a left-aligned title. Build them width-aware so
-    // a narrow box drops the lowest-priority trailing hints rather than overflowing the border (the
-    // usable title width is the box width minus the two corner glyphs).
-    let hint_width = area.width.saturating_sub(2) as usize;
-    let hint_spans = help_line::hint_spans(app, hint_width);
-    // `title_bottom` places the hints on the box's bottom border, left-aligned by default — jiq's
-    // look, via ratatui 0.29's non-deprecated title API.
-    let block = Block::default()
+    // Borders are focus-aware: the focused pane lights up bright cyan, the unfocused pane recedes
+    // in muted slate. The query box is the focused surface whenever the editor (not the results
+    // pane) has focus.
+    let border_style = border_style_for(app, Focus::QueryBar);
+    // The mode badge rides the box's TOP border (jiq-style) — left-aligned, per-mode color.
+    // The bottom border carries the context-sensitive help hints, CENTERED so the legend reads
+    // as one compact unit. Both are width-aware so a narrow box drops trailing hints instead of
+    // overflowing (the usable title width is the box width minus the two corner glyphs).
+    let title_width = area.width.saturating_sub(2) as usize;
+    let hint_spans = help_line::hint_spans(app, title_width);
+    let mut block = Block::default()
         .borders(Borders::ALL)
-        .title_bottom(Line::from(hint_spans));
+        .border_style(border_style)
+        .title_bottom(Line::from(hint_spans).centered());
+    if let Some(label) = help_line::mode_label(app) {
+        // The badge text fits when the label width <= title width; otherwise we drop it rather
+        // than clip mid-word (the box is too narrow to be useful anyway).
+        if label.chars().count() <= title_width {
+            let badge = Span::styled(label, help_line::mode_badge_style(app));
+            block = block.title_top(Line::from(vec![Span::raw(" "), badge, Span::raw(" ")]));
+        }
+    }
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -276,9 +289,16 @@ fn render_query_box(app: &App, frame: &mut Frame, area: Rect) -> Rect {
 }
 
 /// The results pane: a bordered box containing the aligned grid, a loading indicator, or an
-/// empty hint. The grid is re-laid-out against the actual inner viewport.
+/// empty hint. The grid is re-laid-out against the actual inner viewport. The pane border is
+/// focus-aware (bright cyan when the results pane has focus, muted slate otherwise) and carries
+/// two pieces of metadata: the CSV dialect summary on the top-left, and the jiq-style
+/// `<rendered>/<total>` row counter on the top-right (with a `+` suffix when the result is
+/// ciq-capped) so the grid size reads at a glance without consuming an interior row.
 fn render_results(app: &App, frame: &mut Frame, area: Rect) {
-    let mut block = Block::default().borders(Borders::ALL);
+    let border_style = border_style_for(app, Focus::Results);
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style);
     // Once loaded, surface the CSV dialect (`delim , | header on`) as the pane's border title —
     // the global indicator §6.3 calls for, distinct from the per-column schema bar below.
     if app.schema().is_some() {
@@ -287,6 +307,17 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
             dialect_summary(delim, header),
             theme::app::dialect_summary(),
         ));
+    }
+    // The row counter rides the top-right of the border (jiq-style): `<rendered>/<total>` —
+    // `12/12` when not capped, `<rendered>+` when ciq applied its viewport LIMIT. Stale results
+    // get the muted styling so the counter dims with the grid.
+    if let Some(text) = row_counter_text(app) {
+        let style = if app.result_is_stale() {
+            theme::results::row_counter_stale()
+        } else {
+            theme::results::row_counter()
+        };
+        block = block.title_top(Line::from(Span::styled(text, style)).right_aligned());
     }
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -320,29 +351,18 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
     }
 
     if let Some(result) = app.result() {
-        // The truncation banner (when the grid is ciq-capped) pins the top inner row; each
-        // reserved row shrinks the grid's viewport by exactly that one row. The grid's own sticky
-        // header now carries each column's `name (badge)` type label, so there is no separate
-        // schema-bar row (the dialect summary lives in the pane border title above).
-        let banner = app.truncation_banner();
-        let (banner_area, grid_area) = split_off_banner(inner, banner.as_deref());
-        if let (Some(area), Some(text)) = (banner_area, banner) {
-            let p = Paragraph::new(Span::styled(text, theme::app::truncation_banner()));
-            frame.render_widget(p, area);
-        }
-
-        // Re-lay-out from the retained rows against the grid's viewport so a resize reflows
-        // without re-querying (§3.1). Column-granular h-scroll from the App's offset.
+        // The grid claims the full inner pane (no reserved interior row for a banner) — the
+        // row counter on the border carries the cap signal instead.
         let view = GridView {
-            width: grid_area.width,
-            height: grid_area.height,
+            width: inner.width,
+            height: inner.height,
             h_col_offset: app.h_col_offset(),
             v_row_offset: app.v_row_offset(),
         };
         let grid = layout_grid(&result.rows, &view);
         grid_render::render_grid(
             frame,
-            grid_area,
+            inner,
             &grid,
             app.v_row_offset(),
             app.result_is_stale(),
@@ -350,20 +370,29 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
     }
 }
 
-/// Reserve the top inner row for the truncation banner when one is present and there is room for
-/// both it and at least one grid row. Returns `(banner_area, remaining_area)`; the banner area is
-/// `None` when there is no banner or the pane is too short to spare a row.
-fn split_off_banner(inner: Rect, banner: Option<&str>) -> (Option<Rect>, Rect) {
-    if banner.is_none() || inner.height <= 1 {
-        return (None, inner);
+/// The `<rendered>/<total>` counter shown on the top-right of the results pane border, jiq-style.
+/// Returns `None` until a result is on screen. When the grid was ciq-capped (the displayed result's
+/// query was wrapped in the viewport `LIMIT`), the rendered count carries a `+` suffix so the cap
+/// reads without occupying an interior row — `1000+` for a capped grid, `12/12` otherwise.
+fn row_counter_text(app: &App) -> Option<String> {
+    let result = app.result()?;
+    let rendered = result.rows.row_count();
+    if app.truncation_banner().is_some() {
+        Some(format!("{rendered}+"))
+    } else {
+        Some(format!("{rendered}/{rendered}"))
     }
-    let banner_area = Rect { height: 1, ..inner };
-    let rest = Rect {
-        y: inner.y.saturating_add(1),
-        height: inner.height.saturating_sub(1),
-        ..inner
-    };
-    (Some(banner_area), rest)
+}
+
+/// The border style for `pane`: bright cyan when `pane` is the focused surface, muted slate
+/// otherwise. The query bar and the results pane are the two focus targets; popups, when open,
+/// take focus implicitly (their own bordered chrome carries the bright accent).
+fn border_style_for(app: &App, pane: Focus) -> Style {
+    if app.focus() == pane {
+        theme::border::focused()
+    } else {
+        theme::border::unfocused()
+    }
 }
 
 /// The status line: the status text (error-styled on a load error, normal otherwise) at the left.

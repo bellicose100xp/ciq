@@ -32,9 +32,10 @@ impl App {
     /// cursor (the [`on_key_query_bar`](Self::on_key_query_bar) freeze invariant).
     pub fn on_mouse(&mut self, ev: MouseEvent) {
         let (x, y) = ev.position();
-        // The truncation banner (when shown) pins the top inner row of the results pane, pushing the
-        // grid header + body down one row — pass that so a click resolves to the row that is drawn.
-        let banner_rows = u16::from(self.truncation_banner().is_some());
+        // The truncation banner row is gone — the cap signal lives on the results pane border now
+        // (the row counter), so the grid header sits at the very top of the inner pane and no
+        // banner-offset is needed when mapping a click to the drawn row.
+        let banner_rows = 0u16;
         let target = self.layout_regions.get().target_at(
             x,
             y,
