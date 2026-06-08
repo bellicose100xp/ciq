@@ -59,11 +59,13 @@ pub mod mouse;
 pub mod mouse_app;
 pub mod palette_app;
 pub mod polish;
+pub mod query_form;
 
 pub use editor::Editor;
 pub use key::{Key, KeyEvent, KeyMods};
 pub use layout_regions::{LayoutRegions, MouseTarget, PopupKind};
 pub use mouse::MouseEvent;
+pub use query_form::{QueryForm, QueryMode, SimplePane};
 
 /// How many rows the LIMIT-wrap caps an interactive query to. A screenful-plus-margin so a
 /// bare `SELECT *` returns a viewport, not the whole table (the §2.3 latency guard). The grid

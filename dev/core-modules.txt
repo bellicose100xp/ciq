@@ -164,6 +164,18 @@ src/ai/ai_state.rs
 # TestBackend blit (same seam treatment as the other *_render blits) — all left off the floor.
 src/history/history_state.rs
 
+# Post-5 UX redesign (Stage 1 foundation): the Simple-mode 5-pane query form's pure projector
+# (composer) and parser (simplifier). The composer trims pane texts, applies the documented
+# fallbacks (empty SELECT -> `*`, empty LIMIT -> default, `0`/`all` -> omit, non-numeric -> error),
+# and emits the dispatched `SELECT … FROM t [WHERE …] [GROUP BY …] [ORDER BY …] LIMIT n`. The
+# simplifier reads the shared SQL lexer's tokens, validates the restricted single-`SELECT FROM t`
+# grammar (rejects JOIN/CTE/subquery/HAVING/non-`t` table/multi-statement), and slices the original
+# source into per-pane substrings. Both are pure data-in/data-out — a wrong fallback or a wrong
+# clause split corrupts the dispatched SQL silently, every branch is a real behavior case, so they
+# earn the hard floor.
+src/app/query_form/composer.rs
+src/app/query_form/simplifier.rs
+
 # config.rs itself (the top-level loader) is a thin serde-parse-to-default + filesystem/env seam
 # (load_config / config_path read $HOME) — its pure half (load_config_str) is covered by
 # config_tests, but the floor lives on the pure section modules above (same judgment as csv_config).
