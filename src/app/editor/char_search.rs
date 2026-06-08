@@ -40,16 +40,16 @@ pub struct CharSearchState {
     pub search_type: SearchType,
 }
 
-/// The new cursor **char column** for a char-search from `cursor_col` in `text`, or `None` if the
-/// target isn't found in range. `Find` returns the target's column; `Till` stops one short (and is
-/// clamped so it never moves backward past the cursor for a forward search, nor forward for a
-/// backward one).
-pub fn find_char_position(
+/// The char column index of the next/previous occurrence of `target` from `cursor_col` in `text`,
+/// or `None` if absent in range. Forward scans `(cursor_col + 1..)`, backward scans `(0..cursor_col)`
+/// reversed — the bare match index, **without** the `Find`/`Till` adjustment. The single source of
+/// the char-scan both the motion path ([`find_char_position`]) and the operator path
+/// (`vim::operator_char_range`) consume, so the scan lives in exactly one (hard-floor) place.
+pub fn find_match_index(
     text: &str,
     cursor_col: usize,
     target: char,
     direction: SearchDirection,
-    search_type: SearchType,
 ) -> Option<usize> {
     let chars: Vec<char> = text.chars().collect();
     match direction {
@@ -58,28 +58,39 @@ pub fn find_char_position(
             if search_start >= chars.len() {
                 return None;
             }
-            chars
-                .iter()
-                .enumerate()
-                .skip(search_start)
-                .find(|&(_, &ch)| ch == target)
-                .map(|(i, _)| match search_type {
-                    SearchType::Find => i,
-                    SearchType::Till => i.saturating_sub(1).max(cursor_col + 1),
-                })
+            (search_start..chars.len()).find(|&i| chars[i] == target)
         }
         SearchDirection::Backward => {
             if cursor_col == 0 {
                 return None;
             }
-            (0..cursor_col)
-                .rev()
-                .find(|&i| chars.get(i) == Some(&target))
-                .map(|i| match search_type {
-                    SearchType::Find => i,
-                    SearchType::Till => (i + 1).min(cursor_col.saturating_sub(1)),
-                })
+            (0..cursor_col).rev().find(|&i| chars[i] == target)
         }
+    }
+}
+
+/// The new cursor **char column** for a char-search from `cursor_col` in `text`, or `None` if the
+/// target isn't found in range. `Find` returns the target's column; `Till` stops one short (and is
+/// clamped so it never moves backward past the cursor for a forward search, nor forward for a
+/// backward one — an adjacent backward `T` stays put rather than landing on the target).
+pub fn find_char_position(
+    text: &str,
+    cursor_col: usize,
+    target: char,
+    direction: SearchDirection,
+    search_type: SearchType,
+) -> Option<usize> {
+    let i = find_match_index(text, cursor_col, target, direction)?;
+    match (direction, search_type) {
+        (_, SearchType::Find) => Some(i),
+        (SearchDirection::Forward, SearchType::Till) => {
+            Some(i.saturating_sub(1).max(cursor_col + 1))
+        }
+        // `T` lands one column *after* the target. When the target is adjacent (one column left of
+        // the cursor) the destination `i + 1` equals `cursor_col`, so there is nowhere to move — vim
+        // leaves the cursor put rather than stepping onto the target. `None` means "stay" (the
+        // caller treats a missing position as a no-op).
+        (SearchDirection::Backward, SearchType::Till) => (i + 1 < cursor_col).then_some(i + 1),
     }
 }
 

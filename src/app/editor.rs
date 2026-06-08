@@ -173,10 +173,23 @@ impl Editor {
         self.textarea.delete_char()
     }
 
-    /// Delete the character at the cursor (Delete / vim `x`). No-op at the very end of the buffer.
-    /// At the end of a non-last line this pulls the next line up. Returns whether anything was
-    /// removed.
+    /// Delete the character at the cursor (the Insert-mode `Delete` key). No-op at the very end of
+    /// the buffer. At the end of a non-last line this pulls the next line up (the conventional
+    /// forward-delete). Returns whether anything was removed. (Vim `x` uses [`delete_char_in_line`],
+    /// which never crosses the newline.)
     pub fn delete(&mut self) -> bool {
+        self.textarea.delete_next_char()
+    }
+
+    /// Delete the character at the cursor but only **within the current line** (vim `x`). A no-op at
+    /// the end of the line — vim's `x` never crosses the joining newline (unlike the `Delete` key's
+    /// [`delete`](Self::delete), which merges the next line up there). Returns whether anything was
+    /// removed.
+    pub fn delete_char_in_line(&mut self) -> bool {
+        let (_, col) = self.textarea.cursor();
+        if col >= self.current_line().chars().count() {
+            return false; // at line end: nothing on this line to delete (no newline merge)
+        }
         self.textarea.delete_next_char()
     }
 
@@ -317,18 +330,45 @@ impl Editor {
         self.textarea.move_cursor(CursorMove::Up);
     }
 
-    /// Delete from the cursor to the end of the line (`D` / `d$` / `C`). Returns whether anything
-    /// was removed.
+    /// Delete from the cursor to the end of the **current** line (`D` / `d$` / `C`), never crossing
+    /// the joining newline. Returns whether anything was removed. (tui-textarea's
+    /// `delete_line_by_end` merges the next line up at end-of-line; line-bounding it via a selection
+    /// to End keeps `D`/`C` a no-op at the end of a non-last line, as vim has it.)
     pub fn delete_to_line_end(&mut self) -> bool {
-        self.textarea.delete_line_by_end()
+        let (_, col) = self.textarea.cursor();
+        let line_len = self.current_line().chars().count();
+        self.cut_col_range(col, line_len)
     }
 
-    /// Delete the cursor's whole line content (`dd` / `cc`). On a single-line buffer this clears
-    /// the line. Returns whether anything was removed.
+    /// Delete the cursor's whole line (`dd` / `cc`) — vim line-wise: the line's text *and* its
+    /// joining newline, removing the row entirely. On a single-line buffer this clears the line
+    /// (the row remains, now empty). Returns whether anything was removed.
     pub fn delete_whole_line(&mut self) -> bool {
-        let head = self.textarea.delete_line_by_head();
-        let end = self.textarea.delete_line_by_end();
-        head || end
+        if self.textarea.lines().len() <= 1 {
+            // Single line: just clear its text (no newline to remove).
+            let len = self.current_line().chars().count();
+            return self.cut_col_range(0, len);
+        }
+        let (row, _) = self.textarea.cursor();
+        let last = self.textarea.lines().len() - 1;
+        self.textarea.cancel_selection();
+        if row == last {
+            // Last line has no trailing newline: select from the end of the previous line across
+            // the *leading* newline to the end of this line, removing the row + its join.
+            self.textarea.move_cursor(CursorMove::Up);
+            self.textarea.move_cursor(CursorMove::End);
+            self.textarea.start_selection();
+            self.textarea.move_cursor(CursorMove::Down);
+            self.textarea.move_cursor(CursorMove::End);
+        } else {
+            // Non-last line: select from this line's head to the next line's head, removing this
+            // line's text + its trailing newline while leaving the next line intact.
+            self.textarea.move_cursor(CursorMove::Head);
+            self.textarea.start_selection();
+            self.textarea.move_cursor(CursorMove::Down);
+            self.textarea.move_cursor(CursorMove::Head);
+        }
+        self.textarea.cut()
     }
 
     /// Move the cursor `target` char-search and return whether the target was found. Translates the
@@ -364,8 +404,14 @@ impl Editor {
     }
 
     /// Cut the `[start, end)` char-column span on the current line (used by operator + motion /
-    /// char-search). Leaves the cursor at `start`. Returns whether anything was removed.
+    /// char-search). Both bounds are clamped to the current line's char count, so the cut never
+    /// crosses the joining newline (`CursorMove::Forward` wraps to the next line at end-of-line —
+    /// the clamp keeps the primitive line-safe regardless of caller). Leaves the cursor at `start`.
+    /// Returns whether anything was removed.
     pub fn cut_col_range(&mut self, start: usize, end: usize) -> bool {
+        let line_len = self.current_line().chars().count();
+        let start = start.min(line_len);
+        let end = end.min(line_len);
         if start >= end {
             return false;
         }
@@ -389,14 +435,11 @@ impl Editor {
         }
     }
 
-    /// Undo the last edit (`u`). Returns whether the buffer changed.
+    /// Undo the last edit (`u`). Returns whether the buffer changed. (There is no `redo`: vim's
+    /// `Ctrl-r` collides with ciq's global history chord, which the App intercepts before any key
+    /// reaches vim dispatch — so a redo binding would be unreachable.)
     pub fn undo(&mut self) -> bool {
         self.textarea.undo()
-    }
-
-    /// Redo the last undone edit (`Ctrl-r`). Returns whether the buffer changed.
-    pub fn redo(&mut self) -> bool {
-        self.textarea.redo()
     }
 
     /// Move the cursor to char column `col` within its current line (clamped by the textarea).
@@ -414,6 +457,14 @@ impl Editor {
         self.set_cursor_col(col);
     }
 
+    /// Move the cursor to the clicked `(row, col)` of a **multiline** query bar (the click-to-position
+    /// path for the multiline editor), clamped to the buffer's last line and that line's end. Without
+    /// the row the cursor would land on whatever line it was already on, ignoring the clicked line.
+    pub fn set_cursor_row_col(&mut self, row: usize, col: usize) {
+        let last = self.textarea.lines().len().saturating_sub(1);
+        self.move_to_row_col(row.min(last), col);
+    }
+
     /// Replace the entire buffer with `text`, placing the cursor at the end. Used when the palette
     /// / history / AI sets the query wholesale; resets to Insert mode so the user lands in the
     /// typing mode they expect after a wholesale set.
@@ -422,7 +473,9 @@ impl Editor {
         self.replace_all(&text);
         self.textarea.move_cursor(CursorMove::Bottom);
         self.textarea.move_cursor(CursorMove::End);
-        self.mode = EditorMode::Insert;
+        // Refresh the cursor cell style to match the mode it announces — a direct field write would
+        // leave the cursor colored for the old mode (replace_all styled it from the prior mode).
+        self.set_mode(EditorMode::Insert);
     }
 
     /// Clear the buffer and reset the cursor.

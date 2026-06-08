@@ -263,3 +263,116 @@ fn char_count_matches_joined_text() {
     e.insert_str("ab\ncd"); // 2 + 1 (newline) + 2 = 5 chars
     assert_eq!(e.char_count(), 5);
 }
+
+// --- line-safety of the vim cut primitives: never cross the joining newline ---
+
+/// Place the cursor at `(row, col)` on a multiline buffer via Home + Down/Right walks.
+fn at(e: &mut Editor, row: usize, col: usize) {
+    // Walk to the top, then down `row` lines, then right `col` columns.
+    while !e.is_on_first_line() {
+        e.move_up();
+    }
+    e.move_home();
+    for _ in 0..row {
+        e.move_down();
+    }
+    e.move_home();
+    for _ in 0..col {
+        e.move_right();
+    }
+}
+
+#[test]
+fn cut_col_range_clamps_to_the_current_line() {
+    // Line 0 is "ab" (len 2); an end past the line length must NOT cross the newline into "cd".
+    let mut e = Editor::with_text("ab\ncd");
+    at(&mut e, 0, 0);
+    let changed = e.cut_col_range(0, 5);
+    assert!(changed);
+    assert_eq!(
+        e.text(),
+        "\ncd",
+        "clamped to line 0; the newline + line 1 are untouched"
+    );
+    assert_eq!(e.line_count(), 2);
+}
+
+#[test]
+fn delete_to_line_end_at_end_of_nonlast_line_is_a_noop() {
+    let mut e = Editor::with_text("one\ntwo");
+    at(&mut e, 0, 3); // end of "one"
+    let changed = e.delete_to_line_end();
+    assert!(!changed, "nothing after the cursor on this line");
+    assert_eq!(e.text(), "one\ntwo", "the joining newline is not removed");
+}
+
+#[test]
+fn delete_to_line_end_removes_only_the_current_line_tail() {
+    let mut e = Editor::with_text("hello\nworld");
+    at(&mut e, 0, 2); // after "he"
+    assert!(e.delete_to_line_end());
+    assert_eq!(e.text(), "he\nworld");
+}
+
+#[test]
+fn delete_char_in_line_at_line_end_is_a_noop() {
+    let mut e = Editor::with_text("ab\ncd");
+    at(&mut e, 0, 2); // end of "ab"
+    let changed = e.delete_char_in_line();
+    assert!(!changed, "x at line end deletes nothing (no newline merge)");
+    assert_eq!(e.text(), "ab\ncd");
+}
+
+#[test]
+fn delete_char_in_line_mid_line_removes_the_char() {
+    let mut e = Editor::with_text("ab\ncd");
+    at(&mut e, 0, 0);
+    assert!(e.delete_char_in_line());
+    assert_eq!(e.text(), "b\ncd");
+}
+
+#[test]
+fn delete_whole_line_single_line_clears_text() {
+    let mut e = Editor::with_text("hello");
+    assert!(e.delete_whole_line());
+    assert_eq!(e.text(), "");
+    assert_eq!(e.line_count(), 1);
+}
+
+#[test]
+fn set_text_from_normal_mode_refreshes_the_cursor_style_to_insert() {
+    use crate::app::editor::EditorMode;
+    use crate::theme;
+    let mut e = Editor::with_text("SELECT 1");
+    e.set_mode(EditorMode::Normal); // Normal mode -> the colored cursor style
+    assert_eq!(e.textarea().cursor_style(), theme::app::cursor_normal());
+    // A wholesale set lands the editor in Insert mode; the cursor cell style must follow it, not
+    // stay colored for the prior (Normal) mode.
+    e.set_text("SELECT 2");
+    assert_eq!(e.mode(), EditorMode::Insert);
+    assert_eq!(
+        e.textarea().cursor_style(),
+        theme::app::cursor(),
+        "set_text must refresh the cursor style to Insert, not leave it colored for Normal"
+    );
+}
+
+#[test]
+fn delete_whole_line_removes_the_row_on_each_position() {
+    // First line.
+    let mut e = Editor::with_text("one\ntwo\nthree");
+    at(&mut e, 0, 0);
+    assert!(e.delete_whole_line());
+    assert_eq!(e.text(), "two\nthree");
+    // Middle line (mid-column).
+    let mut e = Editor::with_text("one\ntwo\nthree");
+    at(&mut e, 1, 2);
+    assert!(e.delete_whole_line());
+    assert_eq!(e.text(), "one\nthree");
+    // Last line.
+    let mut e = Editor::with_text("one\ntwo");
+    at(&mut e, 1, 0);
+    assert!(e.delete_whole_line());
+    assert_eq!(e.text(), "one");
+    assert_eq!(e.line_count(), 1);
+}

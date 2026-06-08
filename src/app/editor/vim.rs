@@ -21,7 +21,9 @@
 //! for pure motions / mode flips.
 
 use crate::app::Editor;
-use crate::app::editor::char_search::{CharSearchState, SearchDirection, SearchType};
+use crate::app::editor::char_search::{
+    CharSearchState, SearchDirection, SearchType, find_match_index,
+};
 use crate::app::editor::mode::{EditorMode, TextObjectScope};
 use crate::app::editor::text_objects::TextObjectTarget;
 use crate::app::key::{Key, KeyEvent};
@@ -56,11 +58,10 @@ fn handle_insert_escape(editor: &mut Editor, ev: &KeyEvent) -> bool {
 }
 
 fn handle_normal(editor: &mut Editor, ev: &KeyEvent) -> bool {
-    // Ctrl-modified keys: redo (Ctrl-r). Plain keys fall through to the match below.
-    if ev.mods.ctrl && matches!(&ev.key, Key::Char('r') | Key::Char('R')) {
-        editor.redo();
-        return true;
-    }
+    // No Ctrl-modified chord is handled in Normal mode here: the App intercepts Ctrl+R (history),
+    // Ctrl+K (palette), and Ctrl+G (AI) before the key ever reaches vim dispatch, so binding redo to
+    // Ctrl+R here would be dead code. `u` (undo) is reachable; redo has no reachable binding (the
+    // history chord owns Ctrl+R) and is intentionally omitted.
     match &ev.key {
         // Motions.
         Key::Char('h') | Key::Left => {
@@ -144,7 +145,7 @@ fn handle_normal(editor: &mut Editor, ev: &KeyEvent) -> bool {
         }
 
         // Single-key edits.
-        Key::Char('x') => editor.delete(),
+        Key::Char('x') => editor.delete_char_in_line(),
         Key::Char('X') => editor.backspace(),
         Key::Char('D') => editor.delete_to_line_end(),
         Key::Char('C') => {
@@ -257,7 +258,8 @@ fn handle_operator(editor: &mut Editor, operator: char, ev: &KeyEvent) -> bool {
 
     // Operator + motion (`dw`, `de`, `d$`, `c0`, …): select from the cursor across the motion and
     // cut. `de` is inclusive of the char under the new cursor, so it advances one extra column.
-    let start_col = editor.cursor_col();
+    let (start_row, start_col) = editor.row_col();
+    let line_len = editor.current_line().chars().count();
     let motion_end = match &ev.key {
         Key::Char('w') => {
             editor.move_word_forward();
@@ -292,7 +294,21 @@ fn handle_operator(editor: &mut Editor, operator: char, ev: &KeyEvent) -> bool {
 
     match motion_end {
         Some(end) => {
-            let (lo, hi) = if start_col <= end {
+            // tui-textarea's word motions (and Forward/Back) WRAP across line boundaries, so the
+            // cursor may now sit on a different row. `cut_col_range` operates on the *current* line,
+            // so reading a column off the wrong row would corrupt a neighbouring line. When the
+            // motion crossed lines, clamp it to the original line: a forward motion deletes to the
+            // line's end, a backward motion to its head (vim keeps these operators within the line).
+            let (end_row, _) = editor.row_col();
+            let (lo, hi) = if end_row != start_row {
+                // Re-home the cursor onto the original line so `cut_col_range` cuts the right row.
+                editor.move_to_row_col(start_row, start_col);
+                if end_row > start_row {
+                    (start_col, line_len) // forward wrap -> to end of the original line
+                } else {
+                    (0, start_col) // backward wrap -> to the head of the original line
+                }
+            } else if start_col <= end {
                 (start_col, end)
             } else {
                 (end, start_col)
@@ -409,11 +425,13 @@ fn operator_char_range(
     direction: SearchDirection,
     search_type: SearchType,
 ) -> Option<(usize, usize)> {
-    let chars: Vec<char> = text.chars().collect();
-    if chars.is_empty() || cursor_col >= chars.len() {
+    let len = text.chars().count();
+    if len == 0 || cursor_col >= len {
         return None;
     }
-    let match_index = char_match_index(&chars, cursor_col, target, direction)?;
+    // Share the char-scan with the motion path (the single hard-floor source); the operator range
+    // only differs in how it turns the match index into a `[start, end)` span.
+    let match_index = find_match_index(text, cursor_col, target, direction)?;
     let (start, end) = match direction {
         SearchDirection::Forward => {
             let end = match search_type {
@@ -431,29 +449,6 @@ fn operator_char_range(
         }
     };
     (start < end).then_some((start, end))
-}
-
-fn char_match_index(
-    chars: &[char],
-    cursor_col: usize,
-    target: char,
-    direction: SearchDirection,
-) -> Option<usize> {
-    match direction {
-        SearchDirection::Forward => {
-            let search_start = cursor_col + 1;
-            if search_start >= chars.len() {
-                return None;
-            }
-            (search_start..chars.len()).find(|&i| chars[i] == target)
-        }
-        SearchDirection::Backward => {
-            if cursor_col == 0 {
-                return None;
-            }
-            (0..cursor_col).rev().find(|&i| chars[i] == target)
-        }
-    }
 }
 
 #[cfg(test)]

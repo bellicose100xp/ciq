@@ -319,6 +319,148 @@ fn cc_clears_line_and_enters_insert() {
     assert_eq!(e.mode(), EditorMode::Insert);
 }
 
+// --- multiline edits (operators / single-key edits must stay within the cursor's line) ---
+
+#[test]
+fn dw_on_last_word_of_a_nonlast_line_stays_within_the_line() {
+    // tui-textarea's `w` wraps to the next line's start; `dw` must not corrupt the next line.
+    let mut e = normal("foo bar\nbaz qux");
+    at_col(&mut e, 4); // start of "bar" on line 0
+    ch(&mut e, 'd');
+    ch(&mut e, 'w');
+    assert_eq!(
+        e.text(),
+        "foo \nbaz qux",
+        "dw at the last word deletes to the line end, never the next line"
+    );
+}
+
+#[test]
+fn cw_on_last_word_of_a_nonlast_line_stays_within_the_line() {
+    let mut e = normal("foo bar\nbaz qux");
+    at_col(&mut e, 4);
+    ch(&mut e, 'c');
+    ch(&mut e, 'w');
+    assert_eq!(e.text(), "foo \nbaz qux");
+    assert_eq!(e.mode(), EditorMode::Insert);
+}
+
+#[test]
+fn de_at_line_end_stays_within_the_line() {
+    let mut e = normal("foo bar\nbaz qux");
+    at_col(&mut e, 4); // on "bar"; `e` would wrap to the next line's word end
+    ch(&mut e, 'd');
+    ch(&mut e, 'e');
+    // The motion wraps to line 1, so the operator clamps to the end of line 0.
+    assert_eq!(e.text(), "foo \nbaz qux");
+}
+
+#[test]
+fn db_from_head_of_a_nonfirst_line_stays_within_the_line() {
+    // `b` from a line head wraps to the previous line; `db` must not delete the previous line.
+    let mut e = normal("foo bar\nbaz qux");
+    ch(&mut e, 'j'); // line 1, col 0 (head)
+    assert!(e.is_on_last_line());
+    ch(&mut e, 'd');
+    ch(&mut e, 'b');
+    assert_eq!(
+        e.text(),
+        "foo bar\nbaz qux",
+        "db from a line head is a no-op within the line, not a cross-line delete"
+    );
+}
+
+#[test]
+fn dd_on_first_of_multiple_lines_removes_the_whole_row() {
+    let mut e = normal("one\ntwo\nthree");
+    ch(&mut e, 'd');
+    ch(&mut e, 'd');
+    assert_eq!(
+        e.text(),
+        "two\nthree",
+        "dd removes the line and its newline"
+    );
+    assert_eq!(e.line_count(), 2);
+    assert!(e.is_on_first_line());
+}
+
+#[test]
+fn dd_on_a_middle_line_removes_the_whole_row() {
+    let mut e = normal("one\ntwo\nthree");
+    ch(&mut e, 'j'); // line 1 ("two")
+    at_col(&mut e, 2); // mid-line, to prove dd is line-wise regardless of column
+    ch(&mut e, 'd');
+    ch(&mut e, 'd');
+    assert_eq!(e.text(), "one\nthree");
+    assert_eq!(e.line_count(), 2);
+}
+
+#[test]
+fn dd_on_the_last_line_removes_the_whole_row() {
+    let mut e = normal("one\ntwo");
+    ch(&mut e, 'j'); // line 1 ("two"), the last line
+    ch(&mut e, 'd');
+    ch(&mut e, 'd');
+    assert_eq!(
+        e.text(),
+        "one",
+        "dd on the last line leaves no stray blank line"
+    );
+    assert_eq!(e.line_count(), 1);
+}
+
+#[test]
+fn cc_on_a_middle_line_removes_the_row_and_enters_insert() {
+    let mut e = normal("one\ntwo\nthree");
+    ch(&mut e, 'j');
+    ch(&mut e, 'c');
+    ch(&mut e, 'c');
+    assert_eq!(e.text(), "one\nthree");
+    assert_eq!(e.mode(), EditorMode::Insert);
+}
+
+#[test]
+fn shift_d_at_end_of_a_nonlast_line_is_a_noop() {
+    // `D` deletes to the current line end; at end-of-line there is nothing to delete and it must
+    // NOT merge the next line up (tui-textarea's delete_line_by_end would).
+    let mut e = normal("one\ntwo");
+    ch(&mut e, '$'); // end of line 0
+    let changed = ch(&mut e, 'D');
+    assert!(!changed, "D at line end deletes nothing");
+    assert_eq!(
+        e.text(),
+        "one\ntwo",
+        "D at line end does not merge the next line"
+    );
+}
+
+#[test]
+fn shift_c_at_end_of_a_nonlast_line_does_not_merge() {
+    let mut e = normal("one\ntwo");
+    ch(&mut e, '$');
+    ch(&mut e, 'C');
+    assert_eq!(
+        e.text(),
+        "one\ntwo",
+        "C at line end does not merge the next line"
+    );
+    assert_eq!(e.mode(), EditorMode::Insert);
+}
+
+#[test]
+fn x_at_end_of_a_nonlast_line_is_a_noop() {
+    // vim `x` never crosses the joining newline; at end-of-line it deletes nothing.
+    let mut e = normal("ab\ncd");
+    ch(&mut e, '$'); // col 2 (end of "ab")
+    let changed = ch(&mut e, 'x');
+    assert!(!changed, "x at line end deletes nothing");
+    assert_eq!(
+        e.text(),
+        "ab\ncd",
+        "x at line end does not merge the next line"
+    );
+}
+
 // --- char search (f/F/t/T) + repeat (; ,) ---
 
 #[test]
@@ -346,6 +488,21 @@ fn shift_f_finds_char_backward() {
     ch(&mut e, 'F');
     ch(&mut e, 'o');
     assert_eq!(e.cursor_col(), 7);
+}
+
+#[test]
+fn shift_t_on_adjacent_target_stays_put() {
+    // `T` lands one column *after* the target. With the target one column to the left (adjacent),
+    // there is nowhere to go — vim leaves the cursor put rather than stepping onto the target.
+    let mut e = normal("xoy");
+    at_col(&mut e, 2); // on 'y', the 'o' target is the adjacent column to the left
+    ch(&mut e, 'T');
+    ch(&mut e, 'o');
+    assert_eq!(
+        e.cursor_col(),
+        2,
+        "adjacent backward Till is a no-op, not a step onto the target"
+    );
 }
 
 #[test]
@@ -420,6 +577,51 @@ fn df_missing_target_cancels() {
     assert_eq!(e.mode(), EditorMode::Normal);
 }
 
+// --- backward operator + char search (dF/dT/cF) — the SearchDirection::Backward arm ---
+
+#[test]
+fn shift_df_deletes_backward_through_target() {
+    let mut e = normal("hello world");
+    at_col(&mut e, 10); // on 'd'; the 'o' of "world" is col 7
+    ch(&mut e, 'd');
+    ch(&mut e, 'F');
+    ch(&mut e, 'o'); // dF deletes [7, 11): the 'o' through the cursor column -> "orld" gone
+    assert_eq!(e.text(), "hello w");
+    assert_eq!(e.mode(), EditorMode::Normal);
+}
+
+#[test]
+fn shift_dt_deletes_backward_up_to_target() {
+    let mut e = normal("hello world");
+    at_col(&mut e, 10); // on 'd'
+    ch(&mut e, 'd');
+    ch(&mut e, 'T');
+    ch(&mut e, 'o'); // dT deletes [8, 11): up to (not including) the 'o' -> "rld" gone
+    assert_eq!(e.text(), "hello wo");
+}
+
+#[test]
+fn shift_cf_changes_backward_and_enters_insert() {
+    let mut e = normal("hello world");
+    at_col(&mut e, 10); // on 'd'
+    ch(&mut e, 'c');
+    ch(&mut e, 'F');
+    ch(&mut e, 'o');
+    assert_eq!(e.text(), "hello w");
+    assert_eq!(e.mode(), EditorMode::Insert);
+}
+
+#[test]
+fn shift_df_missing_target_cancels() {
+    let mut e = normal("hello");
+    at_col(&mut e, 4); // on the last char 'o'
+    ch(&mut e, 'd');
+    ch(&mut e, 'F');
+    ch(&mut e, 'z'); // not present to the left
+    assert_eq!(e.text(), "hello");
+    assert_eq!(e.mode(), EditorMode::Normal);
+}
+
 // --- operator + text object (diw/ciw/di"/da(/ci') ---
 
 #[test]
@@ -477,19 +679,29 @@ fn text_object_invalid_target_cancels() {
     assert_eq!(e.mode(), EditorMode::Normal);
 }
 
-// --- undo / redo ---
+// --- undo ---
 
 #[test]
-fn u_undoes_and_ctrl_r_redoes() {
+fn u_undoes_the_last_edit() {
     let mut e = normal("hello");
     ch(&mut e, 'x'); // delete 'h' -> "ello"
     assert_eq!(e.text(), "ello");
     let undone = ch(&mut e, 'u');
     assert!(undone);
     assert_eq!(e.text(), "hello");
-    let redone = e.on_vim_key(&KeyEvent::new(Key::Char('r'), KeyMods::CTRL));
-    assert!(redone);
-    assert_eq!(e.text(), "ello");
+}
+
+#[test]
+fn ctrl_r_is_not_a_redo_in_vim_dispatch() {
+    // The App intercepts Ctrl+R (history) before any key reaches vim dispatch, so there is no
+    // reachable redo binding. Driving Ctrl+R straight at the editor is a pure no-op (it must not
+    // redo, and it must not mutate the buffer) — this pins that there is no orphaned redo path.
+    let mut e = normal("hello");
+    ch(&mut e, 'x');
+    ch(&mut e, 'u'); // back to "hello"
+    let changed = e.on_vim_key(&KeyEvent::new(Key::Char('r'), KeyMods::CTRL));
+    assert!(!changed, "Ctrl+R is not handled by vim dispatch (no redo)");
+    assert_eq!(e.text(), "hello", "Ctrl+R does not redo");
 }
 
 // --- pure motions report no text change ---

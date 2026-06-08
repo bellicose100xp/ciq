@@ -141,6 +141,41 @@ fn backward_find_missing_returns_none() {
 }
 
 #[test]
+fn backward_till_on_adjacent_target_stays_put() {
+    // "xoy", cursor at col 2 ('y'); T'o' — the 'o' (col 1) is adjacent, so the destination col 2
+    // equals the cursor: vim leaves the cursor put rather than stepping onto the target (col 1).
+    // `None` signals "stay" to the caller (the mirror of forward_till_never_moves_backward).
+    assert_eq!(
+        find_char_position("xoy", 2, 'o', SearchDirection::Backward, SearchType::Till),
+        None
+    );
+}
+
+// --- find_match_index: the shared raw scan (no Find/Till adjustment) ---
+
+#[test]
+fn find_match_index_forward_and_backward_return_the_bare_index() {
+    // Forward scans right of the cursor; backward scans left. Both return the match index itself.
+    assert_eq!(
+        find_match_index("hello world", 0, 'o', SearchDirection::Forward),
+        Some(4)
+    );
+    assert_eq!(
+        find_match_index("hello world", 10, 'o', SearchDirection::Backward),
+        Some(7)
+    );
+    // Missing target / at-edge cases return None.
+    assert_eq!(
+        find_match_index("ab", 1, 'b', SearchDirection::Forward),
+        None
+    );
+    assert_eq!(
+        find_match_index("abc", 0, 'a', SearchDirection::Backward),
+        None
+    );
+}
+
+#[test]
 fn multibyte_columns_are_char_indexed() {
     // "café'X" — the quote ' is at char column 4 (é is one char). f' from col 0 -> col 4.
     assert_eq!(
