@@ -38,7 +38,6 @@ use crate::facets::FacetState;
 use crate::facets::facet_query::build_facet_sql;
 use crate::history::{HistoryState, storage as history_storage};
 use crate::palette::PaletteState;
-use crate::palette::query_emit::emit_with_limit as emit_palette_with_limit;
 use crate::query::debouncer::Debouncer;
 use crate::query::dispatcher::Dispatcher;
 use crate::query::error_enhance::{enhance, enhance_with_schema};
@@ -57,6 +56,8 @@ pub mod help_line;
 pub mod key;
 pub mod layout_regions;
 pub mod mouse;
+pub mod mouse_app;
+pub mod palette_app;
 pub mod polish;
 
 pub use editor::Editor;
@@ -543,81 +544,9 @@ impl App {
         self.facet = None;
     }
 
-    /// Open the column palette (P4.5/D3). No-op while loading / on a load error, or with no schema
-    /// (nothing to pick). Closes the autocomplete popup so the two overlays never stack. The
-    /// palette keeps whatever selection/needle state it already had (so reopening resumes where the
-    /// user left off).
-    fn open_palette(&mut self) {
-        if self.palette.is_none()
-            || matches!(self.phase, AppPhase::Loading | AppPhase::LoadError(_))
-        {
-            return;
-        }
-        self.autocomplete.close();
-        self.palette_open = true;
-    }
-
-    /// Close the palette popup without emitting.
-    fn close_palette(&mut self) {
-        self.palette_open = false;
-    }
-
-    /// Handle a key while the palette is open (P4.5). Returns whether the app should quit (only
-    /// `Ctrl+C` quits from here; `Esc` closes the palette). The keys, mirroring the §6.2 chord set:
-    ///  - `Space` toggles the column under the cursor (checked <-> unchecked);
-    ///  - `Up`/`Down` move the cursor through the filtered list;
-    ///  - `Left`/`Right` reorder the cursor's checked column earlier/later in the projection;
-    ///  - a printable char appends to the fuzzy needle; `Backspace` pops it;
-    ///  - `Enter` emits the palette's query into the bar (-> debouncer -> worker) and closes;
-    ///  - `Esc` closes without emitting.
-    fn handle_palette_key(&mut self, ev: &KeyEvent, now_ms: u64) -> bool {
-        if ev.mods.ctrl && matches!(ev.key, Key::Char('c') | Key::Char('C')) {
-            return true; // Ctrl-C still quits
-        }
-        let Some(palette) = self.palette.as_mut() else {
-            self.palette_open = false;
-            return false;
-        };
-        match &ev.key {
-            Key::Esc => self.close_palette(),
-            Key::Enter => self.emit_palette_query(now_ms),
-            Key::Char(' ') => palette.toggle_cursor(),
-            Key::Up => palette.cursor_up(),
-            Key::Down => palette.cursor_down(),
-            Key::Left => {
-                if let Some(i) = palette.cursor_column_index() {
-                    palette.move_selection_up(i);
-                }
-            }
-            Key::Right => {
-                if let Some(i) = palette.cursor_column_index() {
-                    palette.move_selection_down(i);
-                }
-            }
-            Key::Char(c) => palette.push_needle(*c),
-            Key::Backspace => palette.pop_needle(),
-            _ => {}
-        }
-        false
-    }
-
-    /// Emit the palette's generated query into the bar, record it as palette-owned, schedule it
-    /// (-> debouncer -> worker, the normal path), and close the palette. The single point where a
-    /// palette `Enter` reaches the engine — through exactly the same dispatch path a typed query
-    /// uses, so there is no second engine entry.
-    fn emit_palette_query(&mut self, now_ms: u64) {
-        let limit = self.viewport_row_limit;
-        let Some(palette) = self.palette.as_mut() else {
-            self.palette_open = false;
-            return;
-        };
-        let sql = emit_palette_with_limit(palette, limit);
-        palette.record_emitted(&sql);
-        self.editor.set_text(&sql);
-        self.refresh_autocomplete();
-        self.close_palette();
-        self.schedule(now_ms);
-    }
+    // The column-palette orchestration (open/close/handle/emit + the seed/replace emitters) lives in
+    // `crate::app::palette_app` (an `impl App` block) to keep this file under the 1000-line cap, like
+    // the autocomplete/history/AI blocks; the pure palette accessors stay below with the others.
 
     /// Handle a key while the popup is open. Returns `true` if the popup consumed it (so the
     /// caller stops routing). Tab/Enter accept the selection; Up/Down move it; Esc dismisses; any
@@ -755,151 +684,9 @@ impl App {
         self.h_col_offset = (self.h_col_offset + 1).min(max);
     }
 
-    // --- mouse routing (headless: synthetic MouseEvents, ported from jiq's app/mouse_*.rs) ---
-
-    /// How many grid rows a single mouse-wheel notch scrolls (jiq's `RESULTS_SCROLL_LINES`).
-    const WHEEL_ROWS: usize = 3;
-
-    /// Route one mouse event to the surface under the pointer (`dev/PLAN.md` §3.1; ported from jiq's
-    /// `app/mouse_events.rs`). The event loop translates a real `crossterm::event::MouseEvent` into
-    /// the neutral [`MouseEvent`] and calls this; tests drive it directly with synthetic events.
-    ///
-    /// Routing, by kind:
-    ///  - **scroll** resolves the cell to a surface and scrolls *that* surface — the results grid
-    ///    (vertical wheel -> [`v_row_offset`](Self::v_row_offset), horizontal swipe ->
-    ///    [`h_col_offset`](Self::h_col_offset)), an open list popup's selection, or nothing;
-    ///  - **click / drag** focuses the surface under the pointer — the results pane (focus +
-    ///    optional row select) or the query bar (focus + position the text cursor at the click
-    ///    column), or selects a row in an open popup.
-    ///
-    /// While loading / on a load error the bar is frozen, so a query-bar click never positions the
-    /// cursor (the [`on_key_query_bar`](Self::on_key_query_bar) freeze invariant).
-    pub fn on_mouse(&mut self, ev: MouseEvent) {
-        let (x, y) = ev.position();
-        let target =
-            self.layout_regions
-                .get()
-                .target_at(x, y, app_render::PROMPT_WIDTH, self.v_row_offset);
-        match ev {
-            MouseEvent::ScrollUp { .. } => self.mouse_scroll_vertical(target, true),
-            MouseEvent::ScrollDown { .. } => self.mouse_scroll_vertical(target, false),
-            MouseEvent::ScrollLeft { .. } => self.mouse_scroll_horizontal(target, true),
-            MouseEvent::ScrollRight { .. } => self.mouse_scroll_horizontal(target, false),
-            MouseEvent::Click { .. } | MouseEvent::Drag { .. } => self.mouse_click(target),
-        }
-    }
-
-    /// Vertical wheel: scroll the grid body when over the results pane (or outside any surface, the
-    /// jiq fallback), or move an open list popup's selection when over it. `up` scrolls toward
-    /// earlier rows.
-    fn mouse_scroll_vertical(&mut self, target: Option<MouseTarget>, up: bool) {
-        match target {
-            Some(MouseTarget::Popup { kind, .. }) => self.popup_scroll(kind, up),
-            // Over the results pane, the query bar, or nowhere: the grid scrolls (the felt default —
-            // the wheel always pages the result unless it is explicitly over a list popup).
-            _ => {
-                if up {
-                    self.v_row_offset = self.v_row_offset.saturating_sub(Self::WHEEL_ROWS);
-                } else {
-                    self.scroll_down(Self::WHEEL_ROWS);
-                }
-            }
-        }
-    }
-
-    /// Horizontal trackpad swipe: column-granular grid h-scroll when over the results pane (or
-    /// outside any surface). `left` moves the viewport toward earlier columns. A swipe over a popup
-    /// or the query bar is a no-op (those have no horizontal scroll axis ciq exposes).
-    fn mouse_scroll_horizontal(&mut self, target: Option<MouseTarget>, left: bool) {
-        if matches!(
-            target,
-            Some(MouseTarget::Popup { .. }) | Some(MouseTarget::QueryBar { .. })
-        ) {
-            return;
-        }
-        if left {
-            self.h_col_offset = self.h_col_offset.saturating_sub(1);
-        } else {
-            self.scroll_right();
-        }
-    }
-
-    /// A left click/drag: focus + position by the resolved target.
-    fn mouse_click(&mut self, target: Option<MouseTarget>) {
-        match target {
-            Some(MouseTarget::Popup { kind, row }) => self.popup_click(kind, row),
-            // Move focus to the grid (matching the keyboard Down-handoff) only when there is a
-            // result to navigate. A focused-cell concept does not exist yet, so the click row only
-            // focuses the pane — the resolved `body_row` is available for a future row-cursor without
-            // changing this seam.
-            Some(MouseTarget::Results { .. }) if self.result.is_some() => {
-                self.focus = Focus::Results;
-            }
-            Some(MouseTarget::QueryBar { col }) => {
-                if matches!(self.phase, AppPhase::LoadError(_)) {
-                    return; // bar frozen on load error (same invariant as on_key_query_bar)
-                }
-                // Focus the bar and land the cursor at the clicked column, in Insert mode so typing
-                // resumes immediately (jiq's click_input_field: focus, then position the cursor).
-                self.focus = Focus::QueryBar;
-                self.editor.reset_to_insert();
-                self.editor.set_cursor_column(col);
-                self.refresh_autocomplete();
-            }
-            // Outside any surface, or a results click with no result to focus — nothing to do.
-            _ => {}
-        }
-    }
-
-    /// Scroll an open list popup's selection by one (mouse wheel over the popup). Only the list
-    /// popups (autocomplete / palette / history) have a movable selection; facet/AI are not lists.
-    fn popup_scroll(&mut self, kind: PopupKind, up: bool) {
-        match kind {
-            PopupKind::Autocomplete => {
-                if up {
-                    self.autocomplete.select_prev();
-                } else {
-                    self.autocomplete.select_next();
-                }
-            }
-            PopupKind::Palette => {
-                if let Some(palette) = self.palette.as_mut() {
-                    if up {
-                        palette.cursor_up();
-                    } else {
-                        palette.cursor_down();
-                    }
-                }
-            }
-            PopupKind::History => {
-                if up {
-                    self.history.select_previous();
-                } else {
-                    self.history.select_next();
-                }
-            }
-            PopupKind::Facet | PopupKind::Ai => {}
-        }
-    }
-
-    /// A click on a popup row. For the autocomplete popup this selects the clicked candidate (so a
-    /// subsequent Tab/Enter accepts it); a click on the palette moves the cursor onto the clicked
-    /// column. The facet/history/AI popups do not act on a row click here (history recall + facet
-    /// dismissal stay keyboard-driven — noted as a clean deferral). `row` is `None` on the border.
-    fn popup_click(&mut self, kind: PopupKind, row: Option<usize>) {
-        let Some(row) = row else {
-            return;
-        };
-        match kind {
-            PopupKind::Autocomplete => self.autocomplete.set_selected(row),
-            PopupKind::Palette => {
-                if let Some(palette) = self.palette.as_mut() {
-                    palette.set_cursor(row);
-                }
-            }
-            PopupKind::Facet | PopupKind::History | PopupKind::Ai => {}
-        }
-    }
+    // The mouse-routing impl block (on_mouse / scroll / click / popup) lives in
+    // `crate::app::mouse_app` (an `impl App` block) to keep this file under the 1000-line cap; it is
+    // a cohesive, self-contained seam over `LayoutRegions` + `MouseEvent`.
 
     /// (Re)schedule a debounced query at `now_ms`. While `Loading` we only remember that a query
     /// is pending (it can't run until the engine is `Ready`); the debounce window still gates it.
@@ -1128,45 +915,6 @@ impl App {
         self.palette
             .as_ref()
             .is_some_and(|p| p.owns(&self.editor.text()))
-    }
-
-    /// Pre-seed the query bar with the palette's own emission (`SELECT * FROM t LIMIT n`) so the
-    /// common path — open a file, no SQL typed yet — starts **palette-owned** (§0/D3). Only seeds
-    /// when a palette exists and the bar is still empty (the user typed nothing during load); it
-    /// never clobbers a query the user already started. Records the emitted string as the palette's
-    /// own and schedules the query so the grid populates. The event loop calls this once after
-    /// load. Returns `true` if it seeded.
-    pub fn seed_palette_query(&mut self, now_ms: u64) -> bool {
-        if !self.editor.text().is_empty() {
-            return false;
-        }
-        let limit = self.viewport_row_limit;
-        let Some(palette) = self.palette.as_mut() else {
-            return false;
-        };
-        let sql = emit_palette_with_limit(palette, limit);
-        palette.record_emitted(&sql);
-        self.editor.set_text(&sql);
-        self.refresh_autocomplete();
-        self.schedule(now_ms);
-        true
-    }
-
-    /// Re-emit the palette's query and replace the bar with it (the "Replace query with column
-    /// selection?" affordance, §0/D3). This is the **only** path that overwrites hand-typed SQL,
-    /// and only on explicit user confirmation — accepting Replace discards whatever the user typed
-    /// and snaps to the palette's generated query (the documented UX cliff: a hand-typed
-    /// `… WHERE region='EU'` is discarded). Records the new emission as palette-owned and schedules
-    /// it. No-op without a palette. Returns the emitted SQL it installed.
-    pub fn replace_query_with_palette(&mut self, now_ms: u64) -> Option<String> {
-        let limit = self.viewport_row_limit;
-        let palette = self.palette.as_mut()?;
-        let sql = emit_palette_with_limit(palette, limit);
-        palette.record_emitted(&sql);
-        self.editor.set_text(&sql);
-        self.refresh_autocomplete();
-        self.schedule(now_ms);
-        Some(sql)
     }
 
     // --- query history (P5.2, §7.6): the open/close/handle/recall/record block lives in

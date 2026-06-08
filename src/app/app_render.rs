@@ -100,7 +100,10 @@ fn active_popup_region(app: &App, bar: Rect, results: Rect) -> Option<(PopupKind
     if app.is_palette_open()
         && let Some(palette) = app.palette()
     {
-        let rows = (palette.all_columns().len() as u16).clamp(1, PALETTE_MAX_ROWS);
+        // Size from the FILTERED count (what render_palette actually draws), not the full column
+        // count — otherwise a needle that narrows the list leaves the recorded box taller than the
+        // drawn one, and a click in the blank lower band mis-resolves to a Popup row (finding).
+        let rows = (palette.filtered_indices().len().max(1) as u16).min(PALETTE_MAX_ROWS);
         return Some((PopupKind::Palette, popup_above_bar(bar, results, rows)));
     }
     if app.facet().is_some() {
@@ -176,7 +179,9 @@ fn render_palette_popup(app: &App, frame: &mut Frame, bar: Rect, results: Rect) 
     let Some(palette) = app.palette() else {
         return;
     };
-    let rows = (palette.all_columns().len() as u16).clamp(1, PALETTE_MAX_ROWS);
+    // Mirror active_popup_region: size from the filtered count so the recorded region matches the
+    // drawn box (the "(no match)" line still reserves one row via the `.max(1)`).
+    let rows = (palette.filtered_indices().len().max(1) as u16).min(PALETTE_MAX_ROWS);
     let area = popup_above_bar(bar, results, rows);
     render_palette(palette, frame, area);
 }

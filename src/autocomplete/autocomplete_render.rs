@@ -55,7 +55,10 @@ pub fn render_popup(state: &AutocompleteState, f: &mut Frame, area: Rect) {
 fn popup_lines(state: &AutocompleteState, width: u16, height: u16) -> Vec<Line<'static>> {
     let visible = (MAX_VISIBLE_ROWS.min(height)) as usize;
     let suggestions = state.suggestions();
-    let (start, end) = visible_window(state.selected(), suggestions.len(), visible);
+    // Share the window math with the click handler (`scroll_window`) so a click on a scrolled list
+    // maps to the same absolute index the renderer drew here.
+    let (start, end) =
+        crate::scroll_window::visible_window(state.selected(), suggestions.len(), visible);
 
     suggestions[start..end]
         .iter()
@@ -65,22 +68,6 @@ fn popup_lines(state: &AutocompleteState, width: u16, height: u16) -> Vec<Line<'
             row_line(s, width, idx == state.selected())
         })
         .collect()
-}
-
-/// The `[start, end)` slice of candidate indices to show: a window of `visible` rows that keeps
-/// `selected` in view (scrolls only when the selection would fall outside the top window).
-fn visible_window(selected: usize, len: usize, visible: usize) -> (usize, usize) {
-    if len <= visible {
-        return (0, len);
-    }
-    // Keep the selection inside [start, start+visible). Anchor the window so `selected` is the
-    // last row once it scrolls past the first window, but never past the end.
-    let start = if selected < visible {
-        0
-    } else {
-        (selected + 1).saturating_sub(visible).min(len - visible)
-    };
-    (start, start + visible)
 }
 
 /// One candidate row, padded to `width`: the candidate text left-aligned, the type-hint label

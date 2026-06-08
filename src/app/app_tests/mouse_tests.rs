@@ -44,6 +44,31 @@ fn type_query(app: &mut App, s: &str) {
     }
 }
 
+/// A loaded app whose schema has more columns than the popup's visible window (so a scrolled list
+/// is reachable). Distinct, single-letter-prefixed names keep the autocomplete order stable.
+fn wide_schema_app() -> (
+    App,
+    std::sync::mpsc::Receiver<crate::query::worker::types::QueryRequest>,
+) {
+    use crate::engine::InterruptHandle;
+    use crate::schema::{ColumnMeta, ColumnType, Schema};
+    use std::sync::mpsc::channel;
+    let (tx, rx) = channel();
+    let mut app = App::new(tx, InterruptHandle::noop());
+    let cols: Vec<ColumnMeta> = (0..12)
+        .map(|i| ColumnMeta::new(format!("col_{i:02}"), ColumnType::Int))
+        .collect();
+    app.set_schema(Schema::new(cols));
+    app.on_loaded("ready");
+    (app, rx)
+}
+
+/// A needle that fuzzy-matches exactly one column of [`wide_schema_app`] (the digits of `col_00`,
+/// which only `col_00` contains as a subsequence).
+fn first_column_unique_needle(_app: &App) -> &'static str {
+    "00"
+}
+
 // --- scroll over the results pane ---
 
 #[test]
@@ -143,6 +168,35 @@ fn click_past_end_of_text_clamps_to_line_end() {
     });
     assert_eq!(app.focus(), Focus::QueryBar);
     assert_eq!(app.editor().cursor(), 15, "clamped to the text end");
+}
+
+#[test]
+fn click_on_second_line_of_multiline_bar_positions_cursor_on_that_line() {
+    let mut app = app_with_result_on_bar(20);
+    // Make the bar two lines: "SELECT * FROM t" then "WHERE id > 0". Dismiss the autocomplete popup
+    // first so Enter inserts a newline rather than accepting a suggestion.
+    if app.autocomplete().is_open() {
+        app.on_key(KeyEvent::plain(Key::Esc), 0);
+    }
+    app.on_key(KeyEvent::plain(Key::Enter), 0);
+    type_query(&mut app, "WHERE id > 0");
+    if app.autocomplete().is_open() {
+        app.on_key(KeyEvent::plain(Key::Esc), 0);
+    }
+    let (_w, h) = render_and_record(&app);
+    // Layout: results(Min1) + bar(2) + status(1) + help(1). The two bar rows are h-4 and h-3.
+    let bar_line2 = h - 3; // the second visual line ("WHERE id > 0")
+    // Click at screen col 4 -> text col 2 (prompt is 2 wide) on the second line ("WHERE id > 0").
+    app.on_mouse(MouseEvent::Click {
+        col: 4,
+        row: bar_line2,
+    });
+    assert_eq!(app.focus(), Focus::QueryBar);
+    assert_eq!(
+        app.editor().row_col(),
+        (1, 2),
+        "cursor lands on the clicked line (1) at the clicked column (2), not line 0"
+    );
 }
 
 #[test]
@@ -255,5 +309,65 @@ fn click_on_autocomplete_row_selects_it() {
     assert!(
         !app.autocomplete().is_open(),
         "Tab accepted the clicked row"
+    );
+}
+
+#[test]
+fn click_on_scrolled_autocomplete_row_selects_the_visible_index_not_the_absolute_row() {
+    // With more candidates than the visible window, scroll the selection past the window, then
+    // click the FIRST visible row. It must select the off-screen-anchored absolute index
+    // (start + 0), not absolute index 0. Regression for the dropped scroll-offset.
+    let (mut app, _rx) = wide_schema_app();
+    type_query(&mut app, "SELECT "); // all columns (more than MAX_VISIBLE_ROWS=8)
+    assert!(app.autocomplete().is_open());
+    assert!(
+        app.autocomplete().len() > 8,
+        "need a list longer than the 8-row window, got {}",
+        app.autocomplete().len()
+    );
+    // Press Down 9 times so the selection (index 9) scrolls the window down (start becomes 2).
+    for _ in 0..9 {
+        app.on_key(KeyEvent::plain(Key::Down), 0);
+    }
+    assert_eq!(app.autocomplete().selected(), 9);
+    render_and_record(&app);
+    let (_kind, rect) = app.layout_regions().popup.expect("popup recorded");
+    let visible = rect.height.saturating_sub(2) as usize;
+    let start = crate::scroll_window::scroll_offset(9, app.autocomplete().len(), visible);
+    assert!(start > 0, "the list must have scrolled (start={start})");
+    // Click the first visible row (inner row 0).
+    app.on_mouse(MouseEvent::Click {
+        col: rect.x + 1,
+        row: rect.y + 1,
+    });
+    assert_eq!(
+        app.autocomplete().selected(),
+        start,
+        "clicking the first visible row selects the scrolled-window index (start + 0), not 0"
+    );
+}
+
+#[test]
+fn click_in_blank_band_of_needle_filtered_palette_is_bounded() {
+    // A needle that filters the palette to one column must size the recorded popup region to the
+    // filtered count, so a click below the single drawn row does not resolve into the box as a
+    // phantom row (region-vs-drawn geometry must match). Regression for the all_columns sizing.
+    let (mut app, _rx) = wide_schema_app();
+    app.on_key(KeyEvent::new(Key::Char('k'), crate::app::KeyMods::CTRL), 0);
+    assert!(app.is_palette_open());
+    // Filter to columns containing the subsequence of the first column's distinctive needle.
+    let needle = first_column_unique_needle(&app);
+    for c in needle.chars() {
+        app.on_key(KeyEvent::char(c), 0);
+    }
+    let filtered = app.palette().unwrap().filtered_indices().len();
+    assert_eq!(filtered, 1, "needle should narrow to exactly one column");
+    render_and_record(&app);
+    let (_kind, rect) = app.layout_regions().popup.expect("popup recorded");
+    // The box inner height now equals the filtered count (1), so there is exactly one inner row.
+    assert_eq!(
+        rect.height.saturating_sub(2),
+        1,
+        "the popup region is sized to the filtered count, not the full column count"
     );
 }

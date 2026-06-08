@@ -78,6 +78,12 @@ src/sql_lexer.rs
 # couples to the other); pure, total `is_subsequence(&str, &str) -> bool`.
 src/text_match.rs
 
+# Post-5 input UX: the shared scrolled-window math for the list popups — neutral top-level leaf both
+# the autocomplete/palette renderers (slice to the visible window) and the click handler (map a
+# clicked visible row back to an absolute index) consume. A wrong offset silently selects an
+# off-screen item on a scrolled list; pure usize-in/usize-out, so it earns the hard floor.
+src/scroll_window.rs
+
 # Phase 3 (present now): the clause-context detector — pure `detect_context` over the lexer token
 # stream; a wrong cursor-context silently corrupts every suggestion, so it earns the hard floor.
 src/autocomplete/clause_context.rs

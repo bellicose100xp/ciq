@@ -69,7 +69,10 @@ fn popup_lines(state: &PaletteState, width: u16, height: u16) -> Vec<Line<'stati
         ))];
     }
     let visible = (MAX_VISIBLE_ROWS.min(height)) as usize;
-    let (start, end) = visible_window(state.cursor(), filtered.len(), visible);
+    // Share the window math with the click handler (`scroll_window`) so a click on a scrolled list
+    // maps to the same absolute (filtered) index the renderer drew here.
+    let (start, end) =
+        crate::scroll_window::visible_window(state.cursor(), filtered.len(), visible);
 
     filtered[start..end]
         .iter()
@@ -85,21 +88,6 @@ fn popup_lines(state: &PaletteState, width: u16, height: u16) -> Vec<Line<'stati
             )
         })
         .collect()
-}
-
-/// The `[start, end)` slice of filtered-row indices to show: a window of `visible` rows that keeps
-/// `cursor` in view (scrolls only when the cursor would fall outside the top window). Mirrors the
-/// autocomplete popup's `visible_window`.
-fn visible_window(cursor: usize, len: usize, visible: usize) -> (usize, usize) {
-    if len <= visible {
-        return (0, len);
-    }
-    let start = if cursor < visible {
-        0
-    } else {
-        (cursor + 1).saturating_sub(visible).min(len - visible)
-    };
-    (start, start + visible)
 }
 
 /// One column row, padded to `width`: `<checkbox> <name>` left-aligned, the type badge

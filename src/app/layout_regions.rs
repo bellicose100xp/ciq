@@ -51,8 +51,10 @@ pub enum MouseTarget {
     /// where there is no body row to select).
     Results { body_row: Option<usize> },
     /// A cell inside the query bar. `col` is the 0-based **character column within the editable text
-    /// area** (past the `> ` prompt), already offset-corrected; the App maps it onto the editor.
-    QueryBar { col: usize },
+    /// area** (past the `> ` prompt) and `row` is the 0-based visual line within the (multiline)
+    /// bar; the App maps the pair onto the editor so a click on the second/third line of a multiline
+    /// query lands the cursor on that line.
+    QueryBar { row: usize, col: usize },
     /// A cell inside an open popup. `row` is the 0-based row index within the popup's inner area
     /// (past its border), or `None` when the cell is on the border itself.
     Popup { kind: PopupKind, row: Option<usize> },
@@ -74,12 +76,16 @@ impl LayoutRegions {
     ///   click maps onto the editable text, not the prompt).
     /// - `v_row_offset` is the grid's vertical scroll, added to the in-pane row so the resolved
     ///   `body_row` indexes the full result, not just the visible window.
+    /// - `banner_rows` is the number of inner rows the truncation banner reserves above the grid (0
+    ///   or 1); it pushes the grid header + body down by that many rows so `body_row` stays aligned
+    ///   with what is drawn when a banner is shown.
     pub fn target_at(
         &self,
         x: u16,
         y: u16,
         prompt_width: u16,
         v_row_offset: usize,
+        banner_rows: u16,
     ) -> Option<MouseTarget> {
         // The popup overlays the pane, so it wins when the cell is inside it.
         if let Some((kind, rect)) = self.popup
@@ -94,6 +100,7 @@ impl LayoutRegions {
             && Self::contains(rect, x, y)
         {
             return Some(MouseTarget::QueryBar {
+                row: (y - rect.y) as usize,
                 col: Self::text_col(rect, x, prompt_width),
             });
         }
@@ -101,7 +108,7 @@ impl LayoutRegions {
             && Self::contains(rect, x, y)
         {
             return Some(MouseTarget::Results {
-                body_row: Self::grid_body_row(rect, y, v_row_offset),
+                body_row: Self::grid_body_row(rect, y, v_row_offset, banner_rows),
             });
         }
         None
@@ -119,12 +126,14 @@ impl LayoutRegions {
     }
 
     /// The grid **body** row index for screen row `y` inside the results pane, accounting for the
-    /// pane's top border (1 row) + the grid's sticky header (1 row) + the vertical scroll offset.
-    /// `None` when `y` falls on the border, the header, or the bottom border (no body row there).
-    fn grid_body_row(rect: Rect, y: u16, v_row_offset: usize) -> Option<usize> {
-        // inner area starts one row below the top border; the first inner row is the sticky header,
-        // so the body begins two rows below the pane's top edge.
-        let body_top = rect.y.saturating_add(2);
+    /// pane's top border (1 row) + any truncation-banner rows the renderer reserves + the grid's
+    /// sticky header (1 row) + the vertical scroll offset. `None` when `y` falls on the border, the
+    /// banner, the header, or the bottom border (no body row there).
+    fn grid_body_row(rect: Rect, y: u16, v_row_offset: usize, banner_rows: u16) -> Option<usize> {
+        // inner area starts one row below the top border; the banner (if any) pins the next
+        // `banner_rows` inner rows, then the sticky header is one more row, so the body begins
+        // `2 + banner_rows` rows below the pane's top edge.
+        let body_top = rect.y.saturating_add(2).saturating_add(banner_rows);
         let inner_bottom = rect.y.saturating_add(rect.height.saturating_sub(1)); // exclusive
         if y < body_top || y >= inner_bottom {
             return None;

@@ -34,6 +34,7 @@ pub mod output;
 pub mod palette;
 pub mod query;
 pub mod schema;
+pub mod scroll_window;
 pub mod sql_ident;
 pub mod sql_lexer;
 pub mod text_match;
