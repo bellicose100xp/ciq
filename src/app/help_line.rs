@@ -164,16 +164,25 @@ fn build_styled_spans(
     spans
 }
 
-/// Render the help bar onto `area` (one row). No-op on a zero-size area. Builds the context hints
-/// from pure state, prefixes the mode badge, and lays them out width-aware (trailing hints drop on
-/// a narrow terminal). A headless `TestBackend`-snapshotable blit — not shell-exempt.
+/// The styled help spans for the current context — the mode badge (when the query bar is focused)
+/// followed by the context hints, laid out width-aware so the lowest-priority *trailing* hints drop
+/// (rather than overflow) when `max_width` is tight. Pure: `App` state + a width in, styled spans
+/// out. This is what the query box renders on its **bottom border** (§4.1, jiq-style); `max_width`
+/// is the usable border-title width (the box width minus its two corner glyphs).
+pub fn hint_spans(app: &App, max_width: usize) -> Vec<Span<'static>> {
+    let hints = get_context_hints(app);
+    let mode = mode_label(app);
+    build_styled_spans(mode.as_deref(), &hints, max_width)
+}
+
+/// Render the help hints onto a one-row `area` as a standalone line (kept for direct
+/// `TestBackend`-snapshot testing of the hint layout). No-op on a zero-size area. The live app
+/// renders the same [`hint_spans`] on the query box's bottom border instead of calling this.
 pub fn render_line(app: &App, frame: &mut Frame, area: Rect) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let hints = get_context_hints(app);
-    let mode = mode_label(app);
-    let spans = build_styled_spans(mode.as_deref(), &hints, area.width as usize);
+    let spans = hint_spans(app, area.width as usize);
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 

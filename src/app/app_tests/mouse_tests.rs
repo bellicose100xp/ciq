@@ -135,12 +135,13 @@ fn click_in_query_bar_focuses_bar_and_positions_cursor() {
     let (_w, h) = render_and_record(&app);
     app.on_mouse(MouseEvent::Click { col: 5, row: 5 }); // focus results
     assert_eq!(app.focus(), Focus::Results);
-    // The query bar is the row just below the results pane: h - 3 (status + help take the last two
-    // rows, bar above them). Click on the bar at a column inside the text.
+    // The query box is bordered; its inner text row is h - 3 (below it: the box bottom border with
+    // the help hints at h-2, then the status row at h-1). Click on that text row inside the text.
     let bar_row = h - 3;
-    // Click at screen col 7 -> text col 5 (prompt is 2 wide), landing the cursor at char 5 ("T").
+    // The box left border (col 0) + the `> ` prompt (cols 1-2) precede the text, so text col = x-3.
+    // Click at screen col 8 -> text col 5, landing the cursor at char 5 ("T").
     app.on_mouse(MouseEvent::Click {
-        col: 7,
+        col: 8,
         row: bar_row,
     });
     assert_eq!(app.focus(), Focus::QueryBar);
@@ -184,11 +185,13 @@ fn click_on_second_line_of_multiline_bar_positions_cursor_on_that_line() {
         app.on_key(KeyEvent::plain(Key::Esc), 0);
     }
     let (_w, h) = render_and_record(&app);
-    // Layout: results(Min1) + bar(2) + status(1) + help(1). The two bar rows are h-4 and h-3.
+    // Layout: results(Min1) + bordered box(text 2 + 2 border = 4) + status(1). The box rows are
+    // h-5 (top border), h-4 (line 1), h-3 (line 2), h-2 (bottom border = help hints); status at h-1.
     let bar_line2 = h - 3; // the second visual line ("WHERE id > 0")
-    // Click at screen col 4 -> text col 2 (prompt is 2 wide) on the second line ("WHERE id > 0").
+    // Box left border (col 0) + `> ` prompt (cols 1-2): text col = x-3. Click screen col 5 ->
+    // text col 2 on the second line ("WHERE id > 0").
     app.on_mouse(MouseEvent::Click {
-        col: 4,
+        col: 5,
         row: bar_line2,
     });
     assert_eq!(app.focus(), Focus::QueryBar);
@@ -205,9 +208,9 @@ fn drag_in_query_bar_positions_cursor_like_a_click() {
     let (_w, h) = render_and_record(&app);
     let bar_row = h - 3;
     app.on_mouse(MouseEvent::Drag {
-        col: 4,
+        col: 5,
         row: bar_row,
-    }); // text col 2
+    }); // box border (0) + prompt (1-2): screen col 5 -> text col 2
     assert_eq!(app.focus(), Focus::QueryBar);
     assert_eq!(app.editor().cursor(), 2);
 }

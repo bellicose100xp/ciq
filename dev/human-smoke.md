@@ -11,36 +11,37 @@ terminal.
 
 **Screen layout (top -> bottom):** the bordered results pane fills the screen (its border title
 shows the `delim , | header on` dialect summary; its first inner row is the single sticky header
-of `name (badge)` column labels), then the **query bar near the bottom** (`> ` prompt + a
-**multiline** editing area with a **visible block cursor**), then the status line, then the
-**context-sensitive keyboard help bar** at the very bottom. The query *input* is near the bottom;
-all popups (autocomplete / palette / facet / history / AI) anchor **just above** the query bar and
-grow upward over the results pane. The query bar grows downward by one row per added line (capped
-at 5 rows, then it scrolls internally).
+of `name (badge)` column labels), then the **bordered query box near the bottom** (`> ` prompt + a
+**multiline** editing area with a **visible block cursor**) whose **bottom border carries the
+context-sensitive keyboard help hints** (jiq-style), then the status line at the very bottom. The
+query *input* is near the bottom; all popups (autocomplete / palette / facet / history / AI) anchor
+**just above** the query box and grow upward over the results pane. The query box grows downward by
+one row per added line (capped at 5 text rows, then it scrolls internally).
 
-## Post-5 UX — bottom keyboard-shortcut help bar (§4.1)
+## Post-5 UX — keyboard-shortcut help on the query box bottom border (§4.1)
 
 The headless snapshot proves the *logical* cells (which key/desc text + the mode badge land on the
-bottom row per context, and that trailing hints drop on a narrow terminal). It does NOT prove real
-glyphs, color polarity, or the on-screen feel. Confirm by hand (light + dark terminal):
+query box's bottom border per context, and that trailing hints drop on a narrow box). It does NOT
+prove real glyphs, color polarity, or the on-screen feel. Confirm by hand (light + dark terminal):
 
-1. **Bar is present + reads cleanly.** The very bottom row is a legend of `key  desc` pairs joined
-   by a `\u{2022}` bullet. Keys stand out (accented/bold), descriptions are quiet, the bullet is
-   dimmer still. No emoji.
-2. **Mode badge leads when the query bar is focused.** With the query bar focused, the row starts
+1. **Hints are present on the box border + read cleanly.** The query box's **bottom border** carries
+   a legend of `key  desc` pairs joined by a `\u{2022}` bullet (like jiq), not a separate row. Keys
+   stand out (accented/bold), descriptions are quiet, the bullet is dimmer still. No emoji.
+2. **Mode badge leads when the query bar is focused.** With the query bar focused, the border starts
    with the vim mode (`INSERT`). Press `Esc` -> the badge flips to `NORMAL` and the hint set changes
    to vim motions (`hjkl move`, `i insert`, `dd/dw delete`). Press `i` -> back to `INSERT` hints
    (`Tab complete`, `Ctrl+K columns`, `Ctrl+G AI`, `Ctrl+R history`).
-3. **Hints follow the open popup.** Open each popup and confirm the bar shows that popup's keys:
+3. **Hints follow the open popup.** Open each popup and confirm the box border shows that popup's keys:
    autocomplete (`Tab complete`, `Up/Down select`, `Esc dismiss`); `Ctrl+K` palette (`Space toggle`,
    `Left/Right reorder`, `Enter apply`); `Ctrl+R` history (`Enter recall`); `Ctrl+G` AI (`Enter
    generate`); `f` facet in the results pane (`Esc close`).
-4. **Results-pane hints.** Press Down past the last query line to focus the grid -> the bar shows
-   scroll/page/column hints (`Up/Down scroll`, `PgUp/PgDn page`, `Left/Right columns`, `f facet`)
-   and **no** mode badge. Press Up at the top -> focus returns to the bar and the mode badge is back.
+4. **Results-pane hints.** Press Down past the last query line to focus the grid -> the box border
+   shows scroll/page/column hints (`Up/Down scroll`, `PgUp/PgDn page`, `Left/Right columns`, `f
+   facet`) and **no** mode badge. Press Up at the top -> focus returns to the bar and the mode badge
+   is back.
 5. **Narrow terminal.** Shrink the terminal width; confirm low-priority trailing hints drop whole
-   (no clipped mid-word text, no overflow past the right edge) while the mode badge + the highest-
-   priority hint stay.
+   (no clipped mid-word text, no overflow past the box's right corner) while the mode badge + the
+   highest-priority hint stay.
 
 ## Phase 3 — autocomplete popup (P3.6 / P3.7)
 

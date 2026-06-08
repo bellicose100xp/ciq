@@ -267,12 +267,53 @@ fn query_bar_sits_at_the_bottom() {
         .iter()
         .position(|l| l.contains("SELECT 42"))
         .expect("query bar line");
-    // Bar is the third-to-last row (status line then the help bar are below it); definitively in
-    // the bottom half, not row 0 as it used to be.
+    // The query box is bordered; its inner text line is the third-to-last row (the box's bottom
+    // border carrying the help hints is below it at h-2, then the status line at h-1). Definitively
+    // in the bottom half, not row 0 as it used to be.
     assert_eq!(
         bar_line,
         lines.len() - 3,
-        "query bar sits just above the status + help rows, screen:\n{screen}"
+        "query text sits just above the box bottom border (help) + status row, screen:\n{screen}"
+    );
+}
+
+#[test]
+fn keyboard_hints_render_on_the_query_box_bottom_border() {
+    // The context-sensitive help hints live on the query box's BOTTOM BORDER (jiq-style), not a
+    // standalone row. With a single-line query the box spans the last three rows above the status
+    // line — top border, the text line, then the bottom border carrying the hints. The hint text
+    // must land on that bottom-border row, directly below the text line and above the status row.
+    let mut a = app();
+    a.on_loaded("ready");
+    a.on_key(KeyEvent::plain(Key::Paste("SELECT 42".into())), 0);
+    let h = 10u16;
+    let screen = render(&a, 60, h);
+    let lines: Vec<&str> = screen.lines().collect();
+    let text_line = lines
+        .iter()
+        .position(|l| l.contains("SELECT 42"))
+        .expect("query text line");
+    // A hint description ("complete") sits on the row just below the text line — the box's bottom
+    // border — not on the text row and not on the status row.
+    let hint_line = lines
+        .iter()
+        .position(|l| l.contains("complete"))
+        .expect("help hints on a border row");
+    assert_eq!(
+        hint_line,
+        text_line + 1,
+        "hints render on the box bottom border, directly below the query text:\n{screen}"
+    );
+    // That hint row is the box's bottom border (h-2): the status line is the very last row (h-1).
+    assert_eq!(
+        hint_line,
+        lines.len() - 2,
+        "the help-bearing bottom border sits just above the status row:\n{screen}"
+    );
+    // The mode badge also rides the border (INSERT by default), and the bullet separator renders.
+    assert!(
+        lines[hint_line].contains("INSERT"),
+        "mode badge on the box border:\n{screen}"
     );
 }
 
@@ -366,12 +407,12 @@ fn enter_inserts_newline_and_bar_grows_a_row() {
         .position(|l| l.contains("FROM t") && !l.contains("query"))
         .expect("second query line");
     assert_eq!(row_b, row_a + 1, "second line directly below the first");
-    // Two query rows + a status row + a help row at the bottom: the second query line is the
-    // fourth-to-last row.
+    // Box layout: top border, line 1, line 2, bottom border (help hints), status row. So the
+    // second query line is the third-to-last row (bottom border + status are below it).
     assert_eq!(
         row_b,
         lines.len() - 3,
-        "the multiline bar sits just above the status + help rows, screen:\n{screen}"
+        "the multiline query text sits just above the box bottom border + status, screen:\n{screen}"
     );
 }
 

@@ -8,10 +8,11 @@
 //!
 //! Layout (top -> bottom): a bordered results pane filling the space (which re-lays-out the
 //! retained result `rows` against the *actual* inner viewport so a resize reflows without
-//! re-querying — §3.1's "App re-lays-out from retained rows on resize"), then a one-row query
-//! bar near the bottom, then a one-row status line, then the one-row context-sensitive keyboard
-//! help bar at the very bottom (§4.1, ported from jiq). The query *input* sits near the bottom of
-//! the screen; popups anchor just **above** it, over the results pane.
+//! re-querying — §3.1's "App re-lays-out from retained rows on resize"), then a **bordered query
+//! box** near the bottom whose **bottom border carries the context-sensitive keyboard help hints**
+//! (§4.1, jiq-style — the hints live on the box border, not a standalone row), then a one-row
+//! status line at the very bottom. The query *input* sits near the bottom of the screen; popups
+//! anchor just **above** the query box, over the results pane.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -36,15 +37,22 @@ use crate::theme;
 /// case; a summary (4 lines) fits comfortably inside it. The popup is height-clamped to the pane.
 const FACET_POPUP_ROWS: u16 = 12;
 
-/// How tall the query bar may grow as the query gains lines (the multiline policy). A single-line
-/// query keeps the bar one row (so the felt geometry is unchanged); each additional line adds a
-/// row up to this cap, after which the textarea scrolls within the fixed window. Chosen small so a
-/// long query never crowds out the results pane.
+/// How many *text* rows the query box may grow to as the query gains lines (the multiline policy).
+/// A single-line query keeps one text row; each additional line adds a row up to this cap, after
+/// which the textarea scrolls within the fixed window. Chosen small so a long query never crowds
+/// out the results pane. The box itself is 2 rows taller (top + bottom border) — see [`box_height`].
 const MAX_BAR_ROWS: u16 = 5;
 
-/// The query bar height for the current query: one row per line, clamped to [1, [`MAX_BAR_ROWS`]].
-fn bar_height(app: &App) -> u16 {
+/// The number of editable text rows for the current query: one per line, clamped to
+/// [1, [`MAX_BAR_ROWS`]].
+fn bar_text_rows(app: &App) -> u16 {
     (app.editor().line_count() as u16).clamp(1, MAX_BAR_ROWS)
+}
+
+/// The total height of the bordered query box: the text rows plus the top + bottom border rows.
+/// The bottom border carries the keyboard help hints (§4.1).
+fn box_height(app: &App) -> u16 {
+    bar_text_rows(app).saturating_add(2)
 }
 
 /// Render the whole app into `frame`.
@@ -54,36 +62,37 @@ pub fn render(app: &App, frame: &mut Frame) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),                  // results pane (fills the space)
-            Constraint::Length(bar_height(app)), // query bar (grows with line count, capped)
-            Constraint::Length(1),               // status line
-            Constraint::Length(1),               // keyboard help bar (very bottom)
+            Constraint::Length(box_height(app)), // bordered query box (text rows + 2 border rows)
+            Constraint::Length(1),               // status line (very bottom)
         ])
         .split(area);
 
     let results = chunks[0];
-    let bar = chunks[1];
+    let query_box = chunks[1];
 
     render_results(app, frame, results);
-    render_query_bar(app, frame, bar);
+    // The query box is bordered; its bottom border carries the help hints. `render_query_box`
+    // returns the inner text rect — what the editor occupies and what a mouse click maps onto.
+    let text_area = render_query_box(app, frame, query_box);
     render_status(app, frame, chunks[2]);
-    help_line::render_line(app, frame, chunks[3]);
-    // The popups overlay the results pane, anchored just ABOVE the bottom query bar (drawn last so
+    // The popups overlay the results pane, anchored just ABOVE the bottom query box (drawn last so
     // they sit on top). Headless: still just cells in the TestBackend buffer. They are mutually
     // exclusive (opening one closes the others), so painting them all is at most one visible box.
-    render_autocomplete(app, frame, bar, results);
-    render_palette_popup(app, frame, bar, results);
-    render_facet_popup(app, frame, bar, results);
-    render_history_popup(app, frame, bar, results);
-    render_ai_popup(app, frame, bar, results);
+    render_autocomplete(app, frame, query_box, results);
+    render_palette_popup(app, frame, query_box, results);
+    render_facet_popup(app, frame, query_box, results);
+    render_history_popup(app, frame, query_box, results);
+    render_ai_popup(app, frame, query_box, results);
 
     // Record the on-screen regions so the next mouse event resolves against the geometry the user
-    // actually sees (the click-to-focus / click-to-position / scroll-routing seam). At most one
-    // popup is open (they are mutually exclusive overlays), recomputed with the same `popup_above_bar`
-    // anchoring the render used above.
+    // actually sees (the click-to-focus / click-to-position / scroll-routing seam). The query-bar
+    // region is the box's INNER text area (border-stripped), so the existing prompt/text-col mouse
+    // math is unchanged. At most one popup is open (mutually exclusive overlays), recomputed with
+    // the same `popup_above_bar` anchoring the render used above.
     app.set_layout_regions(LayoutRegions {
         results_pane: Some(results),
-        query_bar: Some(bar),
-        popup: active_popup_region(app, bar, results),
+        query_bar: Some(text_area),
+        popup: active_popup_region(app, query_box, results),
     });
 }
 
@@ -213,31 +222,57 @@ fn popup_width(pane_width: u16) -> u16 {
 /// editable text (subtracting the prompt).
 pub(crate) const PROMPT_WIDTH: u16 = 2;
 
-/// The query bar: a `> ` prompt glyph in a fixed left column, then the multiline editing textarea
-/// (which paints its own visible cursor cell into the buffer — headless-snapshotable). The prompt
-/// pins to the top row so it reads as a single baseline marker even when the textarea spans rows.
-fn render_query_bar(app: &App, frame: &mut Frame, area: Rect) {
+/// The query box: a bordered [`Block`] whose **bottom border carries the context-sensitive keyboard
+/// help hints** (§4.1, jiq-style), wrapping a `> ` prompt glyph in a fixed left column + the
+/// multiline editing textarea (which paints its own visible cursor cell into the buffer —
+/// headless-snapshotable). The prompt pins to the top inner row so it reads as a single baseline
+/// marker even when the textarea spans rows. Returns the box's **inner rect** (border-stripped,
+/// before the prompt) so the caller records it as the mouse-click target — [`text_col`] subtracts
+/// the `> ` prompt from it, so a click on the prompt clamps to column 0 and a click on the text
+/// maps onto the right character (the click math is unchanged from the borderless bar, just shifted
+/// in by the border). Returns a zero-size rect on a degenerate area.
+fn render_query_box(app: &App, frame: &mut Frame, area: Rect) -> Rect {
     if area.width == 0 || area.height == 0 {
-        return;
+        return Rect::new(area.x, area.y, 0, 0);
     }
-    let prompt_w = PROMPT_WIDTH.min(area.width);
+    // The help hints render on the bottom border as a left-aligned title. Build them width-aware so
+    // a narrow box drops the lowest-priority trailing hints rather than overflowing the border (the
+    // usable title width is the box width minus the two corner glyphs).
+    let hint_width = area.width.saturating_sub(2) as usize;
+    let hint_spans = help_line::hint_spans(app, hint_width);
+    // `title_bottom` places the hints on the box's bottom border, left-aligned by default — jiq's
+    // look, via ratatui 0.29's non-deprecated title API.
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title_bottom(Line::from(hint_spans));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.width == 0 || inner.height == 0 {
+        return Rect::new(inner.x, inner.y, 0, 0);
+    }
+
+    let prompt_w = PROMPT_WIDTH.min(inner.width);
     let prompt_area = Rect {
         height: 1,
         width: prompt_w,
-        ..area
+        ..inner
     };
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled("> ", theme::app::prompt()))),
         prompt_area,
     );
     let text_area = Rect {
-        x: area.x.saturating_add(prompt_w),
-        width: area.width.saturating_sub(prompt_w),
-        ..area
+        x: inner.x.saturating_add(prompt_w),
+        width: inner.width.saturating_sub(prompt_w),
+        ..inner
     };
     if text_area.width > 0 {
         frame.render_widget(app.editor().textarea(), text_area);
     }
+    // Record the INNER rect (before the prompt) as the click target: `text_col` subtracts the
+    // prompt from it, matching the borderless-bar contract the mouse mapping was written against.
+    inner
 }
 
 /// The results pane: a bordered box containing the aligned grid, a loading indicator, or an
@@ -326,8 +361,8 @@ fn split_off_banner(inner: Rect, banner: Option<&str>) -> (Option<Rect>, Rect) {
 }
 
 /// The status line: the status text (error-styled on a load error, normal otherwise) at the left.
-/// The vim mode badge (`INSERT` / `NORMAL` / `d(` …) now leads the help bar below, so the mode is
-/// always visible without duplicating it here.
+/// The vim mode badge (`INSERT` / `NORMAL` / `d(` …) leads the help hints on the query box's bottom
+/// border, so the mode is always visible without duplicating it here.
 fn render_status(app: &App, frame: &mut Frame, area: Rect) {
     let style = if matches!(app.phase(), AppPhase::LoadError(_)) {
         theme::app::status_error()
