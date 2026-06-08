@@ -884,6 +884,8 @@ mod ai_tests;
 mod facet_tests;
 #[path = "app_tests/history_tests.rs"]
 mod history_tests;
+#[path = "app_tests/mouse_tests.rs"]
+mod mouse_tests;
 #[path = "app_tests/palette_tests.rs"]
 mod palette_tests;
 #[path = "app_tests/polish_tests.rs"]

@@ -41,6 +41,15 @@ src/app/editor/mode.rs
 src/app/editor/char_search.rs
 src/app/editor/text_objects.rs
 
+# Post-5 input UX: mouse coordinate mapping (ported from jiq's src/layout/). The pure
+# `LayoutRegions::target_at` resolves a screen cell -> the surface under it + the local coordinate
+# (grid body row / query-bar text col / popup row), honoring overlay-wins-over-base and the
+# border/header offsets. A wrong hit-test silently routes a click to the wrong surface, and every
+# branch is a real behavior case, so it earns the hard floor. The headless `MouseEvent` model
+# (`mouse.rs`) and the App's `on_mouse` routing are exercised by app_tests/mouse_tests (a render
+# seam + state assertions), so they stay off the floor like the other routing/render seams.
+src/app/layout_regions.rs
+
 # Post-5 UX: the context-sensitive bottom keyboard-shortcut help bar (§4.1, ported from jiq). The
 # pure `get_context_hints` / `mode_label` map `App` state -> the ordered hint set + the mode badge
 # for the current focus / vim mode / open popup — a wrong context shows the wrong shortcuts, and

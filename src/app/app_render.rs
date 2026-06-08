@@ -20,6 +20,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::ai::ai_render::render_ai;
 use crate::app::help_line;
+use crate::app::layout_regions::{LayoutRegions, PopupKind};
 use crate::app::{App, AppPhase};
 use crate::autocomplete::autocomplete_render::{MAX_VISIBLE_ROWS, render_popup};
 use crate::facets::facet_render::render_facet;
@@ -74,6 +75,45 @@ pub fn render(app: &App, frame: &mut Frame) {
     render_facet_popup(app, frame, bar, results);
     render_history_popup(app, frame, bar, results);
     render_ai_popup(app, frame, bar, results);
+
+    // Record the on-screen regions so the next mouse event resolves against the geometry the user
+    // actually sees (the click-to-focus / click-to-position / scroll-routing seam). At most one
+    // popup is open (they are mutually exclusive overlays), recomputed with the same `popup_above_bar`
+    // anchoring the render used above.
+    app.set_layout_regions(LayoutRegions {
+        results_pane: Some(results),
+        query_bar: Some(bar),
+        popup: active_popup_region(app, bar, results),
+    });
+}
+
+/// The kind + on-screen rect of the single open popup (mutually exclusive overlays), or `None` when
+/// none is open. Mirrors each `render_*_popup` sizing so the recorded region matches what was drawn.
+fn active_popup_region(app: &App, bar: Rect, results: Rect) -> Option<(PopupKind, Rect)> {
+    if app.is_ai_open() {
+        return Some((PopupKind::Ai, popup_above_bar(bar, results, 2)));
+    }
+    if app.is_history_open() {
+        let rows = (app.history().filtered_count().max(1) as u16).min(MAX_VISIBLE_HISTORY as u16);
+        return Some((PopupKind::History, popup_above_bar(bar, results, rows)));
+    }
+    if app.is_palette_open()
+        && let Some(palette) = app.palette()
+    {
+        let rows = (palette.all_columns().len() as u16).clamp(1, PALETTE_MAX_ROWS);
+        return Some((PopupKind::Palette, popup_above_bar(bar, results, rows)));
+    }
+    if app.facet().is_some() {
+        return Some((
+            PopupKind::Facet,
+            popup_above_bar(bar, results, FACET_POPUP_ROWS),
+        ));
+    }
+    if app.autocomplete().is_open() {
+        let rows = (app.autocomplete().len() as u16).min(MAX_VISIBLE_ROWS);
+        return Some((PopupKind::Autocomplete, popup_above_bar(bar, results, rows)));
+    }
+    None
 }
 
 /// The screen rectangle for a popup of `content_rows` content rows + a border, anchored so its
@@ -162,8 +202,11 @@ fn popup_width(pane_width: u16) -> u16 {
     pane_width.clamp(MIN.min(pane_width.max(1)), MAX.min(pane_width.max(1)))
 }
 
-/// Width of the leading `> ` prompt column reserved at the left of the query bar.
-const PROMPT_WIDTH: u16 = 2;
+/// Width of the leading `> ` prompt column reserved at the left of the query bar. The single source
+/// of truth for the prompt offset: the render uses it to place the textarea, and
+/// [`App::on_mouse`](crate::app::App::on_mouse) uses it to map a query-bar click column onto the
+/// editable text (subtracting the prompt).
+pub(crate) const PROMPT_WIDTH: u16 = 2;
 
 /// The query bar: a `> ` prompt glyph in a fixed left column, then the multiline editing textarea
 /// (which paints its own visible cursor cell into the buffer — headless-snapshotable). The prompt

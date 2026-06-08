@@ -39,7 +39,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyCode, KeyEventKind, KeyModifiers,
+    Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
@@ -51,7 +51,7 @@ use crate::query::worker::spawn_worker;
 use crate::query::worker::types::{QueryRequest, QueryResponse};
 use crate::schema::Schema;
 
-use super::{App, Key, KeyEvent, KeyMods};
+use super::{App, Key, KeyEvent, KeyMods, MouseEvent};
 
 /// How long to block on a single crossterm event poll before looping to drive the debouncer /
 /// drain responses. Short enough that a debounce fire is never delayed perceptibly.
@@ -248,6 +248,11 @@ fn event_loop(
                     let now_ms = start.elapsed().as_millis() as u64;
                     app.on_key(KeyEvent::plain(Key::Paste(data)), now_ms);
                 }
+                Event::Mouse(me) => {
+                    if let Some(ev) = translate_mouse(me) {
+                        app.on_mouse(ev);
+                    }
+                }
                 Event::Resize(_, _) => { /* next draw reflows from retained rows */ }
                 _ => {}
             }
@@ -285,6 +290,23 @@ fn translate_key(ke: event::KeyEvent) -> Option<KeyEvent> {
         _ => return None,
     };
     Some(KeyEvent::new(key, mods))
+}
+
+/// Translate a crossterm mouse event into the neutral [`MouseEvent`] the core understands. Returns
+/// `None` for kinds ciq doesn't model (button-up, right/middle buttons, non-left drags) so the loop
+/// ignores them. Ported from jiq's `app/mouse_events.rs` kind match.
+fn translate_mouse(me: event::MouseEvent) -> Option<MouseEvent> {
+    let (col, row) = (me.column, me.row);
+    let ev = match me.kind {
+        MouseEventKind::ScrollUp => MouseEvent::ScrollUp { col, row },
+        MouseEventKind::ScrollDown => MouseEvent::ScrollDown { col, row },
+        MouseEventKind::ScrollLeft => MouseEvent::ScrollLeft { col, row },
+        MouseEventKind::ScrollRight => MouseEvent::ScrollRight { col, row },
+        MouseEventKind::Down(MouseButton::Left) => MouseEvent::Click { col, row },
+        MouseEventKind::Drag(MouseButton::Left) => MouseEvent::Drag { col, row },
+        _ => return None,
+    };
+    Some(ev)
 }
 
 fn plural(n: usize) -> &'static str {

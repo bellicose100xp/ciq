@@ -301,6 +301,16 @@ impl PaletteState {
         };
     }
 
+    /// Move the cursor to row `row` in the filtered view (the mouse click-to-select path), clamped
+    /// to the last filtered row. No-op when the filtered list is empty.
+    pub fn set_cursor(&mut self, row: usize) {
+        let len = self.filtered_indices().len();
+        if len == 0 {
+            return;
+        }
+        self.cursor = row.min(len - 1);
+    }
+
     /// Append a character to the fuzzy filter needle and clamp the cursor back into the (now
     /// possibly shorter) filtered list.
     pub fn push_needle(&mut self, c: char) {

@@ -407,6 +407,13 @@ impl Editor {
         }
     }
 
+    /// Move the cursor to char column `col` on the **current line** (clamped to the line end by the
+    /// textarea). The click-to-position-cursor path: a mouse click in the query bar maps the click
+    /// column to a text column and lands the cursor there, mirroring jiq's `set_cursor_column`.
+    pub fn set_cursor_column(&mut self, col: usize) {
+        self.set_cursor_col(col);
+    }
+
     /// Replace the entire buffer with `text`, placing the cursor at the end. Used when the palette
     /// / history / AI sets the query wholesale; resets to Insert mode so the user lands in the
     /// typing mode they expect after a wholesale set.

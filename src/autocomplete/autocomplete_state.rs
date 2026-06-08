@@ -172,6 +172,14 @@ impl AutocompleteState {
         self.selected
     }
 
+    /// Select the entry at `index` (the mouse click-to-select path). Out-of-range or closed is a
+    /// no-op, so a click on a blank popup row never desyncs the selection.
+    pub fn set_selected(&mut self, index: usize) {
+        if self.open && index < self.suggestions.len() {
+            self.selected = index;
+        }
+    }
+
     /// The currently-selected suggestion, or `None` when the popup is closed.
     pub fn selected_suggestion(&self) -> Option<&Suggestion> {
         if self.open {

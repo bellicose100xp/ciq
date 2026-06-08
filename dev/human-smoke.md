@@ -279,3 +279,34 @@ color on a real terminal. Confirm by hand:
    args. Confirm the cursor/selection behaves like vim.
 6. **Casual typing still just works.** A fresh bar is in INSERT, so opening a file and typing a
    query needs no vim knowledge — the modal layer is opt-in via `Esc`.
+
+## Post-5 input UX — mouse support (scroll, click-to-focus, click-to-position-cursor)
+
+Mouse capture is enabled at terminal init (`EnableMouseCapture` in `event_loop.rs`, the one
+shell-exempt edge) and disabled on teardown. The headless suite proves the coordinate mapping
+(`LayoutRegions::target_at`) and the routing (`App::on_mouse`) against the recorded `TestBackend`
+geometry — scroll offsets, focus, the text cursor column, popup selection — all with synthetic
+`MouseEvent`s. It does NOT prove the real terminal delivers wheel/click/drag events, the felt
+pointer responsiveness, or that the cursor lands under the actual glyph. Confirm by hand (open a
+CSV large enough that the result scrolls, with several columns):
+
+1. **Wheel scroll over the results pane.** Run a query so the grid has many rows. Roll the mouse
+   wheel up/down with the pointer over the grid. Confirm the grid body scrolls (a few rows per
+   notch), clamped at the top and the last row — the same motion as keyboard PgUp/PgDn.
+2. **Horizontal swipe.** With a wide result (more columns than fit), two-finger swipe left/right on
+   a trackpad. Confirm the visible columns scroll one column per swipe (column-granular, like
+   keyboard Left/Right), clamped at the first/last column.
+3. **Click to focus the results pane.** With focus in the query bar, click anywhere in the grid
+   body. Confirm focus moves to the results pane (subsequent keyboard scroll/`f`-facet apply to the
+   grid). Clicking the pane with no result yet is a no-op (stays on the bar).
+4. **Click to focus + position the cursor in the query bar.** Type `SELECT id, name FROM t`, then
+   click partway along the text. Confirm focus returns to the bar in INSERT mode and the block
+   cursor lands at the clicked character (clicking past the end clamps to the line end; clicking on
+   the `> ` prompt clamps to the start). Dragging with the left button positions the cursor the same
+   way.
+5. **Popup scroll + click (autocomplete).** Type `SELECT ` so the column popup opens. Roll the wheel
+   with the pointer over the popup — confirm the selection moves up/down. Click a popup row — confirm
+   that row becomes selected and a subsequent `Tab` accepts it. (The column palette `Ctrl+K` popup
+   behaves the same for wheel + row click; history/facet/AI popups stay keyboard-driven for now.)
+6. **No regression elsewhere.** Confirm clicking/scrolling does not interfere with typing, and that
+   the mouse never quits the app or fires a query on its own (queries still run only on debounce).

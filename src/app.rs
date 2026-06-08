@@ -55,10 +55,14 @@ pub mod editor;
 pub mod event_loop;
 pub mod help_line;
 pub mod key;
+pub mod layout_regions;
+pub mod mouse;
 pub mod polish;
 
 pub use editor::Editor;
 pub use key::{Key, KeyEvent, KeyMods};
+pub use layout_regions::{LayoutRegions, MouseTarget, PopupKind};
+pub use mouse::MouseEvent;
 
 /// How many rows the LIMIT-wrap caps an interactive query to. A screenful-plus-margin so a
 /// bare `SELECT *` returns a viewport, not the whole table (the §2.3 latency guard). The grid
@@ -194,6 +198,11 @@ pub struct App {
     /// [`VIEWPORT_ROW_LIMIT`]; the event loop overrides it from the config via
     /// [`configure_general`](Self::configure_general).
     viewport_row_limit: usize,
+    /// The on-screen [`Rect`](ratatui::layout::Rect) of each mouse-routable surface, recorded by the
+    /// render layer every frame ([`app_render`]) and read by [`on_mouse`](Self::on_mouse) to resolve
+    /// a click/scroll to the surface under the pointer. A [`std::cell::Cell`] so the `&self` render
+    /// path can update it without a `&mut` borrow (it is plain `Copy` geometry, not logic).
+    layout_regions: std::cell::Cell<LayoutRegions>,
 }
 
 impl App {
@@ -229,6 +238,7 @@ impl App {
             ai_tx: None,
             ai_seq: 0,
             viewport_row_limit: VIEWPORT_ROW_LIMIT,
+            layout_regions: std::cell::Cell::new(LayoutRegions::default()),
         }
     }
 
@@ -240,6 +250,20 @@ impl App {
 
     pub fn focus(&self) -> Focus {
         self.focus
+    }
+
+    /// The on-screen regions recorded by the last render pass (for tests asserting the mouse
+    /// coordinate mapping, and read by [`on_mouse`](Self::on_mouse)).
+    pub fn layout_regions(&self) -> LayoutRegions {
+        self.layout_regions.get()
+    }
+
+    /// Record the on-screen regions for this frame. The render layer ([`app_render`]) calls this
+    /// once per draw with the laid-out [`Rect`](ratatui::layout::Rect)s so the next mouse event
+    /// resolves against the geometry the user actually sees. Kept off the `&mut self` path (it is
+    /// `Copy` geometry, not logic) so the pure render fn need not borrow mutably.
+    pub(crate) fn set_layout_regions(&self, regions: LayoutRegions) {
+        self.layout_regions.set(regions);
     }
 
     /// The full query text (the textarea lines joined with `\n`). Owned because the multiline
@@ -729,6 +753,152 @@ impl App {
             .unwrap_or(0);
         let max = col_count.saturating_sub(1);
         self.h_col_offset = (self.h_col_offset + 1).min(max);
+    }
+
+    // --- mouse routing (headless: synthetic MouseEvents, ported from jiq's app/mouse_*.rs) ---
+
+    /// How many grid rows a single mouse-wheel notch scrolls (jiq's `RESULTS_SCROLL_LINES`).
+    const WHEEL_ROWS: usize = 3;
+
+    /// Route one mouse event to the surface under the pointer (`dev/PLAN.md` §3.1; ported from jiq's
+    /// `app/mouse_events.rs`). The event loop translates a real `crossterm::event::MouseEvent` into
+    /// the neutral [`MouseEvent`] and calls this; tests drive it directly with synthetic events.
+    ///
+    /// Routing, by kind:
+    ///  - **scroll** resolves the cell to a surface and scrolls *that* surface — the results grid
+    ///    (vertical wheel -> [`v_row_offset`](Self::v_row_offset), horizontal swipe ->
+    ///    [`h_col_offset`](Self::h_col_offset)), an open list popup's selection, or nothing;
+    ///  - **click / drag** focuses the surface under the pointer — the results pane (focus +
+    ///    optional row select) or the query bar (focus + position the text cursor at the click
+    ///    column), or selects a row in an open popup.
+    ///
+    /// While loading / on a load error the bar is frozen, so a query-bar click never positions the
+    /// cursor (the [`on_key_query_bar`](Self::on_key_query_bar) freeze invariant).
+    pub fn on_mouse(&mut self, ev: MouseEvent) {
+        let (x, y) = ev.position();
+        let target =
+            self.layout_regions
+                .get()
+                .target_at(x, y, app_render::PROMPT_WIDTH, self.v_row_offset);
+        match ev {
+            MouseEvent::ScrollUp { .. } => self.mouse_scroll_vertical(target, true),
+            MouseEvent::ScrollDown { .. } => self.mouse_scroll_vertical(target, false),
+            MouseEvent::ScrollLeft { .. } => self.mouse_scroll_horizontal(target, true),
+            MouseEvent::ScrollRight { .. } => self.mouse_scroll_horizontal(target, false),
+            MouseEvent::Click { .. } | MouseEvent::Drag { .. } => self.mouse_click(target),
+        }
+    }
+
+    /// Vertical wheel: scroll the grid body when over the results pane (or outside any surface, the
+    /// jiq fallback), or move an open list popup's selection when over it. `up` scrolls toward
+    /// earlier rows.
+    fn mouse_scroll_vertical(&mut self, target: Option<MouseTarget>, up: bool) {
+        match target {
+            Some(MouseTarget::Popup { kind, .. }) => self.popup_scroll(kind, up),
+            // Over the results pane, the query bar, or nowhere: the grid scrolls (the felt default —
+            // the wheel always pages the result unless it is explicitly over a list popup).
+            _ => {
+                if up {
+                    self.v_row_offset = self.v_row_offset.saturating_sub(Self::WHEEL_ROWS);
+                } else {
+                    self.scroll_down(Self::WHEEL_ROWS);
+                }
+            }
+        }
+    }
+
+    /// Horizontal trackpad swipe: column-granular grid h-scroll when over the results pane (or
+    /// outside any surface). `left` moves the viewport toward earlier columns. A swipe over a popup
+    /// or the query bar is a no-op (those have no horizontal scroll axis ciq exposes).
+    fn mouse_scroll_horizontal(&mut self, target: Option<MouseTarget>, left: bool) {
+        if matches!(
+            target,
+            Some(MouseTarget::Popup { .. }) | Some(MouseTarget::QueryBar { .. })
+        ) {
+            return;
+        }
+        if left {
+            self.h_col_offset = self.h_col_offset.saturating_sub(1);
+        } else {
+            self.scroll_right();
+        }
+    }
+
+    /// A left click/drag: focus + position by the resolved target.
+    fn mouse_click(&mut self, target: Option<MouseTarget>) {
+        match target {
+            Some(MouseTarget::Popup { kind, row }) => self.popup_click(kind, row),
+            // Move focus to the grid (matching the keyboard Down-handoff) only when there is a
+            // result to navigate. A focused-cell concept does not exist yet, so the click row only
+            // focuses the pane — the resolved `body_row` is available for a future row-cursor without
+            // changing this seam.
+            Some(MouseTarget::Results { .. }) if self.result.is_some() => {
+                self.focus = Focus::Results;
+            }
+            Some(MouseTarget::QueryBar { col }) => {
+                if matches!(self.phase, AppPhase::LoadError(_)) {
+                    return; // bar frozen on load error (same invariant as on_key_query_bar)
+                }
+                // Focus the bar and land the cursor at the clicked column, in Insert mode so typing
+                // resumes immediately (jiq's click_input_field: focus, then position the cursor).
+                self.focus = Focus::QueryBar;
+                self.editor.reset_to_insert();
+                self.editor.set_cursor_column(col);
+                self.refresh_autocomplete();
+            }
+            // Outside any surface, or a results click with no result to focus — nothing to do.
+            _ => {}
+        }
+    }
+
+    /// Scroll an open list popup's selection by one (mouse wheel over the popup). Only the list
+    /// popups (autocomplete / palette / history) have a movable selection; facet/AI are not lists.
+    fn popup_scroll(&mut self, kind: PopupKind, up: bool) {
+        match kind {
+            PopupKind::Autocomplete => {
+                if up {
+                    self.autocomplete.select_prev();
+                } else {
+                    self.autocomplete.select_next();
+                }
+            }
+            PopupKind::Palette => {
+                if let Some(palette) = self.palette.as_mut() {
+                    if up {
+                        palette.cursor_up();
+                    } else {
+                        palette.cursor_down();
+                    }
+                }
+            }
+            PopupKind::History => {
+                if up {
+                    self.history.select_previous();
+                } else {
+                    self.history.select_next();
+                }
+            }
+            PopupKind::Facet | PopupKind::Ai => {}
+        }
+    }
+
+    /// A click on a popup row. For the autocomplete popup this selects the clicked candidate (so a
+    /// subsequent Tab/Enter accepts it); a click on the palette moves the cursor onto the clicked
+    /// column. The facet/history/AI popups do not act on a row click here (history recall + facet
+    /// dismissal stay keyboard-driven — noted as a clean deferral). `row` is `None` on the border.
+    fn popup_click(&mut self, kind: PopupKind, row: Option<usize>) {
+        let Some(row) = row else {
+            return;
+        };
+        match kind {
+            PopupKind::Autocomplete => self.autocomplete.set_selected(row),
+            PopupKind::Palette => {
+                if let Some(palette) = self.palette.as_mut() {
+                    palette.set_cursor(row);
+                }
+            }
+            PopupKind::Facet | PopupKind::History | PopupKind::Ai => {}
+        }
     }
 
     /// (Re)schedule a debounced query at `now_ms`. While `Loading` we only remember that a query
