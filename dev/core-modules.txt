@@ -41,6 +41,15 @@ src/app/editor/mode.rs
 src/app/editor/char_search.rs
 src/app/editor/text_objects.rs
 
+# Post-5 UX: the context-sensitive bottom keyboard-shortcut help bar (§4.1, ported from jiq). The
+# pure `get_context_hints` / `mode_label` map `App` state -> the ordered hint set + the mode badge
+# for the current focus / vim mode / open popup — a wrong context shows the wrong shortcuts, and
+# both are data-in/data-out, so they earn the hard floor. The thin `render_line` blit (and the
+# width-aware span builder) is a TestBackend-snapshot seam fully exercised by the snapshot +
+# narrow-width tests, so it shares the file without eroding the floor (same treatment as
+# `facet_render.rs`).
+src/app/help_line.rs
+
 # Phase 2/5 (present now): DuckDB-error -> friendly-message mapping + the P5.3 did-you-mean (a
 # bounded edit-distance over the schema headers). Pure `&str -> String`, one golden row per known
 # error category — every branch is a real mapping case, so it earns the hard floor.

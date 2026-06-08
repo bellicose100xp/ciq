@@ -53,6 +53,7 @@ pub mod app_render;
 pub mod autocomplete_app;
 pub mod editor;
 pub mod event_loop;
+pub mod help_line;
 pub mod key;
 pub mod polish;
 

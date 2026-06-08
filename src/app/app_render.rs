@@ -9,8 +9,9 @@
 //! Layout (top -> bottom): a bordered results pane filling the space (which re-lays-out the
 //! retained result `rows` against the *actual* inner viewport so a resize reflows without
 //! re-querying — §3.1's "App re-lays-out from retained rows on resize"), then a one-row query
-//! bar near the bottom, then a one-row status line at the very bottom. The query *input* sits at
-//! the bottom of the screen; popups anchor just **above** it, over the results pane.
+//! bar near the bottom, then a one-row status line, then the one-row context-sensitive keyboard
+//! help bar at the very bottom (§4.1, ported from jiq). The query *input* sits near the bottom of
+//! the screen; popups anchor just **above** it, over the results pane.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -18,7 +19,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::ai::ai_render::render_ai;
-use crate::app::{App, AppPhase, Focus};
+use crate::app::help_line;
+use crate::app::{App, AppPhase};
 use crate::autocomplete::autocomplete_render::{MAX_VISIBLE_ROWS, render_popup};
 use crate::facets::facet_render::render_facet;
 use crate::grid::{GridView, grid_render, layout_grid};
@@ -52,7 +54,8 @@ pub fn render(app: &App, frame: &mut Frame) {
         .constraints([
             Constraint::Min(1),                  // results pane (fills the space)
             Constraint::Length(bar_height(app)), // query bar (grows with line count, capped)
-            Constraint::Length(1),               // status line (very bottom)
+            Constraint::Length(1),               // status line
+            Constraint::Length(1),               // keyboard help bar (very bottom)
         ])
         .split(area);
 
@@ -62,6 +65,7 @@ pub fn render(app: &App, frame: &mut Frame) {
     render_results(app, frame, results);
     render_query_bar(app, frame, bar);
     render_status(app, frame, chunks[2]);
+    help_line::render_line(app, frame, chunks[3]);
     // The popups overlay the results pane, anchored just ABOVE the bottom query bar (drawn last so
     // they sit on top). Headless: still just cells in the TestBackend buffer. They are mutually
     // exclusive (opening one closes the others), so painting them all is at most one visible box.
@@ -273,9 +277,9 @@ fn split_off_banner(inner: Rect, banner: Option<&str>) -> (Option<Rect>, Rect) {
     (Some(banner_area), rest)
 }
 
-/// The status line: the status text (error-styled on a load error, normal otherwise) at the left,
-/// and the vim mode badge (`INSERT` / `NORMAL` / `d(` …) pinned to the right when the query bar has
-/// focus — so the editing mode is always visible (the help bar will consume the same badge later).
+/// The status line: the status text (error-styled on a load error, normal otherwise) at the left.
+/// The vim mode badge (`INSERT` / `NORMAL` / `d(` …) now leads the help bar below, so the mode is
+/// always visible without duplicating it here.
 fn render_status(app: &App, frame: &mut Frame, area: Rect) {
     let style = if matches!(app.phase(), AppPhase::LoadError(_)) {
         theme::app::status_error()
@@ -286,22 +290,6 @@ fn render_status(app: &App, frame: &mut Frame, area: Rect) {
         Paragraph::new(Span::styled(app.status().to_string(), style)),
         area,
     );
-
-    if app.focus() == Focus::QueryBar {
-        let badge = app.editor_mode().display();
-        let badge_w = (badge.chars().count() as u16).min(area.width);
-        if badge_w > 0 {
-            let badge_area = Rect {
-                x: area.x + area.width - badge_w,
-                width: badge_w,
-                ..area
-            };
-            frame.render_widget(
-                Paragraph::new(Span::styled(badge, theme::app::mode_indicator())),
-                badge_area,
-            );
-        }
-    }
 }
 
 #[cfg(test)]

@@ -91,6 +91,38 @@ pub mod app {
     }
 }
 
+/// Bottom keyboard-shortcut help-bar colors and styles (`dev/PLAN.md` §4.1, ported from jiq's
+/// `help/help_line_render.rs`).
+///
+/// The help bar is the very bottom row: a context-sensitive list of `key  desc` pairs joined by a
+/// `\u{2022}` bullet, prefixed by the vim mode badge when the query bar is focused. The key reads
+/// as the accented foreground, the description as quiet metadata, and the bullet separator dimmer
+/// still — so the whole line scans as a legend without competing with the grid above. Color
+/// polarity (legibility light vs dark) is the §4.7 human-validated concern — centralizing here
+/// keeps it a single-file change.
+pub mod help_line {
+    use ratatui::style::{Color, Modifier, Style};
+
+    /// A shortcut key (`Tab`, `Ctrl+K`, `Esc`) — accented + bold so the actionable chord stands out.
+    pub fn key() -> Style {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// A shortcut description (`complete`, `columns`) — quiet so it reads as the chord's label.
+    pub fn description() -> Style {
+        Style::default().fg(Color::DarkGray)
+    }
+
+    /// The `\u{2022}` bullet between hints — dimmest, a structural separator only.
+    pub fn separator() -> Style {
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM)
+    }
+}
+
 /// Autocomplete popup colors and styles (`dev/PLAN.md` §5.1/§5.6).
 ///
 /// The popup overlays the query bar: a bordered list of candidates, each a candidate text plus a

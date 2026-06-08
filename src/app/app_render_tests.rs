@@ -267,12 +267,12 @@ fn query_bar_sits_at_the_bottom() {
         .iter()
         .position(|l| l.contains("SELECT 42"))
         .expect("query bar line");
-    // Bar is the second-to-last row (status line is the very last); definitively in the bottom
-    // half, not row 0 as it used to be.
+    // Bar is the third-to-last row (status line then the help bar are below it); definitively in
+    // the bottom half, not row 0 as it used to be.
     assert_eq!(
         bar_line,
-        lines.len() - 2,
-        "query bar is the second-to-last row (status below it), screen:\n{screen}"
+        lines.len() - 3,
+        "query bar sits just above the status + help rows, screen:\n{screen}"
     );
 }
 
@@ -366,11 +366,12 @@ fn enter_inserts_newline_and_bar_grows_a_row() {
         .position(|l| l.contains("FROM t") && !l.contains("query"))
         .expect("second query line");
     assert_eq!(row_b, row_a + 1, "second line directly below the first");
-    // Two query rows + a status row at the bottom: the second query line is the third-to-last row.
+    // Two query rows + a status row + a help row at the bottom: the second query line is the
+    // fourth-to-last row.
     assert_eq!(
         row_b,
-        lines.len() - 2,
-        "the multiline bar sits just above the status line, screen:\n{screen}"
+        lines.len() - 3,
+        "the multiline bar sits just above the status + help rows, screen:\n{screen}"
     );
 }
 
