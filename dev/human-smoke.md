@@ -311,3 +311,76 @@ CSV large enough that the result scrolls, with several columns):
    behaves the same for wheel + row click; history/facet/AI popups stay keyboard-driven for now.)
 6. **No regression elsewhere.** Confirm clicking/scrolling does not interfere with typing, and that
    the mouse never quits the app or fires a query on its own (queries still run only on debounce).
+
+---
+
+## Showcase fixture — edge-case tour (tests/fixtures/showcase.csv)
+
+A meatier fixture for driving every TUI edge case by hand. **5000 rows, 14 columns**, generated
+deterministically by `dev/gen_showcase.py` (re-run it to regenerate; bump `ROWS` to extend). Columns
+and the edge each exercises:
+
+| Column | Type | Edge case it drives |
+|---|---|---|
+| `id` | BIGINT | right-aligned integer; stable sort key (`ORDER BY id`) |
+| `name` | VARCHAR | left-aligned short text |
+| `region` | VARCHAR | low-cardinality (EU/NA/APAC/LATAM/MEA) → facets + value completion |
+| `status` | VARCHAR | low-cardinality **with ~294 empty cells → SQL NULL** (Q12) |
+| `amount` | DOUBLE | right-aligned float; negatives, a few very large (≈9,005,000.99), ~217 NULL |
+| `quantity` | BIGINT | right-aligned int, some NULL |
+| `active` | BOOLEAN | bool rendering, ~172 NULL |
+| `created_at` | DATE | sniffed DATE, right-aligned |
+| `updated_at` | TIMESTAMP | sniffed TIMESTAMP (the `value_render` temporal path) |
+| `score` | DOUBLE | higher-precision float, edge values 0.0 / 0.0001 |
+| `notes` | VARCHAR | **wide** → ellipsis + h-scroll; embedded comma / doubled-quote / newline / CJK / emoji cells |
+| `Total ($)` | DOUBLE | column name with space+special chars → `"Total ($)"` quoting (Q3) |
+| `order` | BIGINT | reserved-word column name → `"order"` quoting |
+| `CreatedBy` | VARCHAR | CamelCase name → case-preservation quoting; another facet target |
+
+Launch: `./target/release/ciq tests/fixtures/showcase.csv`
+
+1. **Type sniffing + per-type alignment.** `SELECT * FROM t` → confirm `id`, `quantity`, `amount`,
+   `score`, `Total ($)`, `order`, `created_at`, `updated_at` are **right-aligned**; `name`, `region`,
+   `status`, `notes`, `CreatedBy` **left-aligned**. The sticky header shows each column's `name (type)`
+   badge.
+2. **Truncation banner + vertical scroll.** `SELECT * FROM t` returns 5000 rows but ciq caps the
+   view at 1000 → the banner **"showing first 1000 rows (use --output to export all)"** appears.
+   Arrow-down / PgDn into the grid and scroll through the body; the type-annotated header stays sticky.
+3. **NULL rendering + Q12 semantics.** Scroll until you hit a row with an empty `status`, `amount`,
+   or `active` → it renders as a dim `NULL` (distinct from an empty string; right-aligned for the
+   numeric column). Then compare: `SELECT count(*) FROM t WHERE status IS NULL` (**294**) vs
+   `SELECT count(*) FROM t WHERE status = ''` (**0**) — empty CSV fields ingested as NULL, not `''`.
+4. **Wide-column ellipsis + horizontal column scroll.** The `notes` column is long → it truncates
+   with `…`. Use `Left`/`Right` (column-granular h-scroll) to bring `notes`, `Total ($)`, `order`,
+   `CreatedBy` into view; whole columns shift, never half a cell.
+5. **RFC-4180 + unicode cells (truncation must never panic mid-glyph).** Each of these returns ~20
+   rows (the cell repeats every 250 rows) — eyeball that they render intact, no panic, no torn glyphs:
+   - `SELECT id, notes FROM t WHERE notes LIKE '%Smith, Jr.%'` — embedded commas
+   - `SELECT id, notes FROM t WHERE notes LIKE '%ship it%'` — doubled-quote cell (`he said "ship it" today`)
+   - `SELECT id, notes FROM t WHERE id = 100` — embedded newline (a single logical row whose cell has two lines)
+   - `SELECT id, notes FROM t WHERE notes LIKE '%北京%'` — CJK wide glyphs
+   - `SELECT id, notes FROM t WHERE notes LIKE '%🎉%'` (and `'%😀%'`, `'%¡Hola!%'`) — emoji + latin-1
+6. **Facets (`f` on a focused grid column).** Arrow into the grid, move to `region` / `status` /
+   `CreatedBy`, press `f` → distinct count, null count, and a top-K histogram (each region/creator is
+   1000 rows, so the bars are even; `status` shows its NULL count).
+7. **Value completion.** Type `SELECT * FROM t WHERE region = '` → popup lists EU/NA/APAC/LATAM/MEA;
+   pick one → inserts a quoted literal (`'EU'`). Same for `WHERE status = '` and `WHERE CreatedBy = '`.
+8. **Identifier quoting (Q3).** Open the palette (`Ctrl+K`) or autocomplete and select the awkward
+   columns → `Total ($)` inserts as `"Total ($)"`, `order` as `"order"`, `CreatedBy` keeps its case.
+9. **Palette / history / AI against real data.** `Ctrl+K` to project a subset of the 14 columns;
+   `Ctrl+R` to recall a prior query; `Ctrl+G` for NL→SQL (a configured provider answers; otherwise the
+   popup shows a clear "not configured" message — the chord/popup itself still works).
+10. **Output modes (headless, from a shell).** Confirm byte-level correctness:
+    - `./target/release/ciq -q "SELECT id, status, amount FROM t WHERE id IN (17,23,29)" --output json tests/fixtures/showcase.csv` → NULLs are JSON `null`, not `""`.
+    - `./target/release/ciq -q "SELECT notes FROM t WHERE id = 50" --output csv tests/fixtures/showcase.csv` → doubled-quote round-trips (`"he said ""ship it"" today"`).
+    - Try `--output tsv` and `--output markdown` too.
+
+### Messy headers (Q3 dedup) — tests/fixtures/messy_headers.csv
+
+A tiny 5-row file whose header is `id,name,,name,notes` (a duplicate and an empty name). Load it and
+confirm DuckDB's dedup naming surfaces: `id, name, column2, name_1, notes` (empty → positional
+`column2`; duplicate `name` → `name_1`), matching the Q3 resolution in `dev/DECISIONS.md`.
+
+> Headless verification done: load, 14-column type sniff, the NULL counts, and the edge-cell parsing
+> were confirmed via the `--output` path. The interactive **look** (alignment, the dim NULL glyph,
+> ellipsis, sticky header, facet bars, popup glyphs) still needs a real-terminal eyeball.
