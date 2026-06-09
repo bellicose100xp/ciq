@@ -169,10 +169,8 @@ fn popup_overwrites_underlying_dim_cells() {
     let mut t = Terminal::new(TestBackend::new(30, 12)).expect("TestBackend");
     t.draw(|f| {
         // Cover the full area with DIM-styled text simulating the underlying stale grid.
-        let dim_bg = Paragraph::new(
-            "##############################\n".repeat(12),
-        )
-        .style(Style::default().add_modifier(Modifier::DIM));
+        let dim_bg = Paragraph::new("##############################\n".repeat(12))
+            .style(Style::default().add_modifier(Modifier::DIM));
         f.render_widget(dim_bg, area);
         // Now render the popup on top of it.
         render_palette(&state, f, area);

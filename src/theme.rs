@@ -520,10 +520,7 @@ mod theme_tests {
     #[test]
     fn query_box_focused_takes_mode_color_and_error_overrides() {
         // Focused, no error → mode color.
-        assert_eq!(
-            query_box(EditorMode::Insert, false, true).fg,
-            Some(p::CYAN)
-        );
+        assert_eq!(query_box(EditorMode::Insert, false, true).fg, Some(p::CYAN));
         assert_eq!(
             query_box(EditorMode::Normal, false, true).fg,
             Some(p::YELLOW)
@@ -575,11 +572,7 @@ mod theme_tests {
         assert_eq!(unfocused_ok.fg, Some(p::GREEN));
         assert!(unfocused_ok.add_modifier.contains(Modifier::DIM));
         // Same pattern for the other states.
-        for state in [
-            ResultState::Empty,
-            ResultState::Error,
-            ResultState::Pending,
-        ] {
+        for state in [ResultState::Empty, ResultState::Error, ResultState::Pending] {
             let focused = results(state, true);
             let unfocused = results(state, false);
             assert_eq!(focused.fg, unfocused.fg, "hue preserved across focus");
