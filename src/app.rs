@@ -639,6 +639,12 @@ impl App {
     /// caller stops routing). Tab/Enter accept the selection; Up/Down move it; Esc dismisses; any
     /// other key falls through (e.g. typing keeps editing and recomputes the popup).
     fn handle_popup_key(&mut self, ev: &KeyEvent, now_ms: u64) -> bool {
+        // Shift+Tab while the popup is open mirrors Up — select the previous candidate (some users
+        // prefer this over Up). It would otherwise leak through to the bar's Tab-cycle-pane path.
+        if matches!(ev.key, Key::Tab) && ev.mods.shift {
+            self.autocomplete.select_prev();
+            return true;
+        }
         match ev.key {
             Key::Tab | Key::Enter => {
                 self.accept_suggestion(now_ms);
@@ -708,10 +714,15 @@ impl App {
             Key::Right => self.input_editor_mut().move_right(),
             Key::Home => self.input_editor_mut().move_home(),
             Key::End => self.input_editor_mut().move_end(),
-            // Within a multiline query, Up moves between lines; on the first line in Power, or in
-            // any Simple pane, it's a no-op (a Simple pane is single-line; pane-to-pane navigation
-            // is `Tab`/`Shift+Tab`/click).
-            Key::Up => self.input_editor_mut().move_up(),
+            // Up navigates within Power's multiline textarea; in Simple mode it cycles to the
+            // previous pane (mirror of `Down`'s simple_pane_down). Reaches `SELECT` and stops —
+            // the symmetric behavior of Down handing off to the results grid from `LIMIT` is
+            // intentionally NOT mirrored on Up (the results pane is below the bar, so going "up"
+            // out of `SELECT` would take focus to a non-existent surface).
+            Key::Up => match self.query_form.mode() {
+                QueryMode::Simple => self.simple_pane_up(),
+                QueryMode::Power => self.input_editor_mut().move_up(),
+            },
             // Enter (and Shift+Enter) insert a newline in Power; in Simple, panes are single-line
             // so the textarea swallows it as a no-op (its single-line nature is enforced by
             // construction).
@@ -748,6 +759,15 @@ impl App {
             self.focus = Focus::Results;
         } else {
             self.query_form.focus_next();
+        }
+    }
+
+    /// `Up` in Simple mode: focus the previous pane (`LIMIT` → `ORDER BY` → … → `SELECT`). On
+    /// `SELECT` it stays put — the results pane sits below the bar, so going "up" out of `SELECT`
+    /// would have nowhere sensible to land.
+    fn simple_pane_up(&mut self) {
+        if !matches!(self.query_form.focused_pane(), SimplePane::Select) {
+            self.query_form.focus_prev();
         }
     }
 

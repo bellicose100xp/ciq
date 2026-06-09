@@ -10,7 +10,7 @@
 //! Split out of `app_tests.rs` to keep each file under the 1000-line cap; helpers come from `super`.
 
 use crate::app::query_form::SimplePane;
-use crate::app::{App, Key, KeyEvent};
+use crate::app::{App, Key, KeyEvent, KeyMods};
 use crate::autocomplete::autocomplete_state::SuggestionType;
 use crate::engine::InterruptHandle;
 use crate::engine::types::{Cell, Column, Table};
@@ -264,5 +264,123 @@ fn simple_mode_tab_inserts_into_focused_pane_not_power_editor() {
         app.query_form().power().text(),
         "",
         "the Power editor stays empty — the accept did not target it"
+    );
+}
+
+// ── Popup-aware Up/Down/Tab/Esc navigation ───────────────────────────────────────────────────────
+
+#[test]
+fn down_with_popup_open_moves_selection_not_focus() {
+    let (mut app, _rx) = simple_app();
+    type_into_pane(&mut app, SimplePane::Where, "i");
+    assert!(app.autocomplete().is_open(), "popup must be open");
+    assert!(app.autocomplete().suggestions().len() >= 2, "≥2 candidates");
+    let before_focus = app.query_form().focused_pane();
+    let before_selected = app.autocomplete().selected();
+    app.on_key(KeyEvent::new(Key::Down, KeyMods::NONE), 0);
+    assert_eq!(
+        app.query_form().focused_pane(),
+        before_focus,
+        "Down with popup open does NOT change pane focus"
+    );
+    assert_eq!(
+        app.autocomplete().selected(),
+        before_selected + 1,
+        "Down with popup open advances the popup selection"
+    );
+    assert!(
+        app.autocomplete().is_open(),
+        "popup remains open after Down"
+    );
+}
+
+#[test]
+fn up_with_popup_open_moves_selection_back() {
+    let (mut app, _rx) = simple_app();
+    type_into_pane(&mut app, SimplePane::Where, "i");
+    assert!(app.autocomplete().suggestions().len() >= 2);
+    app.on_key(KeyEvent::new(Key::Down, KeyMods::NONE), 0);
+    assert!(app.autocomplete().selected() >= 1);
+    app.on_key(KeyEvent::new(Key::Up, KeyMods::NONE), 0);
+    assert_eq!(
+        app.autocomplete().selected(),
+        0,
+        "Up with popup open moves selection backward"
+    );
+    assert_eq!(
+        app.query_form().focused_pane(),
+        SimplePane::Where,
+        "Up with popup open does NOT cycle to a different pane"
+    );
+}
+
+#[test]
+fn shift_tab_with_popup_open_moves_selection_back() {
+    let (mut app, _rx) = simple_app();
+    type_into_pane(&mut app, SimplePane::Where, "i");
+    assert!(app.autocomplete().suggestions().len() >= 2);
+    app.on_key(KeyEvent::new(Key::Down, KeyMods::NONE), 0);
+    assert_eq!(app.autocomplete().selected(), 1);
+    let before_focus = app.query_form().focused_pane();
+    app.on_key(
+        KeyEvent::new(
+            Key::Tab,
+            KeyMods {
+                shift: true,
+                ..KeyMods::NONE
+            },
+        ),
+        0,
+    );
+    assert_eq!(
+        app.autocomplete().selected(),
+        0,
+        "Shift+Tab with popup open moves selection back"
+    );
+    assert_eq!(
+        app.query_form().focused_pane(),
+        before_focus,
+        "Shift+Tab with popup open does NOT cycle panes"
+    );
+}
+
+#[test]
+fn shift_tab_with_popup_closed_cycles_to_previous_pane() {
+    let (mut app, _rx) = simple_app();
+    // Move forward first so there is a "previous" pane to land on.
+    app.query_form_mut().focus(SimplePane::OrderBy);
+    assert!(!app.autocomplete().is_open());
+    app.on_key(
+        KeyEvent::new(
+            Key::Tab,
+            KeyMods {
+                shift: true,
+                ..KeyMods::NONE
+            },
+        ),
+        0,
+    );
+    assert_eq!(
+        app.query_form().focused_pane(),
+        SimplePane::GroupBy,
+        "Shift+Tab with popup closed cycles to the previous pane"
+    );
+}
+
+#[test]
+fn esc_with_popup_open_closes_the_popup_and_does_not_flip_vim_mode() {
+    let (mut app, _rx) = simple_app();
+    type_into_pane(&mut app, SimplePane::Where, "i");
+    assert!(app.autocomplete().is_open());
+    let mode_before = app.editor_mode();
+    assert!(mode_before.is_insert(), "starts in INSERT");
+    app.on_key(KeyEvent::new(Key::Esc, KeyMods::NONE), 0);
+    assert!(
+        !app.autocomplete().is_open(),
+        "Esc with popup open closes the popup"
+    );
+    assert!(
+        app.editor_mode().is_insert(),
+        "Esc with popup open does NOT flip vim Insert -> Normal"
     );
 }

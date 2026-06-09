@@ -45,9 +45,20 @@ polarity, or the on-screen feel. Confirm by hand (light + dark terminal):
 3. **Per-mode badge color.** Confirm Insert is cyan, Normal is yellow, an operator-pending state
    like `d(` is green, and a char-search-pending state like `f` is pink (jiq's per-mode palette).
 4. **Hints follow the open popup.** Open each popup and confirm the box bottom border shows that
-   popup's keys: autocomplete (`Tab complete`, `Up/Down select`, `Esc dismiss`); `Ctrl+K` palette
+   popup's keys: autocomplete (`Tab accept`, `Up/Down select`, `Esc close`); `Ctrl+K` palette
    (`Space toggle`, `Left/Right reorder`, `Enter apply`); `Ctrl+R` history (`Enter recall`);
    `Ctrl+G` AI (`Enter generate`); `f` facet in the results pane (`Esc close`).
+4a. **Simple-mode bar (no popup) shows `Tab next pane`.** With no popup open and the query bar in
+   Insert mode, the bottom border reads `Tab next pane` (Tab cycles SELECT -> WHERE -> GROUP BY ->
+   ORDER BY -> LIMIT) plus the `Ctrl+Q SQL` toggle and the chord set. Power mode shows `Tab complete`
+   instead (Tab in the textarea opens / accepts an autocomplete suggestion).
+4b. **Cursor only on the focused pane.** In Simple mode, exactly ONE pane shows a reverse-video
+   block cursor — the focused one. Tab/Shift+Tab cycle the cursor; Up/Down move between panes
+   when the popup is closed (Up = previous pane, Down = next pane / out to results from `LIMIT`).
+4c. **Popup-aware Up/Down/Tab.** With the autocomplete popup open: Up/Down move the highlighted
+   suggestion (NOT pane focus); Tab and Enter accept the highlight (insert + close); Shift+Tab
+   moves selection back; Esc closes the popup but does NOT flip vim Insert -> Normal. With the
+   popup closed: Tab/Shift+Tab cycle panes; Up/Down move pane focus; Esc flips Insert -> Normal.
 5. **Results-pane hints.** Press Down past the last query line to focus the grid -> the bottom
    border shows scroll/page/column hints (`Up/Down scroll`, `PgUp/PgDn page`, `Left/Right columns`,
    `f facet`) and **no** mode badge on the top border (the editor is not the focused surface). Press

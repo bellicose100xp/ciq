@@ -19,7 +19,7 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::app::{App, Focus};
+use crate::app::{App, Focus, QueryMode};
 use crate::theme;
 
 /// Build the ordered `(key, desc)` hint list — like jiq's `hints!` macro, a terse literal table.
@@ -63,9 +63,9 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
     }
     if app.autocomplete().is_open() {
         return hints![
-            "Tab" => "complete",
+            "Tab" => "accept",
             "Up/Down" => "select",
-            "Esc" => "dismiss",
+            "Esc" => "close",
             "Ctrl+C" => "quit",
         ];
     }
@@ -81,14 +81,22 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
     }
     // Query bar focused. Insert mode is the typing path (live query); the vim command modes share a
     // motion-oriented hint set. The Ctrl chords (palette / AI / history) are reachable from both.
+    // With the autocomplete popup CLOSED, Tab's meaning depends on mode: in Simple it cycles to
+    // the next pane (not "complete"); in Power it inserts a literal tab into the textarea (or
+    // would be intercepted by the popup if it were open).
     if app.editor_mode().is_insert() {
-        hints![
-            "Tab" => "complete",
-            "Ctrl+K" => "columns",
-            "Ctrl+G" => "AI",
-            "Ctrl+R" => "history",
-            "Esc" => "vim",
-            "Ctrl+C" => "quit",
+        let tab_hint: (&'static str, &'static str) = match app.query_form().mode() {
+            QueryMode::Simple => ("Tab", "next pane"),
+            QueryMode::Power => ("Tab", "complete"),
+        };
+        vec![
+            tab_hint,
+            ("Ctrl+K", "columns"),
+            ("Ctrl+Q", "SQL"),
+            ("Ctrl+G", "AI"),
+            ("Ctrl+R", "history"),
+            ("Esc", "vim"),
+            ("Ctrl+C", "quit"),
         ]
     } else {
         hints![

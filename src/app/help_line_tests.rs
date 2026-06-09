@@ -303,3 +303,58 @@ fn render_no_panic_on_zero_or_tiny_width() {
         let _ = render_help(&loaded_app(), w);
     }
 }
+
+/// Pair lookup for the description (paired with `has_key`).
+fn pair_for<'a>(
+    hints: &'a [(&'static str, &'static str)],
+    key: &str,
+) -> Option<&'a (&'static str, &'static str)> {
+    hints.iter().find(|(k, _)| *k == key)
+}
+
+#[test]
+fn simple_mode_query_bar_insert_hints_show_tab_next_pane() {
+    // Simple is the production default; build the App without forcing Power.
+    let (tx, _rx) = channel();
+    let mut app = App::new(tx, InterruptHandle::noop());
+    app.set_schema(test_schema());
+    app.on_loaded("ready");
+    // Close any popup that may be open from the post-load refresh so the bar's bottom hints
+    // reflect Simple+Insert, not the popup-open context. Esc with the popup open closes the
+    // popup without changing vim mode.
+    let mut guard = 0;
+    while app.autocomplete().is_open() && guard < 4 {
+        app.on_key(KeyEvent::new(Key::Esc, KeyMods::NONE), 0);
+        guard += 1;
+    }
+    assert!(
+        !app.autocomplete().is_open(),
+        "popup must be closed for the bare Insert-mode hints"
+    );
+    let hints = get_context_hints(&app);
+    let tab = pair_for(&hints, "Tab").expect("Tab present in Simple-mode Insert hints");
+    assert_eq!(
+        tab.1, "next pane",
+        "Simple-mode Tab is 'next pane', not 'complete': {hints:?}"
+    );
+    assert!(
+        has_key(&hints, "Ctrl+Q"),
+        "Ctrl+Q (SQL toggle) chord present: {hints:?}"
+    );
+}
+
+#[test]
+fn autocomplete_popup_hint_descriptions_say_accept_select_close() {
+    let mut app = loaded_app();
+    for c in "SELECT st".chars() {
+        app.on_key(KeyEvent::char(c), 0);
+    }
+    assert!(app.autocomplete().is_open());
+    let hints = get_context_hints(&app);
+    let tab = pair_for(&hints, "Tab").expect("Tab present in popup-open hints");
+    assert_eq!(tab.1, "accept", "Tab description: {hints:?}");
+    let updown = pair_for(&hints, "Up/Down").expect("Up/Down present");
+    assert_eq!(updown.1, "select", "Up/Down description: {hints:?}");
+    let esc = pair_for(&hints, "Esc").expect("Esc present");
+    assert_eq!(esc.1, "close", "Esc description: {hints:?}");
+}
