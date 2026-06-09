@@ -15,7 +15,7 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::theme;
 
@@ -36,6 +36,15 @@ pub fn render_palette(state: &PaletteState, f: &mut Frame, area: Rect) {
     // corner glyphs.
     let usable = area.width.saturating_sub(2) as usize;
     let hint_line = Line::from(hint_spans(usable)).centered();
+
+    // The popup overlays the results grid, whose cells may carry `Modifier::DIM` (a stale-error
+    // grid) or per-span NULL dimming from `grid_render::style_body_line`. ratatui's text spans OR
+    // their style into the underlying cell rather than overwriting, so without an explicit clear
+    // those modifiers bleed through into the popup's text and gap cells (a row whose underlying
+    // grid happened to have a NULL would render visibly dimmer than its neighbors). Clear the
+    // popup's full area FIRST so every cell starts from a clean base before the Block + content
+    // paint.
+    f.render_widget(Clear, area);
 
     let block = Block::default()
         .borders(Borders::ALL)

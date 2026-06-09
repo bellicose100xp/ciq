@@ -144,3 +144,57 @@ fn hint_spans_zero_width_yields_empty() {
     let spans = hint_spans(0);
     assert!(spans.is_empty());
 }
+
+// --- DIAGNOSTIC: dim row bleed-through (user-reported screenshot bug) ---
+
+/// Pin the fix for the screenshot bug where `[x] quantity` showed dim while neighbors were
+/// bright. Root cause: the popup is overlaid on top of a results grid whose body cells may carry
+/// `Modifier::DIM` (jiq-style stale-error rendering, or NULL-glyph spans from `style_body_line`),
+/// and the popup's `Block` does NOT explicitly fill the inner area with a base background style —
+/// so any `Span::raw`/empty-cell paint inherits the residual modifiers from the underlying buffer.
+/// The check below pre-paints DIM cells via a first draw, then renders the popup over them and
+/// asserts no cell inside the popup's inner content area carries `Modifier::DIM`.
+#[test]
+fn popup_overwrites_underlying_dim_cells() {
+    use ratatui::style::{Modifier, Style};
+    use ratatui::widgets::Paragraph;
+
+    let mut state = PaletteState::new(cols());
+    state.toggle(0);
+    state.toggle(2);
+
+    // Pre-paint a DIM background by drawing a Paragraph styled DIM over the full area. Then
+    // draw the popup OVER it (on top) and inspect the resulting buffer cells.
+    let area = Rect::new(0, 0, 30, 12);
+    let mut t = Terminal::new(TestBackend::new(30, 12)).expect("TestBackend");
+    t.draw(|f| {
+        // Cover the full area with DIM-styled text simulating the underlying stale grid.
+        let dim_bg = Paragraph::new(
+            "##############################\n".repeat(12),
+        )
+        .style(Style::default().add_modifier(Modifier::DIM));
+        f.render_widget(dim_bg, area);
+        // Now render the popup on top of it.
+        render_palette(&state, f, area);
+    })
+    .expect("draw");
+    let painted = t.backend().buffer();
+
+    // Inner area is the popup minus its border (1-cell on each side).
+    let inner = Rect::new(1, 1, area.width - 2, area.height - 2);
+    let mut dim_cells: Vec<(u16, u16, String)> = Vec::new();
+    for y in inner.y..inner.y + inner.height {
+        for x in inner.x..inner.x + inner.width {
+            let cell = &painted[(x, y)];
+            if cell.modifier.contains(Modifier::DIM) {
+                dim_cells.push((x, y, cell.symbol().to_string()));
+            }
+        }
+    }
+    assert!(
+        dim_cells.is_empty(),
+        "popup left {} inner cells with DIM bleeding from underneath: {:?}",
+        dim_cells.len(),
+        dim_cells
+    );
+}

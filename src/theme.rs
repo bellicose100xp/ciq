@@ -144,17 +144,95 @@ pub mod app {
     }
 }
 
-/// Border styles, focus-aware (`dev/PLAN.md` §3.1 felt-loop polish).
+/// Border styles, **state-aware** (`dev/PLAN.md` §3.1 felt-loop polish).
+///
+/// jiq-style borders react to the box's current state:
+///  - **Query box** border tracks the focused vim mode (Insert=cyan, Normal=yellow,
+///    Operator/TextObject=green, CharSearch=pink), with a query-pipeline error overriding the mode
+///    color (red). Unfocused boxes recede in muted slate regardless of mode/state.
+///  - **Results box** border tracks the displayed result state (Ok=green, Empty=yellow, Error=red,
+///    Pending=cyan). Unfocused dims the same hue (no bold) so the state still reads.
 pub mod border {
     use super::base as p;
-    use ratatui::style::Style;
+    use crate::app::editor::EditorMode;
+    use ratatui::style::{Color, Modifier, Style};
 
-    /// The border of the currently-focused pane — bright cyan.
+    /// Where the displayed result currently sits in the success/error spectrum — drives the results
+    /// box's border color so the user sees the verdict at a glance (jiq's `result_ok` /
+    /// `result_warning` / `result_error` / `result_pending` semantics).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum ResultState {
+        /// No result yet (loading or pre-first-query) — cyan.
+        Pending,
+        /// Successful query, at least one row — green.
+        Ok,
+        /// Successful query with zero rows — yellow (no error, but visually distinct so the user
+        /// notices the empty result).
+        Empty,
+        /// Last query failed (preprocess-reject or engine error); the prior result is being kept on
+        /// screen DIMMED — red.
+        Error,
+    }
+
+    /// The accent color for a vim mode (Insert=cyan, Normal=yellow, Operator/TextObject=green,
+    /// CharSearch=pink). Pure lookup; both [`query_box`] and the mode-badge style consume it so
+    /// the border, the badge, and the bottom-hint keys stay in lockstep.
+    pub fn mode_color(mode: EditorMode) -> Color {
+        match mode {
+            EditorMode::Insert => p::CYAN,
+            EditorMode::Normal => p::YELLOW,
+            EditorMode::Operator(_) | EditorMode::TextObject(_, _) => p::GREEN,
+            EditorMode::CharSearch(_, _) | EditorMode::OperatorCharSearch(_, _, _, _) => p::PINK,
+        }
+    }
+
+    /// The accent color for a [`ResultState`] (Ok=green, Empty=yellow, Error=red, Pending=cyan).
+    /// Both [`results`] and the row-counter style consume it so the border, the counter, and the
+    /// bottom-hint keys all share the same hue.
+    pub fn result_color(state: ResultState) -> Color {
+        match state {
+            ResultState::Ok => p::GREEN,
+            ResultState::Empty => p::YELLOW,
+            ResultState::Error => p::RED,
+            ResultState::Pending => p::CYAN,
+        }
+    }
+
+    /// The query box's border style: vim-mode color when focused, with `has_error` overriding to
+    /// red; unfocused panes recede in muted slate regardless of mode (the focused-or-not reading is
+    /// dominant). [`mode_color`] is the canonical color the matching mode badge + hint keys use.
+    pub fn query_box(mode: EditorMode, has_error: bool, focused: bool) -> Style {
+        if !focused {
+            return Style::default().fg(p::BORDER_UNFOCUSED);
+        }
+        let c = if has_error {
+            p::BORDER_ERROR
+        } else {
+            mode_color(mode)
+        };
+        Style::default().fg(c)
+    }
+
+    /// The results box's border style: state color when focused, the same hue dimmed when not.
+    /// Unfocused keeps the hue (so the user can still tell ok/empty/error/pending apart at a
+    /// glance) but drops the bold and adds DIM so the focused-or-not reading stays dominant.
+    pub fn results(state: ResultState, focused: bool) -> Style {
+        let c = result_color(state);
+        if focused {
+            Style::default().fg(c)
+        } else {
+            Style::default().fg(c).add_modifier(Modifier::DIM)
+        }
+    }
+
+    /// The border of the currently-focused pane — bright cyan. Kept for any legacy caller that
+    /// hasn't moved to the state-aware variants; the live render path uses [`query_box`] /
+    /// [`results`] instead.
     pub fn focused() -> Style {
         Style::default().fg(p::BORDER_FOCUSED)
     }
 
-    /// The border of an unfocused pane — muted slate so it recedes.
+    /// The border of an unfocused pane — muted slate so it recedes. Kept for legacy callers.
     pub fn unfocused() -> Style {
         Style::default().fg(p::BORDER_UNFOCUSED)
     }
@@ -168,10 +246,22 @@ pub mod border {
 /// The bottom keyboard-shortcut help-bar colors and styles (`dev/PLAN.md` §4.1).
 pub mod help_line {
     use super::base as p;
-    use ratatui::style::{Modifier, Style};
+    use ratatui::style::{Color, Modifier, Style};
 
+    /// Default key style — bright cyan + bold. Used by popup-internal hint lines that don't
+    /// participate in the state-aware accent harmonization (e.g. autocomplete's own bottom-border
+    /// hints). The query-box / results-pane borders use [`key_in`] instead so the keys take the
+    /// same color as the surrounding border.
     pub fn key() -> Style {
-        Style::default().fg(p::CYAN).add_modifier(Modifier::BOLD)
+        key_in(p::CYAN)
+    }
+
+    /// Key style in the given accent — bold + colored. The query-box and results-pane bottom-
+    /// border hint lines pass the matching state color (vim-mode color or result-state color) so
+    /// the keys harmonize with the border color (jiq's `border_color` plumbed through to its hint
+    /// builder). The description and separator stay neutral so the eye reads keys-then-rest.
+    pub fn key_in(c: Color) -> Style {
+        Style::default().fg(c).add_modifier(Modifier::BOLD)
     }
 
     pub fn description() -> Style {
@@ -202,7 +292,8 @@ pub mod autocomplete {
     }
 
     pub fn type_hint() -> Style {
-        Style::default().fg(p::YELLOW).add_modifier(Modifier::DIM)
+        // TEXT_DIM color, not Modifier::DIM — same reasoning as palette::type_hint.
+        Style::default().fg(p::TEXT_DIM)
     }
 }
 
@@ -235,7 +326,10 @@ pub mod palette {
     }
 
     pub fn type_hint() -> Style {
-        Style::default().fg(p::YELLOW).add_modifier(Modifier::DIM)
+        // Use TEXT_DIM color rather than Modifier::DIM — DIM modifier bleeds through popup renders
+        // via ratatui's style-OR semantics (pre-Clear'd cells still OR the modifier into content
+        // cells). Muting via color is visually equivalent and modifier-free.
+        Style::default().fg(p::TEXT_DIM)
     }
 
     /// The popup's title text (`" columns "`). Same magenta accent as the border so the title
@@ -362,12 +456,19 @@ pub mod grid {
 /// Results pane chrome (border, row counter).
 pub mod results {
     use super::base as p;
-    use ratatui::style::{Modifier, Style};
+    use ratatui::style::{Color, Modifier, Style};
 
-    /// `<rendered>/<total>` row counter pinned to the results-pane top-right border. Bright cyan
-    /// so it reads as a quiet accent against the focused-cyan border.
+    /// Default row-counter style — bright cyan. Kept for callers that don't yet route through the
+    /// state-aware [`row_counter_in`].
     pub fn row_counter() -> Style {
-        Style::default().fg(p::CYAN)
+        row_counter_in(p::CYAN)
+    }
+
+    /// `<rendered>/<total>` row counter in the given accent — matching the results-box border so
+    /// the counter reads as one with the chrome (jiq's per-state accent on the results scrollbar /
+    /// counter).
+    pub fn row_counter_in(c: Color) -> Style {
+        Style::default().fg(c)
     }
 
     /// Row counter while the displayed result is stale — muted + dim to ride the stale-grid
@@ -376,5 +477,114 @@ pub mod results {
         Style::default()
             .fg(p::TEXT_MUTED)
             .add_modifier(Modifier::DIM)
+    }
+}
+
+#[cfg(test)]
+mod theme_tests {
+    use super::base as p;
+    use super::border::{ResultState, mode_color, query_box, result_color, results};
+    use crate::app::editor::EditorMode;
+    use ratatui::style::Modifier;
+
+    #[test]
+    fn mode_color_maps_each_vim_mode_to_its_galaxy_accent() {
+        assert_eq!(mode_color(EditorMode::Insert), p::CYAN);
+        assert_eq!(mode_color(EditorMode::Normal), p::YELLOW);
+        assert_eq!(mode_color(EditorMode::Operator('d')), p::GREEN);
+        assert_eq!(
+            mode_color(EditorMode::TextObject(
+                'd',
+                crate::app::editor::mode::TextObjectScope::Inner
+            )),
+            p::GREEN
+        );
+        assert_eq!(
+            mode_color(EditorMode::CharSearch(
+                crate::app::editor::char_search::SearchDirection::Forward,
+                crate::app::editor::char_search::SearchType::Find
+            )),
+            p::PINK
+        );
+        assert_eq!(
+            mode_color(EditorMode::OperatorCharSearch(
+                'd',
+                0,
+                crate::app::editor::char_search::SearchDirection::Forward,
+                crate::app::editor::char_search::SearchType::Find
+            )),
+            p::PINK
+        );
+    }
+
+    #[test]
+    fn query_box_focused_takes_mode_color_and_error_overrides() {
+        // Focused, no error → mode color.
+        assert_eq!(
+            query_box(EditorMode::Insert, false, true).fg,
+            Some(p::CYAN)
+        );
+        assert_eq!(
+            query_box(EditorMode::Normal, false, true).fg,
+            Some(p::YELLOW)
+        );
+        // Focused, error → red overrides mode.
+        assert_eq!(
+            query_box(EditorMode::Normal, true, true).fg,
+            Some(p::BORDER_ERROR)
+        );
+        assert_eq!(
+            query_box(EditorMode::Insert, true, true).fg,
+            Some(p::BORDER_ERROR)
+        );
+    }
+
+    #[test]
+    fn query_box_unfocused_recedes_in_muted_slate_regardless_of_mode_or_error() {
+        for mode in [
+            EditorMode::Insert,
+            EditorMode::Normal,
+            EditorMode::Operator('d'),
+        ] {
+            for has_error in [false, true] {
+                assert_eq!(
+                    query_box(mode, has_error, false).fg,
+                    Some(p::BORDER_UNFOCUSED),
+                    "unfocused dominates: mode={mode:?} has_error={has_error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn result_color_maps_each_state_to_its_galaxy_accent() {
+        assert_eq!(result_color(ResultState::Ok), p::GREEN);
+        assert_eq!(result_color(ResultState::Empty), p::YELLOW);
+        assert_eq!(result_color(ResultState::Error), p::RED);
+        assert_eq!(result_color(ResultState::Pending), p::CYAN);
+    }
+
+    #[test]
+    fn results_focused_uses_state_color_unfocused_dims_same_hue() {
+        // Focused: bright state color, no DIM.
+        let focused_ok = results(ResultState::Ok, true);
+        assert_eq!(focused_ok.fg, Some(p::GREEN));
+        assert!(!focused_ok.add_modifier.contains(Modifier::DIM));
+        // Unfocused: same hue, DIM applied.
+        let unfocused_ok = results(ResultState::Ok, false);
+        assert_eq!(unfocused_ok.fg, Some(p::GREEN));
+        assert!(unfocused_ok.add_modifier.contains(Modifier::DIM));
+        // Same pattern for the other states.
+        for state in [
+            ResultState::Empty,
+            ResultState::Error,
+            ResultState::Pending,
+        ] {
+            let focused = results(state, true);
+            let unfocused = results(state, false);
+            assert_eq!(focused.fg, unfocused.fg, "hue preserved across focus");
+            assert!(!focused.add_modifier.contains(Modifier::DIM));
+            assert!(unfocused.add_modifier.contains(Modifier::DIM));
+        }
     }
 }
