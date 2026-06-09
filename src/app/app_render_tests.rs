@@ -919,7 +919,6 @@ fn unfocused_query_box_border_uses_muted_slate() {
     let mut t = Terminal::new(TestBackend::new(60, 10)).unwrap();
     t.draw(|f| a.render(f)).unwrap();
     let buf = t.backend().buffer();
-    let focused_fg = theme::border::focused().fg.unwrap();
     let unfocused_fg = theme::border::unfocused().fg.unwrap();
     // Query box top-left corner at row 7 — should now be the unfocused color.
     let qbox_corner = buf.cell((0, 7)).unwrap();
@@ -927,10 +926,143 @@ fn unfocused_query_box_border_uses_muted_slate() {
         qbox_corner.fg, unfocused_fg,
         "unfocused query-box border uses the muted slate"
     );
-    // The results pane top-left corner sits at row 0 col 0 — focused now.
+    // The results pane top-left corner sits at row 0 col 0 — focused now. Borders are now
+    // STATE-aware: a successful result with rows reads as Ok → green border (jiq's `result_ok`),
+    // not the legacy bright cyan focus color.
+    let ok_fg = theme::border::result_color(theme::border::ResultState::Ok);
     let results_corner = buf.cell((0, 0)).unwrap();
     assert_eq!(
-        results_corner.fg, focused_fg,
-        "focused results pane border uses the bright cyan"
+        results_corner.fg, ok_fg,
+        "focused results pane with a successful result uses the result-ok green"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// State-aware border tests (jiq-style: vim-mode color on the query box, result-state color on the
+// results pane). The border, the mode/row-counter chrome, and the bottom-hint key spans all share
+// one accent so each box reads as a single harmonized verdict.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn query_box_border_takes_vim_mode_color_in_normal_mode() {
+    // Default Insert mode is cyan; pressing Esc drops to Normal which is yellow. The border, the
+    // mode badge, and the bottom-hint keys ALL switch to yellow in lockstep.
+    let mut a = app();
+    a.on_loaded("ready");
+    let mut t = Terminal::new(TestBackend::new(60, 10)).unwrap();
+    a.on_key(KeyEvent::plain(Key::Esc), 0); // Insert -> Normal
+    t.draw(|f| a.render(f)).unwrap();
+    let buf = t.backend().buffer();
+    // Query box top-left corner sits at (0, 7) for a 10-row terminal with the 1-text-row bar.
+    let qbox_corner = buf.cell((0, 7)).unwrap();
+    assert_eq!(
+        qbox_corner.fg,
+        theme::base::YELLOW,
+        "Normal-mode query-box border uses the yellow mode color"
+    );
+}
+
+#[test]
+fn query_box_border_turns_red_on_query_pipeline_error() {
+    // A preprocess-reject (e.g. a non-`SELECT` query) sets `result_is_stale` once a result has
+    // been displayed; that flips `has_query_error` true and overrides the mode color with red.
+    let mut a = app();
+    a.on_loaded("ready");
+    // First push a successful result so there is something to dim.
+    let id = a.latest_request_id();
+    a.on_response(QueryResponse::ProcessedSuccess {
+        result: result(),
+        request_id: id,
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+    // Now drive an error response.
+    a.on_response(QueryResponse::Error {
+        message: "boom".into(),
+        request_id: a.latest_request_id(),
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+    assert!(a.has_query_error(), "engine error flips has_query_error");
+    let mut t = Terminal::new(TestBackend::new(60, 10)).unwrap();
+    t.draw(|f| a.render(f)).unwrap();
+    let buf = t.backend().buffer();
+    let qbox_corner = buf.cell((0, 7)).unwrap();
+    assert_eq!(
+        qbox_corner.fg,
+        theme::base::RED,
+        "query-box border turns red when has_query_error is true"
+    );
+}
+
+#[test]
+fn results_pane_border_is_green_on_a_successful_rowful_result() {
+    let mut a = app();
+    a.on_loaded("ready");
+    let id = a.latest_request_id();
+    a.on_response(QueryResponse::ProcessedSuccess {
+        result: result(),
+        request_id: id,
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+    let mut t = Terminal::new(TestBackend::new(60, 10)).unwrap();
+    t.draw(|f| a.render(f)).unwrap();
+    let buf = t.backend().buffer();
+    // Results pane top-left corner is at (0, 0).
+    let corner = buf.cell((0, 0)).unwrap();
+    assert_eq!(
+        corner.fg,
+        theme::base::GREEN,
+        "successful result with rows -> green results-pane border"
+    );
+    // Row counter on the top-right also takes the green accent (jiq harmony).
+    let counter_present = buf.content().iter().any(|c| c.fg == theme::base::GREEN);
+    assert!(
+        counter_present,
+        "row counter / border share the green state accent"
+    );
+}
+
+#[test]
+fn results_pane_border_is_red_when_result_is_stale() {
+    // Push a success then drive an error → the prior result stays on screen, dimmed, and the
+    // results border turns red.
+    let mut a = app();
+    a.on_loaded("ready");
+    let id = a.latest_request_id();
+    a.on_response(QueryResponse::ProcessedSuccess {
+        result: result(),
+        request_id: id,
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+    a.on_response(QueryResponse::Error {
+        message: "boom".into(),
+        request_id: a.latest_request_id(),
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+    assert!(a.result_is_stale());
+    let mut t = Terminal::new(TestBackend::new(60, 10)).unwrap();
+    t.draw(|f| a.render(f)).unwrap();
+    let buf = t.backend().buffer();
+    let corner = buf.cell((0, 0)).unwrap();
+    assert_eq!(
+        corner.fg,
+        theme::base::RED,
+        "stale result → red results-pane border"
+    );
+}
+
+#[test]
+fn results_pane_border_is_cyan_while_pending() {
+    // Pending = no result yet. The default `app()` is Loading; transition to Ready WITHOUT
+    // dispatching a query so result is still None → ResultState::Pending → cyan.
+    let mut a = app();
+    a.on_loaded("ready");
+    let mut t = Terminal::new(TestBackend::new(60, 10)).unwrap();
+    t.draw(|f| a.render(f)).unwrap();
+    let buf = t.backend().buffer();
+    let corner = buf.cell((0, 0)).unwrap();
+    assert_eq!(
+        corner.fg,
+        theme::base::CYAN,
+        "pending (no result) -> cyan results-pane border"
     );
 }

@@ -16,7 +16,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
@@ -262,10 +262,25 @@ fn render_query_box(app: &App, frame: &mut Frame, area: Rect) -> Rect {
     if area.width == 0 || area.height == 0 {
         return Rect::new(area.x, area.y, 0, 0);
     }
-    // Borders are focus-aware: the focused pane lights up bright cyan, the unfocused pane recedes
-    // in muted slate. The query box is the focused surface whenever the editor (not the results
-    // pane) has focus.
-    let border_style = border_style_for(app, Focus::QueryBar);
+    // Borders are STATE-aware (jiq-style): the query box's border tracks the focused vim mode
+    // (Insert=cyan, Normal=yellow, Operator/TextObject=green, CharSearch=pink), with a query
+    // pipeline error overriding the mode color (red). Unfocused recedes in muted slate. The mode
+    // badge on the top border, the keys on the bottom-border hint line, and the border itself all
+    // share the same accent so the box reads as one harmonized state indicator.
+    let focused = app.focus() == Focus::QueryBar;
+    let mode = app.editor_mode();
+    let has_error = app.has_query_error();
+    let border_style = theme::border::query_box(mode, has_error, focused);
+    // Accent for badges/hints — same hue as the border. When unfocused (or no border accent
+    // applies) we leave the keys in the muted slate by passing the unfocused color, matching the
+    // border. When focused with no error, the key color is the mode color; with an error, red.
+    let accent = if !focused {
+        theme::base::BORDER_UNFOCUSED
+    } else if has_error {
+        theme::base::BORDER_ERROR
+    } else {
+        theme::border::mode_color(mode)
+    };
     // The mode badge rides the box's TOP border (jiq-style) — left-aligned, per-mode color.
     // The bottom border carries the context-sensitive help hints, CENTERED so the legend reads
     // as one compact unit — but **only when the query bar is focused**, so the hints sit on the
@@ -277,15 +292,17 @@ fn render_query_box(app: &App, frame: &mut Frame, area: Rect) -> Rect {
     let mut block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style);
-    if app.focus() == Focus::QueryBar {
-        let hint_spans = help_line::hint_spans(app, title_width);
+    if focused {
+        let hint_spans = help_line::hint_spans_in(app, title_width, accent);
         block = block.title_bottom(Line::from(hint_spans).centered());
     }
     if let Some(label) = help_line::mode_label(app) {
         // The badge text fits when the label width <= title width; otherwise we drop it rather
-        // than clip mid-word (the box is too narrow to be useful anyway).
+        // than clip mid-word (the box is too narrow to be useful anyway). Badge color matches the
+        // border accent so the harmony reads even when the badge is the only thing on the row.
         if label.chars().count() <= title_width {
-            let badge = Span::styled(label, help_line::mode_badge_style(app));
+            let badge_style = Style::default().fg(accent).add_modifier(Modifier::BOLD);
+            let badge = Span::styled(label, badge_style);
             block = block.title_top(Line::from(vec![Span::raw(" "), badge, Span::raw(" ")]));
         }
     }
@@ -411,7 +428,14 @@ pub(crate) const SIMPLE_LABEL_WIDTH: u16 = 9;
 /// the grid) so the grid size reads at a glance without consuming an interior row. The counter
 /// is omitted on a zero-row result so it doesn't duplicate the "no rows match" empty-state line.
 fn render_results(app: &App, frame: &mut Frame, area: Rect) {
-    let border_style = border_style_for(app, Focus::Results);
+    // Border is STATE-aware (jiq-style): green for a successful result with rows, yellow for a
+    // zero-row success, red for an error (the prior result is dimmed), cyan while pending. The
+    // matching accent is reused by the row counter and the bottom-hint key spans so the whole
+    // pane chrome reads as one verdict.
+    let focused = app.focus() == Focus::Results;
+    let state = app.result_state();
+    let border_style = theme::border::results(state, focused);
+    let accent = theme::border::result_color(state);
     let mut block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style);
@@ -427,22 +451,25 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
     // The row counter rides the top-right of the border: `<rendered>` for an uncapped result,
     // `<rendered>+` when ciq's viewport LIMIT truncated the grid. Omitted on a zero-row result
     // so the counter doesn't duplicate the "no rows match" empty-state body. Stale results get
-    // the muted styling so the counter dims with the grid.
+    // the muted styling so the counter dims with the grid; otherwise the counter takes the same
+    // state accent as the border so the verdict reads at a glance.
     if let Some(text) = row_counter_text(app) {
         let style = if app.result_is_stale() {
             theme::results::row_counter_stale()
         } else {
-            theme::results::row_counter()
+            theme::results::row_counter_in(accent)
         };
         block = block.title_top(Line::from(Span::styled(text, style)).right_aligned());
     }
     // The bottom border carries the Results-pane keyboard hints (`Up/Down scroll`,
     // `Ctrl+T query`, …) when this pane is focused, mirroring the query box's bottom border. Each
     // box owns its own hints so it's visually unambiguous which chord set applies. Width-aware so
-    // a narrow pane drops trailing hints rather than overflowing.
-    if app.focus() == Focus::Results {
+    // a narrow pane drops trailing hints rather than overflowing. Key color is the state accent so
+    // the chord names harmonize with the border (jiq's `border_color` plumbed into the hint
+    // builder).
+    if focused {
         let title_width = area.width.saturating_sub(2) as usize;
-        let hint_spans = help_line::hint_spans(app, title_width);
+        let hint_spans = help_line::hint_spans_in(app, title_width, accent);
         block = block.title_bottom(Line::from(hint_spans).centered());
     }
     let inner = block.inner(area);
@@ -517,16 +544,6 @@ fn row_counter_text(app: &App) -> Option<String> {
     }
 }
 
-/// The border style for `pane`: bright cyan when `pane` is the focused surface, muted slate
-/// otherwise. The query bar and the results pane are the two focus targets; popups, when open,
-/// take focus implicitly (their own bordered chrome carries the bright accent).
-fn border_style_for(app: &App, pane: Focus) -> Style {
-    if app.focus() == pane {
-        theme::border::focused()
-    } else {
-        theme::border::unfocused()
-    }
-}
 
 /// The status line: the status text (error-styled on a load error, normal otherwise) at the left.
 /// The vim mode badge (`INSERT` / `NORMAL` / `d(` …) leads the help hints on the query box's bottom

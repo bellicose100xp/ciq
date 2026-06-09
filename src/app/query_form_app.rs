@@ -12,6 +12,7 @@ use crate::app::App;
 use crate::app::editor::Editor;
 use crate::app::{AppPhase, Focus, Key, KeyEvent, QueryMode};
 use crate::autocomplete::insertion::insert_suggestion;
+use crate::theme::border::ResultState;
 
 impl App {
     /// Whether the displayed result is stale (kept on screen dimmed after a query-pipeline
@@ -20,6 +21,43 @@ impl App {
     /// there is no result or the most recent successful response replaced it.
     pub fn result_is_stale(&self) -> bool {
         self.result_is_stale
+    }
+
+    /// Whether the query bar should render its border + accent in the error color. True when the
+    /// last query failed pipeline validation (preprocess-reject, surfaced in the status line) or
+    /// the engine returned an error and the displayed result is now stale. Pane-validation errors
+    /// (e.g. a non-numeric LIMIT) also flow through `set_query_error`'s status path; they don't
+    /// flip `result_is_stale`, but they DO surface a status message — currently we treat both as
+    /// "the query bar carries an error" so the user sees the red border immediately.
+    pub fn has_query_error(&self) -> bool {
+        if self.result_is_stale {
+            return true;
+        }
+        // A non-numeric LIMIT (or any future pane-validation flag) also fires the red border.
+        self.query_form.limit_error().is_some()
+    }
+
+    /// Where the displayed result currently sits in the success/error spectrum — drives the
+    /// results-box border color (jiq's `result_ok` / `result_warning` / `result_error` /
+    /// `result_pending` semantics). Mirrors the empty-state / error-dim bookkeeping the render
+    /// layer already reads:
+    ///  - `result_is_stale && result.is_some()` → `Error` (the prior result is dimmed; surface red).
+    ///  - `result.is_some() && rows > 0` → `Ok`.
+    ///  - `result.is_some() && rows == 0` → `Empty` (visible empty-state line; yellow accent).
+    ///  - else → `Pending` (loading or pre-first-query; cyan).
+    pub fn result_state(&self) -> ResultState {
+        if let Some(result) = self.result.as_ref() {
+            if self.result_is_stale {
+                return ResultState::Error;
+            }
+            if result.rows.row_count() > 0 {
+                ResultState::Ok
+            } else {
+                ResultState::Empty
+            }
+        } else {
+            ResultState::Pending
+        }
     }
 
     /// Insert the selected suggestion into the query at the cursor and dismiss the popup. The

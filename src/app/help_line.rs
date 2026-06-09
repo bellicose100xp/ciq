@@ -158,12 +158,29 @@ pub fn mode_badge_style(app: &App) -> ratatui::style::Style {
 /// Build the styled hint spans, dropping the lowest-priority *trailing* hints so the line never
 /// overflows `max_width`. Each hint is `key` (accented) + space + `desc` (quiet); the bullet
 /// `\u{2022}` between hints is rendered in the separator style. The leading bullet stays even when
-/// the line is centered, so the legend reads as one compact unit.
+/// the line is centered, so the legend reads as one compact unit. Default key color (cyan) — see
+/// [`build_styled_spans_in`] for a variant that takes the accent so the keys harmonize with the
+/// surrounding border.
 fn build_styled_spans(
     hints: &[(&'static str, &'static str)],
     max_width: usize,
 ) -> Vec<Span<'static>> {
-    let key_style = theme::help_line::key();
+    build_styled_spans_in(hints, max_width, None)
+}
+
+/// Build styled hint spans with the **key** color set to `accent` — used by the query-box and
+/// results-pane bottom-border hints so the chord names match the box's border accent. `None` falls
+/// back to the default cyan key style (used by tests and any popup that doesn't share the box's
+/// state-aware accent).
+fn build_styled_spans_in(
+    hints: &[(&'static str, &'static str)],
+    max_width: usize,
+    accent: Option<ratatui::style::Color>,
+) -> Vec<Span<'static>> {
+    let key_style = match accent {
+        Some(c) => theme::help_line::key_in(c),
+        None => theme::help_line::key(),
+    };
     let desc_style = theme::help_line::description();
     let sep_style = theme::help_line::separator();
 
@@ -193,10 +210,24 @@ fn build_styled_spans(
 /// The styled help spans for the current context — context hints only, laid out width-aware so the
 /// lowest-priority *trailing* hints drop when `max_width` is tight. Pure: `App` state + a width in,
 /// styled spans out. The mode badge is no longer included here — it rides the query box's TOP
-/// border (`app_render::render_query_box`).
+/// border (`app_render::render_query_box`). Default cyan key color; see [`hint_spans_in`] for the
+/// accent-harmonized variant the live render uses.
 pub fn hint_spans(app: &App, max_width: usize) -> Vec<Span<'static>> {
     let hints = get_context_hints(app);
     build_styled_spans(&hints, max_width)
+}
+
+/// The styled help spans with the key color set to `accent` — what the live query box and results
+/// pane render on their respective bottom borders so the chord-key colors harmonize with the
+/// box's state-aware border accent (vim-mode color for the query box, result-state color for the
+/// results pane).
+pub fn hint_spans_in(
+    app: &App,
+    max_width: usize,
+    accent: ratatui::style::Color,
+) -> Vec<Span<'static>> {
+    let hints = get_context_hints(app);
+    build_styled_spans_in(&hints, max_width, Some(accent))
 }
 
 /// Render the help hints onto a one-row `area` as a standalone line (kept for direct
