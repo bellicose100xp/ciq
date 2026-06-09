@@ -31,7 +31,6 @@ use ratatui::Frame;
 
 use crate::ai::ai_state::AiState;
 use crate::autocomplete::autocomplete_state::AutocompleteState;
-use crate::autocomplete::insertion::insert_suggestion;
 use crate::autocomplete::value_source::ValueCache;
 use crate::engine::InterruptHandle;
 use crate::facets::FacetState;
@@ -60,6 +59,7 @@ pub mod mouse_app;
 pub mod palette_app;
 pub mod polish;
 pub mod query_form;
+pub mod query_form_app;
 
 pub use editor::Editor;
 pub use key::{Key, KeyEvent, KeyMods};
@@ -307,14 +307,6 @@ impl App {
         self.result.as_ref()
     }
 
-    /// Whether the displayed result is stale (kept on screen dimmed after a query-pipeline error).
-    /// Read by the render layer to apply [`theme::grid::stale_modifier`] to the grid header + body
-    /// (and by Stage 4's row counter, which honors the same dim). `false` when there is no result
-    /// or the most recent successful response replaced it.
-    pub fn result_is_stale(&self) -> bool {
-        self.result_is_stale
-    }
-
     pub fn v_row_offset(&self) -> usize {
         self.v_row_offset
     }
@@ -393,9 +385,12 @@ impl App {
     /// Configure the interactive viewport row cap (`[general] row_limit`). The event loop calls
     /// this once at startup with the resolved config so a bare `SELECT` is wrapped to the user's
     /// configured `LIMIT N` (and the truncation banner compares against the same cap). The config
-    /// accessor already clamps `0` to `1`; this clamps defensively too.
+    /// accessor already clamps `0` to `1`; this clamps defensively too. Also re-seeds the Simple-
+    /// mode LIMIT pane so the form's composed SQL uses the same cap the dispatcher does.
     pub fn configure_general(&mut self, row_limit: usize) {
         self.viewport_row_limit = row_limit.max(1);
+        self.query_form
+            .set_default_limit_seed(self.viewport_row_limit);
     }
 
     /// The effective interactive viewport row cap (`[general] row_limit`, defaulted).
@@ -597,37 +592,10 @@ impl App {
         }
     }
 
-    /// Insert the selected suggestion into the query at the cursor and dismiss the popup. The
-    /// popup stays closed after an explicit accept (it does not re-open on the just-completed
-    /// token); the next edit recomputes it for the new context. Closes without inserting if there
-    /// is nothing selected.
-    ///
-    /// Targets the focused surface — the Simple-mode focused pane editor when the form is in
-    /// Simple mode, the Power editor (= the App's `editor`) otherwise — so the just-completed text
-    /// always lands where the user is typing.
-    fn accept_suggestion(&mut self, now_ms: u64) {
-        let Some(suggestion) = self.autocomplete.selected_suggestion().cloned() else {
-            self.autocomplete.close();
-            return;
-        };
-        let target = self.suggestion_target_editor_mut();
-        let (new_text, new_cursor) =
-            insert_suggestion(&target.text(), target.cursor_byte(), &suggestion);
-        target.set_text_with_byte_cursor(new_text, new_cursor);
-        self.autocomplete.close();
-        // The inserted text changed the query — schedule the debounced grid query for it.
-        self.schedule(now_ms);
-    }
-
-    /// The editor where an accepted suggestion should land. In Simple mode that's the focused
-    /// pane's editor (the one the user is typing into); in Power mode that's the App's `editor`.
-    /// A single seam so the popup never inserts into the wrong surface.
-    fn suggestion_target_editor_mut(&mut self) -> &mut Editor {
-        match self.query_form.mode() {
-            QueryMode::Simple => self.query_form.focused_editor_mut(),
-            QueryMode::Power => &mut self.editor,
-        }
-    }
+    // The popup-input plumbing (`accept_suggestion`, `suggestion_target_editor_mut`) lives in
+    // `crate::app::query_form_app` (an `impl App` block) to keep this file under the 1000-line
+    // cap, like the autocomplete/history/AI/palette blocks. The popup is mode-aware: Simple-mode
+    // accepts land in the focused pane editor; Power-mode accepts land in the App's `editor`.
 
     fn on_key_query_bar(&mut self, ev: KeyEvent, now_ms: u64) {
         if matches!(self.phase, AppPhase::LoadError(_)) {

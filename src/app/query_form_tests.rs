@@ -166,6 +166,37 @@ fn set_default_limit_seed_does_not_clobber_user_typed_limit() {
 }
 
 #[test]
+fn set_default_limit_seed_is_only_applied_once() {
+    // Regression: pre-fix the seeder used `if limit.text() == "1000"` which silently re-seeded a
+    // user-typed `1000`. Now the first call wins and subsequent calls are no-ops.
+    let mut form = QueryForm::new();
+    form.set_default_limit_seed(500);
+    form.set_default_limit_seed(250);
+    assert_eq!(form.text(SimplePane::Limit), "500");
+}
+
+#[test]
+fn toggle_simple_to_power_with_invalid_limit_refuses_and_preserves_panes() {
+    // Regression: pre-fix Simple->Power with an invalid LIMIT silently rewrote the Power buffer
+    // to a clean default, discarding the user's typed SELECT/WHERE/GROUP BY/ORDER BY work. Now
+    // the toggle is refused, the form stays in Simple mode, and the panes are intact.
+    let mut form = QueryForm::new();
+    form.set_text(SimplePane::Select, "id, name");
+    form.set_text(SimplePane::Where, "region = 'EU'");
+    form.set_text(SimplePane::Limit, "1k");
+    let err = form.toggle_mode(1000).unwrap_err();
+    assert_eq!(err.message(), "LIMIT must be a number, 'all', or 0");
+    assert_eq!(form.mode(), QueryMode::Simple);
+    assert_eq!(form.text(SimplePane::Select), "id, name");
+    assert_eq!(form.text(SimplePane::Where), "region = 'EU'");
+    assert_eq!(form.text(SimplePane::Limit), "1k");
+    assert_eq!(
+        form.limit_error(),
+        Some("LIMIT must be a number, 'all', or 0")
+    );
+}
+
+#[test]
 fn enter_power_with_sql_jumps_into_power_mode() {
     let mut form = QueryForm::new();
     form.enter_power_with_sql("SELECT count(*) FROM t");

@@ -100,6 +100,11 @@ pub struct QueryForm {
     /// The last LIMIT-pane validation error, or `None` when LIMIT is currently valid. Refreshed
     /// on every dispatch attempt; the App reads it to set the status line.
     limit_error: Option<String>,
+    /// Whether the App has overridden the construction-default LIMIT seed yet (via
+    /// [`set_default_limit_seed`](Self::set_default_limit_seed)). Once flipped, the seed is
+    /// considered "user-touched" — a subsequent reseed call is a no-op so a user-typed LIMIT
+    /// (even one that happens to equal the construction default) is never silently re-clobbered.
+    limit_seeded: bool,
 }
 
 impl Default for QueryForm {
@@ -121,15 +126,16 @@ pub fn power_default() -> QueryForm {
 
 impl QueryForm {
     /// Build a fresh form: Simple mode, panes seeded `SELECT="*"`, `WHERE=""` (focused),
-    /// `GROUP BY=""`, `ORDER BY=""`, `LIMIT="1000"`. The App overrides the LIMIT seed with the
-    /// configured `[general] row_limit` via [`set_default_limit_seed`](Self::set_default_limit_seed).
+    /// `GROUP BY=""`, `ORDER BY=""`, `LIMIT=<construction default>`. The App overrides the LIMIT
+    /// seed with the configured `[general] row_limit` via
+    /// [`set_default_limit_seed`](Self::set_default_limit_seed).
     pub fn new() -> Self {
         let panes = [
             Editor::with_text("*"),
             Editor::new(),
             Editor::new(),
             Editor::new(),
-            Editor::with_text("1000"),
+            Editor::with_text(crate::app::VIEWPORT_ROW_LIMIT.to_string()),
         ];
         Self {
             mode: QueryMode::Simple,
@@ -137,15 +143,22 @@ impl QueryForm {
             focused_pane: SimplePane::Where,
             power: Editor::new(),
             limit_error: None,
+            limit_seeded: false,
         }
     }
 
     /// Re-seed the LIMIT pane from a configured default (the `[general] row_limit` once the App
-    /// reads it). Only re-seeds when the LIMIT pane is still the construction-default `1000`, so
-    /// a user who has typed something into LIMIT won't be clobbered. No-op in Power mode.
+    /// reads it). Only takes effect on the **first** call and only when the LIMIT pane is still
+    /// at the construction-default text — so a user who typed a LIMIT before the seed (or any
+    /// later reseed call) won't be clobbered. Reads the construction default from the same
+    /// `crate::app::VIEWPORT_ROW_LIMIT` constant the dispatcher uses, not a literal.
     pub fn set_default_limit_seed(&mut self, default_limit: usize) {
+        if self.limit_seeded {
+            return;
+        }
+        self.limit_seeded = true;
         let limit = &mut self.panes[SimplePane::Limit.index()];
-        if limit.text() == "1000" {
+        if limit.text() == crate::app::VIEWPORT_ROW_LIMIT.to_string() {
             limit.set_text(default_limit.to_string());
         }
     }
@@ -283,13 +296,22 @@ impl QueryForm {
     pub fn toggle_mode(&mut self, default_limit: usize) -> Result<(), SimplifyError> {
         match self.mode {
             QueryMode::Simple => {
-                let composed = self
-                    .to_full_sql(default_limit)
-                    .unwrap_or_else(|_| format!("SELECT * FROM t LIMIT {default_limit}"));
-                self.power.set_text(composed);
-                self.mode = QueryMode::Power;
-                self.limit_error = None;
-                Ok(())
+                // Refuse the toggle when the LIMIT pane is invalid: silently rewriting to a
+                // clean `SELECT * FROM t LIMIT <default>` would discard the user's typed
+                // SELECT/WHERE/GROUP BY/ORDER BY work without any feedback. Surface the error
+                // and stay in Simple mode so the user can fix the LIMIT pane.
+                match self.to_full_sql(default_limit) {
+                    Ok(composed) => {
+                        self.power.set_text(composed);
+                        self.mode = QueryMode::Power;
+                        self.limit_error = None;
+                        Ok(())
+                    }
+                    Err(ComposeError::InvalidLimit { reason }) => {
+                        self.limit_error = Some(reason.clone());
+                        Err(SimplifyError::Other(reason))
+                    }
+                }
             }
             QueryMode::Power => {
                 let parts = try_simplify_from_sql(&self.power.text())?;
