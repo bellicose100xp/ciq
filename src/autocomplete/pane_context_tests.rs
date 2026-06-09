@@ -135,6 +135,52 @@ fn order_by_pane_after_column_offers_columns_and_asc_desc() {
     assert!(t.contains(&"DESC"));
 }
 
+#[test]
+fn order_by_pane_partial_d_filters_to_desc_only_not_asc() {
+    // Regression: pre-fix `region D` left ASC selected (index 0) because the [ASC, DESC] tail
+    // bypassed the partial filter. Now `D` matches `DESC` and excludes `ASC`.
+    let s = pane_at(SimplePane::OrderBy, "region D");
+    let t = texts(&s);
+    assert!(
+        t.contains(&"DESC"),
+        "DESC must rank for partial 'D', got {t:?}"
+    );
+    assert!(
+        !t.contains(&"ASC"),
+        "ASC must not rank for partial 'D', got {t:?}"
+    );
+}
+
+#[test]
+fn order_by_pane_non_matching_partial_drops_asc_desc() {
+    // Regression: pre-fix `region X` still appended [ASC, DESC] even though `X` matches neither
+    // — the popup pre-selected ASC and Tab silently inserted the wrong keyword. Now the keywords
+    // are filtered through the partial, so a non-matching partial yields no ASC/DESC.
+    let s = pane_at(SimplePane::OrderBy, "region X");
+    let t = texts(&s);
+    assert!(!t.contains(&"ASC"), "no ASC for partial 'X': {t:?}");
+    assert!(!t.contains(&"DESC"), "no DESC for partial 'X': {t:?}");
+}
+
+#[test]
+fn order_by_pane_after_comma_does_not_offer_asc_desc() {
+    // Regression: pre-fix `region, ` (fresh list slot) still offered ASC/DESC because
+    // `pane_has_identifier` saw the earlier `region` ident. Now ASC/DESC only fire while the
+    // cursor sits in the same list slot as the typed column.
+    let s = pane_at(SimplePane::OrderBy, "region, ");
+    let t = texts(&s);
+    assert!(!t.contains(&"ASC"), "no ASC after comma: {t:?}");
+    assert!(!t.contains(&"DESC"), "no DESC after comma: {t:?}");
+}
+
+#[test]
+fn order_by_pane_after_comma_partial_does_not_offer_asc_desc() {
+    let s = pane_at(SimplePane::OrderBy, "region, st");
+    let t = texts(&s);
+    assert!(!t.contains(&"ASC"), "no ASC after comma+partial: {t:?}");
+    assert!(!t.contains(&"DESC"), "no DESC after comma+partial: {t:?}");
+}
+
 // ── LIMIT pane ─────────────────────────────────────────────────────────────────────────────────
 
 #[test]

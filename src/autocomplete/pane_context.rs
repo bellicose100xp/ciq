@@ -64,9 +64,11 @@ pub fn synthesize(
 /// Per-pane suggestions for the Simple-mode query box. Returns an empty list for the LIMIT pane
 /// and for any pane whose synthesized query yields no candidates.
 ///
-/// For the ORDER BY pane, `ASC`/`DESC` keyword suggestions are appended after a column token has
-/// been typed in the pane — the canonical follow-ups in an `ORDER BY` list. They sit at the end so
-/// the existing column ranking remains the primary surface; an empty pane offers only columns.
+/// For the ORDER BY pane, `ASC`/`DESC` keyword suggestions are offered when the cursor sits
+/// immediately after a typed column token — the canonical follow-ups in an `ORDER BY` list. The
+/// keywords are filtered through the same partial the column candidates are ranked against, so
+/// typing `D` brings `DESC` to the top instead of leaving it last in a fixed `[ASC, DESC]` tail.
+/// After a comma (a fresh list slot), only columns are offered.
 pub fn pane_suggestions(
     pane: SimplePane,
     pane_text: &str,
@@ -80,31 +82,85 @@ pub fn pane_suggestions(
     };
     let mut out = get_suggestions(&query, cursor, schema, operators, values);
 
-    // ORDER BY pane: once a column token exists in the pane text, also offer ASC / DESC. Detected
-    // by re-tokenizing the *pane text alone* (so the synthesized `ORDER BY` prefix doesn't count)
-    // and looking for an Ident or QuotedIdent — the only token shapes a column reference takes.
-    if matches!(pane, SimplePane::OrderBy) && pane_has_identifier(pane_text) {
-        out.extend(asc_desc_keywords());
+    // ORDER BY pane: ASC / DESC are legal follow-ups only immediately after a typed column (not
+    // at a fresh slot opened by a comma, and not while extending a non-matching partial that
+    // ranks no columns). The keywords are filtered through the active partial so they merge into
+    // the ranked list correctly — e.g. typing `D` ranks `DESC` ahead of any subsequence-only
+    // column match.
+    if matches!(pane, SimplePane::OrderBy) {
+        let partial = pane_partial_for_order_by(pane_text, pane_cursor);
+        if order_by_after_column(pane_text, pane_cursor) {
+            for kw in asc_desc_keywords() {
+                if keyword_matches_partial(&kw.text, partial) {
+                    out.push(kw);
+                }
+            }
+        }
     }
     out
 }
 
-/// Whether the pane text contains at least one identifier-shaped token (the column reference). A
-/// pure Ident or QuotedIdent at any depth qualifies — `ORDER BY foo` and `ORDER BY "order"` both
-/// trigger the ASC/DESC tail.
-fn pane_has_identifier(pane_text: &str) -> bool {
-    use crate::sql_lexer::TokenKind;
-    tokenize(pane_text)
-        .iter()
-        .any(|t| matches!(t.kind, TokenKind::Ident | TokenKind::QuotedIdent))
+/// The text the user is currently typing as the rightmost token in the ORDER BY pane (the
+/// "partial"). Empty when the pane ends with whitespace or a comma — the user is at a fresh slot.
+fn pane_partial_for_order_by(pane_text: &str, pane_cursor: usize) -> &str {
+    let cursor = pane_cursor.min(pane_text.len());
+    let head = &pane_text[..cursor];
+    let last_break = head
+        .rfind(|c: char| c.is_ascii_whitespace() || c == ',')
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    &head[last_break..]
 }
 
-/// The `ASC` / `DESC` `Keyword` suggestions appended to the ORDER BY pane after a column.
+/// Whether the cursor sits immediately after a typed column token in the ORDER BY pane (not at a
+/// fresh slot opened by a comma, and not at a fully empty pane). The check walks the tokens in
+/// the pane text up to the cursor and looks for an `Ident`/`QuotedIdent` whose **last** content
+/// token is not a comma — i.e. we're still inside the same list slot.
+fn order_by_after_column(pane_text: &str, pane_cursor: usize) -> bool {
+    use crate::sql_lexer::TokenKind;
+    let cursor = pane_cursor.min(pane_text.len());
+    let head = &pane_text[..cursor];
+    let tokens = tokenize(head);
+    let mut saw_ident = false;
+    let mut last_was_comma = false;
+    for t in tokens.iter().filter(|t| !t.is_trivia()) {
+        match t.kind {
+            TokenKind::Ident | TokenKind::QuotedIdent => {
+                saw_ident = true;
+                last_was_comma = false;
+            }
+            TokenKind::Punct if t.text(head) == "," => {
+                // Comma resets the slot — the user is opening a fresh column position.
+                saw_ident = false;
+                last_was_comma = true;
+            }
+            _ => {
+                last_was_comma = false;
+            }
+        }
+    }
+    saw_ident && !last_was_comma
+}
+
+/// The `ASC` / `DESC` `Keyword` suggestions, in canonical order. The caller filters them through
+/// the active partial before merging into the ranked list.
 fn asc_desc_keywords() -> Vec<Suggestion> {
     vec![
         Suggestion::new("ASC", SuggestionType::Keyword),
         Suggestion::new("DESC", SuggestionType::Keyword),
     ]
+}
+
+/// Whether `keyword` is a legitimate match for the user's `partial`. Empty partial -> always; a
+/// non-empty partial requires a case-insensitive prefix match (the keyword set is tiny and
+/// case-folded, so a prefix rule is the right grain).
+fn keyword_matches_partial(keyword: &str, partial: &str) -> bool {
+    if partial.is_empty() {
+        return true;
+    }
+    keyword
+        .to_ascii_lowercase()
+        .starts_with(&partial.to_ascii_lowercase())
 }
 
 /// The detected [`CursorContext`] for the Simple-mode pane — exposes the same classification the
