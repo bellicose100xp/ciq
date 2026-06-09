@@ -129,14 +129,12 @@ pub fn try_simplify_from_sql(sql: &str) -> Result<SimpleParts, SimplifyError> {
             continue;
         }
         let text = token_text(sql, t);
-        if text.eq_ignore_ascii_case("join")
-            || text.eq_ignore_ascii_case("inner")
-            || text.eq_ignore_ascii_case("left")
-            || text.eq_ignore_ascii_case("right")
-            || text.eq_ignore_ascii_case("full")
-            || text.eq_ignore_ascii_case("outer")
-            || text.eq_ignore_ascii_case("cross")
-        {
+        // Only the literal `JOIN` keyword denotes a join shape (DuckDB requires it for any join:
+        // `INNER JOIN`, `LEFT JOIN`, `CROSS JOIN`, `FULL OUTER JOIN`). The shared lexer also
+        // classifies `LEFT`/`RIGHT`/`FULL`/`OUTER`/`CROSS` as keywords, but those occur as common
+        // function names (`left()`, `right()`) or as bare identifiers — flagging them here would
+        // wrongly reject valid SQL.
+        if text.eq_ignore_ascii_case("join") {
             return Err(SimplifyError::ContainsJoin);
         }
         if text.eq_ignore_ascii_case("having") {
@@ -158,6 +156,14 @@ pub fn try_simplify_from_sql(sql: &str) -> Result<SimpleParts, SimplifyError> {
     let group_idx = find_top_level_pair(&content_no_semi, &tokens, sql, "group", "by");
     let order_idx = find_top_level_pair(&content_no_semi, &tokens, sql, "order", "by");
     let limit_idx = find_top_level_keyword(&content_no_semi, &tokens, sql, "limit");
+
+    // Canonical clause order is FROM < WHERE < GROUP BY < ORDER BY < LIMIT. Anything else
+    // (e.g. `ORDER BY x WHERE y`, `LIMIT 10 ORDER BY x`) is not simplifiable — and worse, the
+    // body-slicing below assumes monotonic offsets, so an out-of-order pair would `body_start >
+    // body_end` panic on the slice. Reject before slicing.
+    if !clauses_in_canonical_order(from_idx, where_idx, group_idx, order_idx, limit_idx) {
+        return Err(SimplifyError::Other("out-of-order clauses".to_string()));
+    }
 
     if let Some(fi) = from_idx {
         // Validate the FROM target: the next content token must be the bare identifier `t`.
@@ -246,12 +252,23 @@ pub fn try_simplify_from_sql(sql: &str) -> Result<SimpleParts, SimplifyError> {
     // Strip a leading `DISTINCT` from the SELECT projection so the SELECT pane round-trips
     // sanely; the user's projection is what they care about. (Stage 1 doesn't expose a DISTINCT
     // checkbox; preserving DISTINCT in the pane text would round-trip into "SELECT DISTINCT
-    // DISTINCT" once the composer prepends nothing.)
+    // DISTINCT" once the composer prepends nothing.) Match any ASCII whitespace after the
+    // keyword (tab, newline, …) — the lexer accepts all of them as trivia.
     let lower = select_body.to_ascii_lowercase();
-    if lower.starts_with("distinct ") || lower == "distinct" {
-        // Re-emit the original casing's leading keyword stripped: the original first 8 chars are
-        // `distinct` in some case; drop them + any single following whitespace char.
-        let rest = &select_body[8..];
+    let leading_distinct = if lower == "distinct" {
+        Some(select_body.len())
+    } else if lower.starts_with("distinct")
+        && select_body
+            .as_bytes()
+            .get(8)
+            .is_some_and(|b| b.is_ascii_whitespace())
+    {
+        Some(8)
+    } else {
+        None
+    };
+    if let Some(take) = leading_distinct {
+        let rest = &select_body[take..];
         select_body = rest.trim_start().to_string();
         if select_body.is_empty() {
             return Err(SimplifyError::NotASelect);
@@ -390,6 +407,24 @@ fn clause_body(
     let body_start = tokens[ci].end;
     let body_end = first_index_pos_among(sql, tokens, next_idxs).unwrap_or(stmt_end);
     sql[body_start..body_end].trim().to_string()
+}
+
+/// Whether the supplied clause-keyword token indexes appear in canonical SQL clause order:
+/// FROM < WHERE < GROUP BY < ORDER BY < LIMIT. `None` slots are skipped. The body-slicing path
+/// requires `body_start <= body_end` for every clause; an out-of-order pair would otherwise panic
+/// on the slice. Detect once up front and refuse the simplification.
+fn clauses_in_canonical_order(
+    from_idx: Option<usize>,
+    where_idx: Option<usize>,
+    group_idx: Option<usize>,
+    order_idx: Option<usize>,
+    limit_idx: Option<usize>,
+) -> bool {
+    let present: Vec<usize> = [from_idx, where_idx, group_idx, order_idx, limit_idx]
+        .into_iter()
+        .flatten()
+        .collect();
+    present.windows(2).all(|w| w[0] < w[1])
 }
 
 /// The byte offset just past the `BY` keyword that follows `GROUP` / `ORDER`. The `find_top_level_pair`

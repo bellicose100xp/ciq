@@ -128,3 +128,46 @@ fn error_messages_are_user_facing() {
     let err = try_simplify_from_sql("WITH x AS (SELECT 1) SELECT * FROM x").unwrap_err();
     assert_eq!(err.message(), "contains a CTE / WITH clause");
 }
+
+#[test]
+fn out_of_order_where_after_order_does_not_panic_returns_other_error() {
+    // Regression: pre-fix this slice-panicked because `body_start = tokens[where].end` (later)
+    // was greater than `body_end = tokens[order].start` (earlier).
+    let err = try_simplify_from_sql("SELECT * FROM t ORDER BY x WHERE y").unwrap_err();
+    match err {
+        SimplifyError::Other(msg) => assert_eq!(msg, "out-of-order clauses"),
+        other => panic!("expected Other('out-of-order clauses'), got {other:?}"),
+    }
+}
+
+#[test]
+fn out_of_order_limit_before_order_does_not_panic_returns_other_error() {
+    let err = try_simplify_from_sql("SELECT * FROM t LIMIT 10 ORDER BY x").unwrap_err();
+    assert!(matches!(err, SimplifyError::Other(_)));
+}
+
+#[test]
+fn out_of_order_group_after_order_does_not_panic_returns_other_error() {
+    let err = try_simplify_from_sql("SELECT * FROM t ORDER BY x GROUP BY y").unwrap_err();
+    assert!(matches!(err, SimplifyError::Other(_)));
+}
+
+#[test]
+fn left_and_right_function_calls_are_accepted_not_join() {
+    // Regression: pre-fix the bare keywords `left` / `right` (DuckDB string functions) were
+    // wrongly rejected as joins. Valid `SELECT left(name, 3), right(name, 3) FROM t` round-trips.
+    let parts =
+        try_simplify_from_sql("SELECT left(name, 3), right(name, 3) FROM t LIMIT 100").unwrap();
+    assert_eq!(parts.select, "left(name, 3), right(name, 3)");
+    assert_eq!(parts.limit, "100");
+}
+
+#[test]
+fn distinct_followed_by_tab_strips_the_keyword() {
+    // Regression: the strip predicate previously matched only an ASCII space after `distinct`,
+    // so a tab/newline left the SELECT pane as `"DISTINCT\tregion"`. Any ASCII whitespace works now.
+    let parts = try_simplify_from_sql("SELECT DISTINCT\tregion FROM t").unwrap();
+    assert_eq!(parts.select, "region");
+    let parts = try_simplify_from_sql("SELECT DISTINCT\nregion FROM t").unwrap();
+    assert_eq!(parts.select, "region");
+}
