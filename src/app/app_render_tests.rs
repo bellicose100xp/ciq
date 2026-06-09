@@ -236,8 +236,10 @@ fn capped_result_renders_row_counter_with_plus_suffix() {
 }
 
 #[test]
-fn uncapped_result_renders_rendered_over_total_row_counter() {
-    // Non-capped results show `<rendered>/<total>` on the results pane top-right border.
+fn uncapped_result_renders_rendered_only_row_counter() {
+    // Non-capped results show the bare `<rendered>` count on the results pane top-right border.
+    // ciq has no second total to display (no follow-up COUNT(*) query, by design), so the
+    // counter carries one fact rather than the tautological `N/N`.
     let mut a = app();
     a.on_loaded("ready");
     for c in "SELECT * FROM t".chars() {
@@ -252,9 +254,45 @@ fn uncapped_result_renders_rendered_over_total_row_counter() {
         kind: crate::query::worker::types::RequestKind::Main,
     });
     let screen = render(&a, 60, 12);
+    // The counter sits flush against the top-right corner glyph; assert it appears AND that the
+    // tautological `N/N` form is gone.
     assert!(
-        screen.contains("2/2"),
-        "row counter shows rendered/total, screen:\n{screen}"
+        screen.contains("2┐"),
+        "row counter shows just the rendered count flush to the corner, screen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("2/2"),
+        "row counter no longer renders the tautological N/N, screen:\n{screen}"
+    );
+}
+
+#[test]
+fn zero_row_result_omits_row_counter_on_border() {
+    // Regression: pre-fix the counter rendered `0/0` on the border AND the body showed
+    // "no rows match" — duplicate noise. The empty-state body is the canonical zero signal.
+    let mut a = app();
+    a.on_loaded("ready");
+    for c in "SELECT * FROM t WHERE id < 0".chars() {
+        a.on_key(KeyEvent::char(c), 0);
+    }
+    a.on_key(KeyEvent::plain(Key::Esc), 0);
+    a.tick(150);
+    let id = a.latest_request_id();
+    let table = Table::new(vec![Column::new("id", ColumnType::Int, vec![])]);
+    let s = table.schema();
+    a.on_response(QueryResponse::ProcessedSuccess {
+        result: ProcessedResult::new(table, s, 0),
+        request_id: id,
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+    let screen = render(&a, 60, 8);
+    assert!(
+        screen.contains("no rows match"),
+        "empty-state body still rendered, screen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("0/0"),
+        "row counter must be omitted on a zero-row result, screen:\n{screen}"
     );
 }
 

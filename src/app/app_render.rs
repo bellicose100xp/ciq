@@ -97,36 +97,55 @@ pub fn render(app: &App, frame: &mut Frame) {
     });
 }
 
-/// The kind + on-screen rect of the single open popup (mutually exclusive overlays), or `None` when
-/// none is open. Mirrors each `render_*_popup` sizing so the recorded region matches what was drawn.
+/// The kind + on-screen rect of the single open popup (mutually exclusive overlays), or `None`
+/// when none is open. The single seam that owns popup sizing — every `render_*_popup` asks the
+/// same helper for its rect, so the recorded `LayoutRegions::popup` rect always matches what was
+/// drawn. (Pre-DRY this duplicated five `popup_above_bar(bar, results, rows)` calls; a mismatch
+/// already caused a real mouse-mis-routing bug — see commit 6aa948b.)
 fn active_popup_region(app: &App, bar: Rect, results: Rect) -> Option<(PopupKind, Rect)> {
+    let kind = active_popup_kind(app)?;
+    Some((kind, popup_rect_for(app, kind, bar, results)))
+}
+
+/// The single open popup's kind, or `None` when none is open. Mutually exclusive — opening one
+/// closes the others.
+fn active_popup_kind(app: &App) -> Option<PopupKind> {
     if app.is_ai_open() {
-        return Some((PopupKind::Ai, popup_above_bar(bar, results, 2)));
+        return Some(PopupKind::Ai);
     }
     if app.is_history_open() {
-        let rows = (app.history().filtered_count().max(1) as u16).min(MAX_VISIBLE_HISTORY as u16);
-        return Some((PopupKind::History, popup_above_bar(bar, results, rows)));
+        return Some(PopupKind::History);
     }
-    if app.is_palette_open()
-        && let Some(palette) = app.palette()
-    {
-        // Size from the FILTERED count (what render_palette actually draws), not the full column
-        // count — otherwise a needle that narrows the list leaves the recorded box taller than the
-        // drawn one, and a click in the blank lower band mis-resolves to a Popup row (finding).
-        let rows = (palette.filtered_indices().len().max(1) as u16).min(PALETTE_MAX_ROWS);
-        return Some((PopupKind::Palette, popup_above_bar(bar, results, rows)));
+    if app.is_palette_open() && app.palette().is_some() {
+        return Some(PopupKind::Palette);
     }
     if app.facet().is_some() {
-        return Some((
-            PopupKind::Facet,
-            popup_above_bar(bar, results, FACET_POPUP_ROWS),
-        ));
+        return Some(PopupKind::Facet);
     }
     if app.autocomplete().is_open() {
-        let rows = (app.autocomplete().len() as u16).min(MAX_VISIBLE_ROWS);
-        return Some((PopupKind::Autocomplete, popup_above_bar(bar, results, rows)));
+        return Some(PopupKind::Autocomplete);
     }
     None
+}
+
+/// The on-screen rect for the popup of `kind`. Sizing is per-kind: AI is a fixed 2-row prompt
+/// box; history/palette/autocomplete size to the filtered count (so a narrowed list doesn't
+/// leave a blank lower band); facet uses [`FACET_POPUP_ROWS`]. The anchoring is uniform via
+/// [`popup_above_bar`].
+fn popup_rect_for(app: &App, kind: PopupKind, bar: Rect, results: Rect) -> Rect {
+    let rows = match kind {
+        PopupKind::Ai => 2,
+        PopupKind::History => {
+            (app.history().filtered_count().max(1) as u16).min(MAX_VISIBLE_HISTORY as u16)
+        }
+        PopupKind::Palette => app
+            .palette()
+            .map(|p| (p.filtered_indices().len().max(1) as u16).min(PALETTE_MAX_ROWS))
+            .unwrap_or(1),
+        PopupKind::Facet => FACET_POPUP_ROWS,
+        PopupKind::Autocomplete => (app.autocomplete().len() as u16).min(MAX_VISIBLE_ROWS),
+    };
+    popup_above_bar(bar, results, rows)
 }
 
 /// The screen rectangle for a popup of `content_rows` content rows + a border, anchored so its
@@ -151,8 +170,7 @@ fn render_ai_popup(app: &App, frame: &mut Frame, bar: Rect, results: Rect) {
     if !app.is_ai_open() {
         return;
     }
-    // The prompt row + a status row = 2 content rows (the border adds the other 2 of the box).
-    let area = popup_above_bar(bar, results, 2);
+    let area = popup_rect_for(app, PopupKind::Ai, bar, results);
     render_ai(app.ai(), frame, area);
 }
 
@@ -163,8 +181,7 @@ fn render_history_popup(app: &App, frame: &mut Frame, bar: Rect, results: Rect) 
     if !app.is_history_open() {
         return;
     }
-    let rows = (app.history().filtered_count().max(1) as u16).min(MAX_VISIBLE_HISTORY as u16);
-    let area = popup_above_bar(bar, results, rows);
+    let area = popup_rect_for(app, PopupKind::History, bar, results);
     render_history(app.history(), frame, area);
 }
 
@@ -175,7 +192,7 @@ fn render_facet_popup(app: &App, frame: &mut Frame, bar: Rect, results: Rect) {
     let Some(facet) = app.facet() else {
         return;
     };
-    let area = popup_above_bar(bar, results, FACET_POPUP_ROWS);
+    let area = popup_rect_for(app, PopupKind::Facet, bar, results);
     render_facet(facet, frame, area);
 }
 
@@ -189,10 +206,7 @@ fn render_palette_popup(app: &App, frame: &mut Frame, bar: Rect, results: Rect) 
     let Some(palette) = app.palette() else {
         return;
     };
-    // Mirror active_popup_region: size from the filtered count so the recorded region matches the
-    // drawn box (the "(no match)" line still reserves one row via the `.max(1)`).
-    let rows = (palette.filtered_indices().len().max(1) as u16).min(PALETTE_MAX_ROWS);
-    let area = popup_above_bar(bar, results, rows);
+    let area = popup_rect_for(app, PopupKind::Palette, bar, results);
     render_palette(palette, frame, area);
 }
 
@@ -204,8 +218,7 @@ fn render_autocomplete(app: &App, frame: &mut Frame, bar: Rect, results: Rect) {
     if !state.is_open() {
         return;
     }
-    let rows = (state.len() as u16).min(MAX_VISIBLE_ROWS);
-    let area = popup_above_bar(bar, results, rows);
+    let area = popup_rect_for(app, PopupKind::Autocomplete, bar, results);
     render_popup(state, frame, area);
 }
 
@@ -291,9 +304,10 @@ fn render_query_box(app: &App, frame: &mut Frame, area: Rect) -> Rect {
 /// The results pane: a bordered box containing the aligned grid, a loading indicator, or an
 /// empty hint. The grid is re-laid-out against the actual inner viewport. The pane border is
 /// focus-aware (bright cyan when the results pane has focus, muted slate otherwise) and carries
-/// two pieces of metadata: the CSV dialect summary on the top-left, and the jiq-style
-/// `<rendered>/<total>` row counter on the top-right (with a `+` suffix when the result is
-/// ciq-capped) so the grid size reads at a glance without consuming an interior row.
+/// two pieces of metadata: the CSV dialect summary on the top-left, and a row counter on the
+/// top-right (`<rendered>` for non-capped, `<rendered>+` when ciq's viewport `LIMIT` truncated
+/// the grid) so the grid size reads at a glance without consuming an interior row. The counter
+/// is omitted on a zero-row result so it doesn't duplicate the "no rows match" empty-state line.
 fn render_results(app: &App, frame: &mut Frame, area: Rect) {
     let border_style = border_style_for(app, Focus::Results);
     let mut block = Block::default()
@@ -308,9 +322,10 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
             theme::app::dialect_summary(),
         ));
     }
-    // The row counter rides the top-right of the border (jiq-style): `<rendered>/<total>` —
-    // `12/12` when not capped, `<rendered>+` when ciq applied its viewport LIMIT. Stale results
-    // get the muted styling so the counter dims with the grid.
+    // The row counter rides the top-right of the border: `<rendered>` for an uncapped result,
+    // `<rendered>+` when ciq's viewport LIMIT truncated the grid. Omitted on a zero-row result
+    // so the counter doesn't duplicate the "no rows match" empty-state body. Stale results get
+    // the muted styling so the counter dims with the grid.
     if let Some(text) = row_counter_text(app) {
         let style = if app.result_is_stale() {
             theme::results::row_counter_stale()
@@ -370,17 +385,23 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
     }
 }
 
-/// The `<rendered>/<total>` counter shown on the top-right of the results pane border, jiq-style.
-/// Returns `None` until a result is on screen. When the grid was ciq-capped (the displayed result's
-/// query was wrapped in the viewport `LIMIT`), the rendered count carries a `+` suffix so the cap
-/// reads without occupying an interior row — `1000+` for a capped grid, `12/12` otherwise.
+/// The row counter shown on the top-right of the results pane border. Returns `None` until a
+/// result is on screen, and `None` for a zero-row result (the empty-state body — "no rows match"
+/// — is the canonical zero signal; reinforcing it on the border would just duplicate it).
+/// When the grid was ciq-capped (the displayed result's query was wrapped in the viewport
+/// `LIMIT`), the count carries a `+` suffix so the cap reads without occupying an interior row —
+/// `1000+` for a capped grid, `12` for an uncapped one. The cap-suffix path is unreachable on
+/// `rendered == 0` because truncation requires `rendered >= cap > 0`.
 fn row_counter_text(app: &App) -> Option<String> {
     let result = app.result()?;
     let rendered = result.rows.row_count();
+    if rendered == 0 {
+        return None;
+    }
     if app.truncation_banner().is_some() {
         Some(format!("{rendered}+"))
     } else {
-        Some(format!("{rendered}/{rendered}"))
+        Some(format!("{rendered}"))
     }
 }
 
