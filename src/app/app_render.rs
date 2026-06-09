@@ -544,12 +544,14 @@ fn row_counter_text(app: &App) -> Option<String> {
     }
 }
 
-
 /// The status line: the status text (error-styled on a load error, normal otherwise) at the left.
 /// The vim mode badge (`INSERT` / `NORMAL` / `d(` …) leads the help hints on the query box's bottom
 /// border, so the mode is always visible without duplicating it here.
 fn render_status(app: &App, frame: &mut Frame, area: Rect) {
-    let style = if matches!(app.phase(), AppPhase::LoadError(_)) {
+    // Red for a fatal load failure OR a live query error (`unknown column`, a bad LIMIT, an engine
+    // error that dimmed the last result) — the same signal that reddens the query-box border, so
+    // the message and the border agree.
+    let style = if matches!(app.phase(), AppPhase::LoadError(_)) || app.has_query_error() {
         theme::app::status_error()
     } else {
         theme::app::status()

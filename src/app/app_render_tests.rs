@@ -1066,3 +1066,51 @@ fn results_pane_border_is_cyan_while_pending() {
         "pending (no result) -> cyan results-pane border"
     );
 }
+
+#[test]
+fn status_line_is_red_on_a_query_error() {
+    // A live query error (`unknown column`) must redden the status-line text, matching the red
+    // query-box border — both driven by `App::has_query_error`.
+    let mut a = app();
+    a.on_loaded("ready");
+    for c in "SELECT id FROM t".chars() {
+        a.on_key(KeyEvent::char(c), 0);
+    }
+    a.on_key(KeyEvent::plain(Key::Esc), 0); // dismiss the autocomplete popup
+    a.tick(150);
+    let id = a.latest_request_id();
+    a.on_response(QueryResponse::ProcessedSuccess {
+        result: int_only_result(3),
+        request_id: id,
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+    // Edit the bar and deliver an engine Error for the new dispatch.
+    for c in "x".chars() {
+        a.on_key(KeyEvent::char(c), 200);
+    }
+    a.on_key(KeyEvent::plain(Key::Esc), 200);
+    a.tick(400);
+    let id2 = a.latest_request_id();
+    a.on_response(QueryResponse::Error {
+        message: "Binder Error: Referenced column \"foo\" not found".into(),
+        request_id: id2,
+        kind: crate::query::worker::types::RequestKind::Main,
+    });
+
+    let h = 10;
+    let mut t = Terminal::new(TestBackend::new(60, h)).unwrap();
+    t.draw(|f| a.render(f)).unwrap();
+    let buf = t.backend().buffer();
+    // The status line is the bottom row. At least one of its non-blank cells must be RED.
+    let row = h - 1;
+    let red_cells = (0..60)
+        .filter(|&x| {
+            let cell = buf.cell((x, row)).unwrap();
+            cell.symbol() != " " && cell.fg == theme::base::RED
+        })
+        .count();
+    assert!(
+        red_cells > 0,
+        "status-line text must be red on a query error"
+    );
+}
