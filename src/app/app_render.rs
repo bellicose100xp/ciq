@@ -263,14 +263,19 @@ fn render_query_box(app: &App, frame: &mut Frame, area: Rect) -> Rect {
     let border_style = border_style_for(app, Focus::QueryBar);
     // The mode badge rides the box's TOP border (jiq-style) — left-aligned, per-mode color.
     // The bottom border carries the context-sensitive help hints, CENTERED so the legend reads
-    // as one compact unit. Both are width-aware so a narrow box drops trailing hints instead of
-    // overflowing (the usable title width is the box width minus the two corner glyphs).
+    // as one compact unit — but **only when the query bar is focused**, so the hints sit on the
+    // box that actually owns them. When the results pane is focused, [`render_results`] paints
+    // the hints on its own bottom border instead, leaving this border empty. Width-aware: a
+    // narrow box drops trailing hints rather than overflowing (the usable title width is the
+    // box width minus the two corner glyphs).
     let title_width = area.width.saturating_sub(2) as usize;
-    let hint_spans = help_line::hint_spans(app, title_width);
     let mut block = Block::default()
         .borders(Borders::ALL)
-        .border_style(border_style)
-        .title_bottom(Line::from(hint_spans).centered());
+        .border_style(border_style);
+    if app.focus() == Focus::QueryBar {
+        let hint_spans = help_line::hint_spans(app, title_width);
+        block = block.title_bottom(Line::from(hint_spans).centered());
+    }
     if let Some(label) = help_line::mode_label(app) {
         // The badge text fits when the label width <= title width; otherwise we drop it rather
         // than clip mid-word (the box is too narrow to be useful anyway).
@@ -425,6 +430,15 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
             theme::results::row_counter()
         };
         block = block.title_top(Line::from(Span::styled(text, style)).right_aligned());
+    }
+    // The bottom border carries the Results-pane keyboard hints (`Up/Down scroll`,
+    // `Ctrl+T query`, …) when this pane is focused, mirroring the query box's bottom border. Each
+    // box owns its own hints so it's visually unambiguous which chord set applies. Width-aware so
+    // a narrow pane drops trailing hints rather than overflowing.
+    if app.focus() == Focus::Results {
+        let title_width = area.width.saturating_sub(2) as usize;
+        let hint_spans = help_line::hint_spans(app, title_width);
+        block = block.title_bottom(Line::from(hint_spans).centered());
     }
     let inner = block.inner(area);
     frame.render_widget(block, area);

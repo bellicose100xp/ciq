@@ -69,6 +69,13 @@ polarity, or the on-screen feel. Confirm by hand (light + dark terminal):
    border styling swaps and the bottom hints change to scroll/page/column). Press `Ctrl+T` again
    to come back to the query bar with the same Simple pane focused as before. Works in both
    Simple and Power modes.
+4d-i. **Hints live on the FOCUSED box's own bottom border.** With focus on the query bar, the
+   keyboard hints render on the **query box's** bottom border and the **results pane's** bottom
+   border is empty. Press `Ctrl+T` -> the hints move to the **results pane's** bottom border
+   (`Up/Down scroll`, `PgUp/PgDn page`, `Home top`, `Left/Right columns`, `f facet`, `Ctrl+T
+   query`, `Ctrl+C quit`) and the query box's bottom border becomes empty. Each box owns its own
+   hints so it's visually unambiguous which chord set applies. The vim mode badge stays on the
+   query box's TOP border in both states (the editor still has a mode even when not focused).
 4e. **Popup scrolloff (jiq-style margin).** Open any list popup (autocomplete via typing in any
    pane, history via `Ctrl+R`, column picker via `Ctrl+P` from SELECT). Walk the highlighted row
    down with `↓` (or scroll the wheel down over the popup): the highlight stays ~4 rows from the

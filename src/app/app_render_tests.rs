@@ -405,6 +405,75 @@ fn keyboard_hints_render_centered_on_the_query_box_bottom_border() {
 }
 
 #[test]
+fn keyboard_hints_render_on_focused_box_only_query_bar() {
+    // Each box owns its own hints — when the query bar is focused, the hints sit on the query
+    // box's bottom border AND NOT on the results pane's bottom border.
+    let mut a = app();
+    a.on_loaded("ready");
+    assert_eq!(a.focus(), Focus::QueryBar);
+    let h = 10u16;
+    let screen = render(&a, 60, h);
+    let lines: Vec<&str> = screen.lines().collect();
+    let query_text_line = lines
+        .iter()
+        .position(|l| l.contains('>'))
+        .expect("query bar prompt line");
+    // Hints render on the row just below the query text — the query box's bottom border.
+    let query_box_bottom = query_text_line + 1;
+    assert!(
+        lines[query_box_bottom].contains("complete") || lines[query_box_bottom].contains("Ctrl"),
+        "hints appear on the query box bottom border:\n{screen}"
+    );
+    // Every row above the query box belongs to the results pane (or its border / interior). The
+    // results pane's bottom border is the row directly above the query box's top border. It must
+    // NOT carry the Results-focused hint set (no `scroll` description on that row).
+    let results_bottom = query_text_line.saturating_sub(2);
+    assert!(
+        !lines[results_bottom].contains("scroll"),
+        "no `scroll` hint on the results border when the query bar is focused:\n{screen}"
+    );
+}
+
+#[test]
+fn keyboard_hints_render_on_focused_box_only_results() {
+    // Symmetric: when the results pane is focused, hints move to its bottom border AND the query
+    // box's bottom border becomes empty (no hint substrings on it).
+    let mut a = app();
+    a.on_loaded("ready");
+    // Toggle focus to Results (Ctrl+T).
+    a.on_key(KeyEvent::new(Key::Char('t'), crate::app::KeyMods::CTRL), 0);
+    assert_eq!(a.focus(), Focus::Results);
+    let h = 10u16;
+    let screen = render(&a, 80, h);
+    let lines: Vec<&str> = screen.lines().collect();
+    let query_text_line = lines
+        .iter()
+        .position(|l| l.contains('>'))
+        .expect("query bar prompt line");
+    let query_box_bottom = query_text_line + 1;
+    // The query box bottom border has NO hints — it should be a plain border row (border glyph /
+    // spaces only). Specifically the `scroll` hint description (Results-focused set) must NOT be
+    // there, nor the `complete` hint (QueryBar-focused set, which is also absent because the bar
+    // is unfocused).
+    assert!(
+        !lines[query_box_bottom].contains("scroll"),
+        "query box bottom border has no `scroll` hint when results is focused:\n{screen}"
+    );
+    assert!(
+        !lines[query_box_bottom].contains("complete"),
+        "query box bottom border has no `complete` hint when results is focused:\n{screen}"
+    );
+    // The results pane's bottom border (the row just above the query box's top border) carries
+    // the Results-focused hint set: `Up/Down scroll`, `PgUp/PgDn page`, `f facet`, etc. Any of
+    // those substrings on that row proves the hints moved here.
+    let results_bottom = query_text_line.saturating_sub(2);
+    assert!(
+        lines[results_bottom].contains("scroll"),
+        "results pane bottom border carries the `scroll` Results-focused hint:\n{screen}"
+    );
+}
+
+#[test]
 fn vim_mode_badge_rides_the_query_box_top_border() {
     // The mode badge is on the TOP border of the query box — left-aligned, per-mode color. With a
     // single-line query the box spans rows h-3..=h-1 above the status row: top border (mode), text
