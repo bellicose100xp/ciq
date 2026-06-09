@@ -102,7 +102,7 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
                     ("Ctrl+A", "AI"),
                     ("Ctrl+R", "history"),
                     ("Ctrl+T", "results"),
-                    ("Ctrl+Q", "SQL"),
+                    ("Ctrl+Q", "SQL mode"),
                     ("Ctrl+C", "quit"),
                 ]);
                 v
@@ -112,7 +112,7 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
                 ("Ctrl+A", "AI"),
                 ("Ctrl+R", "history"),
                 ("Ctrl+T", "results"),
-                ("Ctrl+Q", "SQL"),
+                ("Ctrl+Q", "SQL mode"),
                 ("Ctrl+C", "quit"),
             ],
         };

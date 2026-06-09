@@ -52,7 +52,7 @@ polarity, or the on-screen feel. Confirm by hand (light + dark terminal):
    prefix or use the mouse to open the AI popup.
 4a. **Simple-mode bar (no popup) shows pane-nav and Tab=\t.** With no popup open and the query bar
    in Insert mode, the bottom border reads `Alt+↑↓ panes` followed by `Tab \t`, `Ctrl+A AI`,
-   `Ctrl+P columns`, `Ctrl+R history`, `Ctrl+T results`, `Ctrl+Q SQL`, `Esc vim`, `Ctrl+C quit`.
+   `Ctrl+P columns`, `Ctrl+R history`, `Ctrl+T results`, `Ctrl+Q SQL mode`, `Esc vim`, `Ctrl+C quit`.
    Power mode shows `Tab complete` instead (Tab in the textarea opens / accepts an autocomplete
    suggestion).
 4b. **Cursor only on the focused pane + Alt-nav is bounded.** In Simple mode, exactly ONE pane
