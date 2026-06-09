@@ -376,17 +376,30 @@ fn render_simple_panes(app: &App, frame: &mut Frame, inner: Rect) {
             width: inner.width,
             height: 1,
         };
+        let is_focused = pane == focused;
+        // The focused pane gets a subtle background band across its full row so the active query
+        // line lifts off the box (jiq's `bg_surface` input-line treatment). Paint it first so the
+        // label + text render on top; the bg is also patched into each span style below so the band
+        // reads continuously through the tui-textarea cells (a bare block doesn't tint them).
+        let row_bg = if is_focused {
+            theme::app::active_pane_bg()
+        } else {
+            Style::default()
+        };
+        if is_focused {
+            frame.render_widget(Block::default().style(row_bg), row);
+        }
         let label_area = Rect {
             width: label_w,
             ..row
         };
-        let label_style = if pane == focused {
-            theme::app::pane_label_focused()
+        let label_style = if is_focused {
+            theme::app::pane_label_focused().patch(row_bg)
         } else {
             theme::app::pane_label()
         };
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(pane.label(), label_style))),
+            Paragraph::new(Line::from(Span::styled(pane.label(), label_style))).style(row_bg),
             label_area,
         );
         let text_x = inner.x.saturating_add(label_w);
@@ -404,8 +417,12 @@ fn render_simple_panes(app: &App, frame: &mut Frame, inner: Rect) {
         // style is per-textarea state. Rendering the focused pane's `&TextArea` directly keeps
         // its mode-driven cursor color; for unfocused panes we render a clone with the cursor
         // style stripped so no extra cursor cells appear elsewhere in the bar.
-        if pane == focused {
-            frame.render_widget(app.query_form().pane(pane).textarea(), text_area);
+        if is_focused {
+            // Clone so the subtle active-pane background can be applied to the textarea's cells
+            // without mutating the stored pane state; the cursor style is preserved.
+            let mut focused_ta = app.query_form().pane(pane).textarea().clone();
+            focused_ta.set_style(row_bg);
+            frame.render_widget(&focused_ta, text_area);
         } else {
             let mut cloned = app.query_form().pane(pane).textarea().clone();
             cloned.set_cursor_style(theme::app::cursor_suppressed());

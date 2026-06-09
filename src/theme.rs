@@ -142,6 +142,13 @@ pub mod app {
     pub fn pane_label_focused() -> Style {
         Style::default().fg(p::CYAN).add_modifier(Modifier::BOLD)
     }
+
+    /// A subtle background band painted behind the **focused** Simple-mode pane row (label + text)
+    /// so the active query line lifts off the box (jiq's `bg_surface` input-line treatment). One
+    /// notch lighter than the deep-space-blue base — visible but not loud.
+    pub fn active_pane_bg() -> Style {
+        Style::default().bg(p::BG_SURFACE)
+    }
 }
 
 /// Border styles, **state-aware** (`dev/PLAN.md` §3.1 felt-loop polish).

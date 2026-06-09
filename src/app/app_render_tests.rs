@@ -1114,3 +1114,46 @@ fn status_line_is_red_on_a_query_error() {
         "status-line text must be red on a query error"
     );
 }
+
+#[test]
+fn focused_simple_pane_row_has_subtle_background() {
+    use crate::app::SimplePane;
+    // Simple mode is the default; focus starts on WHERE. The focused pane's row carries the
+    // subtle active-pane background (jiq's bg_surface input-line band); unfocused rows do not.
+    let (tx, _rx) = channel();
+    let mut a = App::new(tx, InterruptHandle::noop());
+    a.on_loaded("ready");
+    assert_eq!(a.query_form().focused_pane(), SimplePane::Where);
+
+    let (w, h) = (60u16, 12u16);
+    let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
+    t.draw(|f| a.render(f)).unwrap();
+    let buf = t.backend().buffer();
+
+    // Scan for any cell carrying the active-pane background. The focused WHERE row must have it.
+    let surface = theme::base::BG_SURFACE;
+    let bg_cells = buf.content().iter().filter(|c| c.bg == surface).count();
+    assert!(
+        bg_cells > 0,
+        "the focused pane row must carry the subtle bg_surface background"
+    );
+
+    // Sanity: Power mode (no per-pane focus band) does NOT paint the active-pane background.
+    let (tx2, _rx2) = channel();
+    let mut p = App::new(tx2, InterruptHandle::noop());
+    p.force_power_mode_for_tests("");
+    p.on_loaded("ready");
+    let mut t2 = Terminal::new(TestBackend::new(w, h)).unwrap();
+    t2.draw(|f| p.render(f)).unwrap();
+    let power_bg = t2
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .filter(|c| c.bg == surface)
+        .count();
+    assert_eq!(
+        power_bg, 0,
+        "Power mode has no per-pane focus band, so no bg_surface cells"
+    );
+}
