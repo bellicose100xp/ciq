@@ -143,7 +143,7 @@ pub fn run(path: PathBuf, opts: CsvOpts) -> std::io::Result<()> {
     // Wire the AI NL->SQL feature (P5.1) when `[ai]` is active. A provider is built from the
     // config (the API key is read from the env var it names, never the file); the AI thread owns
     // it and blocks on `Provider::complete` off the UI thread. When inactive, no thread is spawned
-    // and the `Ctrl+G` chord is a no-op. The result receiver is drained in the event loop below.
+    // and the `Ctrl+A` chord is a no-op. The result receiver is drained in the event loop below.
     let ai_bridge =
         crate::ai::provider::provider_from_config(cfg.ai()).map(crate::ai::ai_app::spawn_ai_thread);
     let ai_result_rx = if let Some(bridge) = &ai_bridge {

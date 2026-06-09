@@ -721,8 +721,8 @@ fn open_palette_overlays_columns_with_checkboxes() {
         ColumnMeta::new("status", ColumnType::Text),
     ]));
     a.on_loaded("ready");
-    // Ctrl+K opens the column palette; it overlays the results area with checkbox rows.
-    a.on_key(KeyEvent::new(Key::Char('k'), crate::app::KeyMods::CTRL), 0);
+    // Ctrl+P opens the column palette; it overlays the results area with checkbox rows.
+    a.on_key(KeyEvent::new(Key::Char('p'), crate::app::KeyMods::CTRL), 0);
     assert!(a.is_palette_open());
     let screen = render(&a, 40, 12);
     assert!(screen.contains("[ ]"), "checkbox rows, screen:\n{screen}");

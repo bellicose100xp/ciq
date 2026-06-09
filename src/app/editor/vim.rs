@@ -59,7 +59,7 @@ fn handle_insert_escape(editor: &mut Editor, ev: &KeyEvent) -> bool {
 
 fn handle_normal(editor: &mut Editor, ev: &KeyEvent) -> bool {
     // No Ctrl-modified chord is handled in Normal mode here: the App intercepts Ctrl+R (history),
-    // Ctrl+K (palette), and Ctrl+G (AI) before the key ever reaches vim dispatch, so binding redo to
+    // Ctrl+P (palette), and Ctrl+A (AI) before the key ever reaches vim dispatch, so binding redo to
     // Ctrl+R here would be dead code. `u` (undo) is reachable; redo has no reachable binding (the
     // history chord owns Ctrl+R) and is intentionally omitted.
     match &ev.key {

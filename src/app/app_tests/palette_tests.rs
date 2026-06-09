@@ -1,5 +1,5 @@
 //! `App`-shell tests for the column palette (P4.4/P4.5, §0/D3): ownership byte-compare,
-//! seed/replace, and the Ctrl+K popup wiring. Split out of `app_tests.rs` to keep each test file
+//! seed/replace, and the Ctrl+P popup wiring. Split out of `app_tests.rs` to keep each test file
 //! under the 1000-line limit; the shared App helpers live in the parent (`super`).
 
 use crate::app::{Key, KeyEvent, KeyMods};
@@ -93,9 +93,9 @@ fn replace_query_with_palette_snaps_to_generated_query() {
 
 // --- column palette popup wiring (P4.5, §0/D3) ---
 
-/// Ctrl+K key event.
+/// Ctrl+P key event.
 fn ctrl_k() -> KeyEvent {
-    KeyEvent::new(Key::Char('k'), KeyMods::CTRL)
+    KeyEvent::new(Key::Char('p'), KeyMods::CTRL)
 }
 
 #[test]

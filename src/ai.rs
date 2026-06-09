@@ -14,7 +14,7 @@
 //! ## The flow
 //!
 //! ```text
-//! Ctrl+G opens the AI popup
+//! Ctrl+A opens the AI popup
 //!   -> user types a natural-language request, Enter submits
 //!   -> build_prompt(nl, &schema)  (PURE — embeds table name + every column name + ColumnType)
 //!   -> Provider::complete(prompt) on the AI thread (blocking HTTP, or the MockProvider in tests)

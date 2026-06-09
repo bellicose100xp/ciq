@@ -22,7 +22,7 @@ fn app() -> App {
     let (tx, _rx) = channel();
     let mut app = App::new(tx, InterruptHandle::noop());
     // Help-bar hint tests assert on Power-mode chord set (the bulk surface). Simple-mode hints
-    // (which include `Tab next-pane` rather than `Tab complete`) have their own dedicated tests.
+    // (which lead with `Alt+↑↓ panes` and use `Tab \t`) have their own dedicated tests.
     app.force_power_mode_for_tests("");
     app
 }
@@ -87,15 +87,16 @@ fn has_key(hints: &[(&'static str, &'static str)], key: &str) -> bool {
 
 #[test]
 fn query_bar_insert_mode_hints() {
-    let app = loaded_app(); // defaults to QueryBar + Insert
+    let app = loaded_app(); // defaults to QueryBar + Insert (Power, since the test helper forces it)
     let hints = get_context_hints(&app);
-    assert!(has_key(&hints, "Tab"), "complete chord: {hints:?}");
+    assert!(has_key(&hints, "Tab"), "Tab chord: {hints:?}");
     assert!(
-        has_key(&hints, "Ctrl+K"),
+        has_key(&hints, "Ctrl+P"),
         "columns palette chord: {hints:?}"
     );
-    assert!(has_key(&hints, "Ctrl+G"), "AI chord: {hints:?}");
+    assert!(has_key(&hints, "Ctrl+A"), "AI chord: {hints:?}");
     assert!(has_key(&hints, "Ctrl+R"), "history chord: {hints:?}");
+    assert!(has_key(&hints, "Ctrl+T"), "focus-toggle chord: {hints:?}");
     assert!(has_key(&hints, "Ctrl+C"), "quit chord: {hints:?}");
     // The mode badge says INSERT.
     assert_eq!(mode_label(&app).as_deref(), Some("INSERT"));
@@ -108,8 +109,12 @@ fn query_bar_normal_mode_hints() {
     assert!(has_key(&hints, "hjkl"), "vim motion hint: {hints:?}");
     assert!(has_key(&hints, "i"), "insert-mode hint: {hints:?}");
     assert!(
-        has_key(&hints, "Ctrl+K"),
+        has_key(&hints, "Ctrl+P"),
         "columns reachable in Normal: {hints:?}"
+    );
+    assert!(
+        has_key(&hints, "Ctrl+T"),
+        "focus-toggle reachable in Normal: {hints:?}"
     );
     // No live "complete" affordance in Normal mode (the popup is an Insert-mode concern).
     assert!(
@@ -140,6 +145,10 @@ fn results_pane_hints() {
         "column scroll hint: {hints:?}"
     );
     assert!(has_key(&hints, "f"), "facet chord: {hints:?}");
+    assert!(
+        has_key(&hints, "Ctrl+T"),
+        "focus-toggle to query bar: {hints:?}"
+    );
     assert!(has_key(&hints, "Ctrl+C"), "quit chord: {hints:?}");
     // No mode badge in the results pane (no editing mode applies there).
     assert_eq!(mode_label(&app), None);
@@ -161,7 +170,7 @@ fn autocomplete_popup_hints() {
 #[test]
 fn palette_popup_hints() {
     let mut app = loaded_app();
-    app.on_key(KeyEvent::new(Key::Char('k'), KeyMods::CTRL), 0);
+    app.on_key(KeyEvent::new(Key::Char('p'), KeyMods::CTRL), 0);
     assert!(app.is_palette_open());
     let hints = get_context_hints(&app);
     assert!(has_key(&hints, "Space"), "toggle chord: {hints:?}");
@@ -185,8 +194,8 @@ fn history_popup_hints() {
 fn ai_popup_hints() {
     let mut app = loaded_app();
     let (tx, _rx) = channel();
-    app.set_ai_channel(tx); // wire the AI feature so Ctrl+G opens the popup
-    app.on_key(KeyEvent::new(Key::Char('g'), KeyMods::CTRL), 0);
+    app.set_ai_channel(tx); // wire the AI feature so Ctrl+A opens the popup
+    app.on_key(KeyEvent::new(Key::Char('a'), KeyMods::CTRL), 0);
     assert!(app.is_ai_open());
     let hints = get_context_hints(&app);
     assert!(has_key(&hints, "Enter"), "generate chord: {hints:?}");
@@ -313,7 +322,7 @@ fn pair_for<'a>(
 }
 
 #[test]
-fn simple_mode_query_bar_insert_hints_show_tab_next_pane() {
+fn simple_mode_query_bar_insert_hints_show_pane_nav_and_tab_tab() {
     // Simple is the production default; build the App without forcing Power.
     let (tx, _rx) = channel();
     let mut app = App::new(tx, InterruptHandle::noop());
@@ -332,10 +341,15 @@ fn simple_mode_query_bar_insert_hints_show_tab_next_pane() {
         "popup must be closed for the bare Insert-mode hints"
     );
     let hints = get_context_hints(&app);
+    // Pane-nav lives on Alt+Up/Down (the leading hint); Tab inserts a literal tab.
+    assert!(
+        has_key(&hints, "Alt+\u{2191}\u{2193}"),
+        "Simple-mode pane-nav chord: {hints:?}"
+    );
     let tab = pair_for(&hints, "Tab").expect("Tab present in Simple-mode Insert hints");
     assert_eq!(
-        tab.1, "next pane",
-        "Simple-mode Tab is 'next pane', not 'complete': {hints:?}"
+        tab.1, "\\t",
+        "Simple-mode Tab inserts a literal tab now, not 'next pane': {hints:?}"
     );
     assert!(
         has_key(&hints, "Ctrl+Q"),

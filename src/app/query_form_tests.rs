@@ -23,16 +23,16 @@ fn default_compose_yields_select_star_from_t_limit_1000() {
 }
 
 #[test]
-fn focus_next_cycles_through_all_five_panes() {
+fn focus_next_walks_to_limit_then_stops() {
     let mut form = QueryForm::new();
-    let order: Vec<SimplePane> = (0..6)
+    // Default focus is Where; bounded walk Where -> GroupBy -> OrderBy -> Limit -> Limit.
+    let order: Vec<SimplePane> = (0..5)
         .map(|_| {
             let p = form.focused_pane();
             form.focus_next();
             p
         })
         .collect();
-    // From Where, the cycle is Where -> GroupBy -> OrderBy -> Limit -> Select -> Where
     assert_eq!(
         order,
         vec![
@@ -40,19 +40,24 @@ fn focus_next_cycles_through_all_five_panes() {
             SimplePane::GroupBy,
             SimplePane::OrderBy,
             SimplePane::Limit,
-            SimplePane::Select,
-            SimplePane::Where,
+            SimplePane::Limit, // bounded: stays put at the bottom
         ]
     );
+    assert_eq!(form.focused_pane(), SimplePane::Limit);
 }
 
 #[test]
-fn focus_prev_cycles_in_reverse() {
+fn focus_prev_walks_to_select_then_stops() {
     let mut form = QueryForm::new();
+    // Default focus is Where; bounded walk Where -> Select -> Select.
     form.focus_prev();
     assert_eq!(form.focused_pane(), SimplePane::Select);
     form.focus_prev();
-    assert_eq!(form.focused_pane(), SimplePane::Limit);
+    assert_eq!(
+        form.focused_pane(),
+        SimplePane::Select,
+        "bounded: stays put at the top"
+    );
 }
 
 #[test]

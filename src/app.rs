@@ -509,7 +509,7 @@ impl App {
     /// columns rather than editing the bar. When the autocomplete popup is open it then intercepts
     /// Tab/Enter (accept), Up/Down (move selection), and Esc (dismiss) before the focus routing —
     /// so Esc dismisses the popup rather than quitting (it only quits when no popup is open).
-    /// `Ctrl+K` opens the palette from anywhere.
+    /// `Ctrl+P` opens the palette from anywhere.
     pub fn on_key(&mut self, ev: KeyEvent, now_ms: u64) -> bool {
         if self.ai.is_open() {
             return self.handle_ai_key(&ev, now_ms);
@@ -530,23 +530,34 @@ impl App {
                 FacetKey::FallThrough => {} // popup closed; route the key normally below
             }
         }
-        // Ctrl+K opens the column palette (when a schema is loaded). Checked before the popup /
-        // quit routing so the chord is reachable from any non-palette state.
-        if ev.mods.ctrl && matches!(ev.key, Key::Char('k') | Key::Char('K')) {
+        // Ctrl+T toggles keyboard focus between the query bar and the results pane (top-level so
+        // it works from either focus state). Pane focus + scroll offsets are preserved across the
+        // round trip — only the active surface changes.
+        if ev.mods.ctrl && matches!(ev.key, Key::Char('t') | Key::Char('T')) {
+            self.focus = match self.focus {
+                Focus::QueryBar => Focus::Results,
+                Focus::Results => Focus::QueryBar,
+            };
+            return false;
+        }
+        // Ctrl+P opens the column palette (when a schema is loaded). Checked before the popup /
+        // quit routing so the chord is reachable from any non-palette state. (Ctrl+K is reserved
+        // for tmux's HJKL pane-nav.)
+        if ev.mods.ctrl && matches!(ev.key, Key::Char('p') | Key::Char('P')) {
             self.open_palette();
             return false;
         }
         // Ctrl+R opens the query-history popup (the recall chord, §7.6). Reachable from any
-        // non-popup state, like Ctrl+K. Seeds the needle with the current bar text so the list
-        // pre-filters to similar prior queries.
+        // non-popup state. Seeds the needle with the current bar text so the list pre-filters to
+        // similar prior queries.
         if ev.mods.ctrl && matches!(ev.key, Key::Char('r') | Key::Char('R')) {
             self.open_history();
             return false;
         }
-        // Ctrl+G opens the AI NL->SQL popup (the "generate" chord, P5.1). No-op when the AI
-        // feature is inactive (no provider configured) or while loading. Reachable from any
-        // non-popup state, like Ctrl+K / Ctrl+R.
-        if ev.mods.ctrl && matches!(ev.key, Key::Char('g') | Key::Char('G')) {
+        // Ctrl+A opens the AI NL->SQL popup (the "ask" chord, P5.1). No-op when the AI feature is
+        // inactive (no provider configured) or while loading. (Ctrl+G is intentionally unbound,
+        // reserved for a future binding.)
+        if ev.mods.ctrl && matches!(ev.key, Key::Char('a') | Key::Char('A')) {
             self.open_ai();
             return false;
         }
@@ -637,16 +648,16 @@ impl App {
 
     /// Handle a key while the popup is open. Returns `true` if the popup consumed it (so the
     /// caller stops routing). Tab/Enter accept the selection; Up/Down move it; Esc dismisses; any
-    /// other key falls through (e.g. typing keeps editing and recomputes the popup).
+    /// other key falls through (e.g. typing keeps editing and recomputes the popup). `Shift+Tab`
+    /// is intentionally unbound — `Up` already drives `select_prev`, so adding a redundant chord
+    /// would just be noise.
     fn handle_popup_key(&mut self, ev: &KeyEvent, now_ms: u64) -> bool {
-        // Shift+Tab while the popup is open mirrors Up — select the previous candidate (some users
-        // prefer this over Up). It would otherwise leak through to the bar's Tab-cycle-pane path.
-        if matches!(ev.key, Key::Tab) && ev.mods.shift {
-            self.autocomplete.select_prev();
-            return true;
-        }
         match ev.key {
-            Key::Tab | Key::Enter => {
+            Key::Tab if !ev.mods.shift => {
+                self.accept_suggestion(now_ms);
+                true
+            }
+            Key::Enter => {
                 self.accept_suggestion(now_ms);
                 true
             }
@@ -666,110 +677,11 @@ impl App {
         }
     }
 
-    // The popup-input plumbing (`accept_suggestion`, `suggestion_target_editor_mut`) lives in
-    // `crate::app::query_form_app` (an `impl App` block) to keep this file under the 1000-line
-    // cap, like the autocomplete/history/AI/palette blocks. The popup is mode-aware: Simple-mode
-    // accepts land in the focused pane editor; Power-mode accepts land in the App's `editor`.
-
-    fn on_key_query_bar(&mut self, ev: KeyEvent, now_ms: u64) {
-        if matches!(self.phase, AppPhase::LoadError(_)) {
-            return; // bar is frozen once load failed
-        }
-        // In Simple mode, Tab/Shift+Tab cycle pane focus (intercepted before the editor's text path
-        // so they never become a literal `\t` in a pane). Power mode keeps Tab as autocomplete-
-        // accept (handled by `handle_popup_key` upstream when the popup is open) or as a literal
-        // textarea Tab when no popup is up.
-        if matches!(self.query_form.mode(), QueryMode::Simple) && matches!(ev.key, Key::Tab) {
-            if ev.mods.shift {
-                self.query_form.focus_prev();
-            } else {
-                self.query_form.focus_next();
-            }
-            self.refresh_autocomplete();
-            return;
-        }
-        // Vim modal routing: in any non-Insert mode, the key is a vim command (motion / edit /
-        // mode flip), not text. `Esc` in Insert mode drops to Normal (the one Insert key vim owns).
-        // Everything else in Insert mode is the text-editing path below (typing, Enter=newline,
-        // autocomplete) — unchanged, so the live-query + completion wiring is untouched.
-        if !self.editor().mode().is_insert() || matches!(ev.key, Key::Esc) {
-            let changed = self.input_editor_mut().on_vim_key(&ev);
-            // A vim edit changed the cursor context (and possibly the text) — recompute the popup.
-            self.refresh_autocomplete();
-            if changed {
-                self.schedule(now_ms);
-            }
-            return;
-        }
-        let before = self.editor().text();
-        match ev.key {
-            Key::Char(c) => self.input_editor_mut().insert_char(c),
-            Key::Backspace => {
-                self.input_editor_mut().backspace();
-            }
-            Key::Delete => {
-                self.input_editor_mut().delete();
-            }
-            Key::Left => self.input_editor_mut().move_left(),
-            Key::Right => self.input_editor_mut().move_right(),
-            Key::Home => self.input_editor_mut().move_home(),
-            Key::End => self.input_editor_mut().move_end(),
-            // Up navigates within Power's multiline textarea; in Simple mode it cycles to the
-            // previous pane (mirror of `Down`'s simple_pane_down). Reaches `SELECT` and stops —
-            // the symmetric behavior of Down handing off to the results grid from `LIMIT` is
-            // intentionally NOT mirrored on Up (the results pane is below the bar, so going "up"
-            // out of `SELECT` would take focus to a non-existent surface).
-            Key::Up => match self.query_form.mode() {
-                QueryMode::Simple => self.simple_pane_up(),
-                QueryMode::Power => self.input_editor_mut().move_up(),
-            },
-            // Enter (and Shift+Enter) insert a newline in Power; in Simple, panes are single-line
-            // so the textarea swallows it as a no-op (its single-line nature is enforced by
-            // construction).
-            Key::Enter => self.input_editor_mut().insert_newline(),
-            Key::Paste(ref s) => self.input_editor_mut().insert_str(s),
-            // Down moves between lines in Power; from the last line it hands focus off to the
-            // results grid. In Simple, it focuses the next pane (or hands off to results if we're
-            // on `LIMIT`, the last pane).
-            Key::Down => match self.query_form.mode() {
-                QueryMode::Simple => self.simple_pane_down(),
-                QueryMode::Power => {
-                    if self.editor().is_on_last_line() {
-                        self.focus = Focus::Results;
-                    } else {
-                        self.input_editor_mut().move_down();
-                    }
-                }
-            },
-            _ => {}
-        }
-        // Recompute autocomplete on any edit/cursor move (the popup tracks the cursor context).
-        self.refresh_autocomplete();
-        // Only (re)schedule a query when the text actually changed — pure cursor moves don't.
-        if self.editor().text() != before {
-            self.schedule(now_ms);
-        }
-    }
-
-    /// `Down` in Simple mode: focus the next pane below the current one (`SELECT` → `WHERE` →
-    /// `GROUP BY` → `ORDER BY` → `LIMIT`); on `LIMIT` it hands focus off to the results grid,
-    /// mirroring the existing Power `Down`-on-last-line behavior.
-    fn simple_pane_down(&mut self) {
-        if matches!(self.query_form.focused_pane(), SimplePane::Limit) {
-            self.focus = Focus::Results;
-        } else {
-            self.query_form.focus_next();
-        }
-    }
-
-    /// `Up` in Simple mode: focus the previous pane (`LIMIT` → `ORDER BY` → … → `SELECT`). On
-    /// `SELECT` it stays put — the results pane sits below the bar, so going "up" out of `SELECT`
-    /// would have nowhere sensible to land.
-    fn simple_pane_up(&mut self) {
-        if !matches!(self.query_form.focused_pane(), SimplePane::Select) {
-            self.query_form.focus_prev();
-        }
-    }
+    // The popup-input plumbing (`accept_suggestion`, `suggestion_target_editor_mut`) and the
+    // query-bar key dispatch (`on_key_query_bar`) both live in `crate::app::query_form_app` (an
+    // `impl App` block) to keep this file under the 1000-line cap, like the autocomplete /
+    // history / AI / palette blocks. The popup is mode-aware: Simple-mode accepts land in the
+    // focused pane editor; Power-mode accepts land in the App's `editor`.
 
     /// Toggle Simple ↔ Power query modes. Simple → Power composes the panes into the textarea so
     /// the user can refine without losing context; Power → Simple parses the textarea via the

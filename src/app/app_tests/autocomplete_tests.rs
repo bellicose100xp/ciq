@@ -315,39 +315,10 @@ fn up_with_popup_open_moves_selection_back() {
 }
 
 #[test]
-fn shift_tab_with_popup_open_moves_selection_back() {
+fn shift_tab_with_popup_closed_is_a_noop_for_pane_focus() {
     let (mut app, _rx) = simple_app();
-    type_into_pane(&mut app, SimplePane::Where, "i");
-    assert!(app.autocomplete().suggestions().len() >= 2);
-    app.on_key(KeyEvent::new(Key::Down, KeyMods::NONE), 0);
-    assert_eq!(app.autocomplete().selected(), 1);
-    let before_focus = app.query_form().focused_pane();
-    app.on_key(
-        KeyEvent::new(
-            Key::Tab,
-            KeyMods {
-                shift: true,
-                ..KeyMods::NONE
-            },
-        ),
-        0,
-    );
-    assert_eq!(
-        app.autocomplete().selected(),
-        0,
-        "Shift+Tab with popup open moves selection back"
-    );
-    assert_eq!(
-        app.query_form().focused_pane(),
-        before_focus,
-        "Shift+Tab with popup open does NOT cycle panes"
-    );
-}
-
-#[test]
-fn shift_tab_with_popup_closed_cycles_to_previous_pane() {
-    let (mut app, _rx) = simple_app();
-    // Move forward first so there is a "previous" pane to land on.
+    // Pane navigation is exclusively Alt+J/K + Alt+↑/↓ (bounded). Shift+Tab with the popup
+    // closed has no pane-cycle binding — it must NOT change the focused pane.
     app.query_form_mut().focus(SimplePane::OrderBy);
     assert!(!app.autocomplete().is_open());
     app.on_key(
@@ -362,8 +333,8 @@ fn shift_tab_with_popup_closed_cycles_to_previous_pane() {
     );
     assert_eq!(
         app.query_form().focused_pane(),
-        SimplePane::GroupBy,
-        "Shift+Tab with popup closed cycles to the previous pane"
+        SimplePane::OrderBy,
+        "Shift+Tab with popup closed does NOT cycle panes anymore"
     );
 }
 

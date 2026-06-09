@@ -76,48 +76,140 @@ fn typing_into_where_dispatches_composed_filter() {
     );
 }
 
-// ── Tab cycles pane focus ───────────────────────────────────────────────────────────────────────
+// ── Pane navigation: Alt+J/K and Alt+↑/↓ (bounded, no wrap) ─────────────────────────────────────
+
+fn alt(k: Key) -> KeyEvent {
+    KeyEvent::new(
+        k,
+        KeyMods {
+            alt: true,
+            ..KeyMods::NONE
+        },
+    )
+}
 
 #[test]
-fn tab_cycles_through_panes_in_simple_mode() {
+fn alt_j_walks_panes_forward_and_stops_at_limit() {
     let (mut app, _rx) = app();
     assert_eq!(app.query_form().focused_pane(), SimplePane::Where);
-    app.on_key(KeyEvent::plain(Key::Tab), 0);
+    app.on_key(alt(Key::Char('j')), 0);
     assert_eq!(app.query_form().focused_pane(), SimplePane::GroupBy);
-    app.on_key(KeyEvent::plain(Key::Tab), 0);
+    app.on_key(alt(Key::Char('j')), 0);
     assert_eq!(app.query_form().focused_pane(), SimplePane::OrderBy);
-    app.on_key(KeyEvent::plain(Key::Tab), 0);
+    app.on_key(alt(Key::Char('j')), 0);
     assert_eq!(app.query_form().focused_pane(), SimplePane::Limit);
-    app.on_key(KeyEvent::plain(Key::Tab), 0);
+    app.on_key(alt(Key::Char('j')), 0);
+    assert_eq!(
+        app.query_form().focused_pane(),
+        SimplePane::Limit,
+        "bounded: stops at LIMIT, no wrap"
+    );
+}
+
+#[test]
+fn alt_k_walks_panes_backward_and_stops_at_select() {
+    let (mut app, _rx) = app();
+    // Default focus is WHERE.
+    app.on_key(alt(Key::Char('k')), 0);
+    assert_eq!(app.query_form().focused_pane(), SimplePane::Select);
+    app.on_key(alt(Key::Char('k')), 0);
     assert_eq!(
         app.query_form().focused_pane(),
         SimplePane::Select,
-        "wraps around"
+        "bounded: stops at SELECT, no wrap"
     );
 }
 
 #[test]
-fn shift_tab_cycles_in_reverse() {
+fn alt_down_is_alias_for_alt_j() {
     let (mut app, _rx) = app();
-    let shift_tab = KeyEvent::new(
-        Key::Tab,
-        KeyMods {
-            shift: true,
-            ..KeyMods::NONE
-        },
-    );
-    app.on_key(shift_tab, 0);
+    app.on_key(alt(Key::Down), 0);
+    assert_eq!(app.query_form().focused_pane(), SimplePane::GroupBy);
+}
+
+#[test]
+fn alt_up_is_alias_for_alt_k() {
+    let (mut app, _rx) = app();
+    app.on_key(alt(Key::Up), 0);
     assert_eq!(app.query_form().focused_pane(), SimplePane::Select);
 }
 
-// ── Down on the LIMIT pane hands off to results ─────────────────────────────────────────────────
+// ── Tab popup-closed inserts a literal \t into the focused pane ─────────────────────────────────
 
 #[test]
-fn down_on_limit_pane_focuses_results() {
+fn tab_popup_closed_inserts_a_literal_tab() {
+    let (mut app, _rx) = app();
+    // Default focus is WHERE; no schema is loaded so the popup never opens.
+    app.on_key(KeyEvent::plain(Key::Tab), 0);
+    assert_eq!(
+        app.query_form().text(SimplePane::Where),
+        "\t",
+        "Tab inserts a literal tab when the popup is closed"
+    );
+    assert_eq!(
+        app.query_form().focused_pane(),
+        SimplePane::Where,
+        "Tab does NOT change pane focus anymore"
+    );
+}
+
+// ── Plain Up / Down in the bar are no-ops in Simple mode ────────────────────────────────────────
+
+#[test]
+fn plain_down_on_limit_stays_on_limit() {
     let (mut app, _rx) = app();
     app.query_form_mut().focus(SimplePane::Limit);
     app.on_key(KeyEvent::plain(Key::Down), 0);
+    assert_eq!(
+        app.focus(),
+        Focus::QueryBar,
+        "plain Down does NOT hand focus to Results anymore"
+    );
+    assert_eq!(
+        app.query_form().focused_pane(),
+        SimplePane::Limit,
+        "plain Down on LIMIT is a no-op"
+    );
+}
+
+#[test]
+fn plain_up_in_any_pane_is_a_noop() {
+    let (mut app, _rx) = app();
+    // Default focus is WHERE.
+    app.on_key(KeyEvent::plain(Key::Up), 0);
+    assert_eq!(
+        app.query_form().focused_pane(),
+        SimplePane::Where,
+        "plain Up does NOT cycle to the previous pane anymore"
+    );
+}
+
+// ── Ctrl+T toggles focus between query bar and results ──────────────────────────────────────────
+
+#[test]
+fn ctrl_t_toggles_focus_between_query_bar_and_results() {
+    let (mut app, _rx) = app();
+    assert_eq!(app.focus(), Focus::QueryBar);
+    let ctrl_t = ctrl(Key::Char('t'));
+    app.on_key(ctrl_t.clone(), 0);
     assert_eq!(app.focus(), Focus::Results);
+    app.on_key(ctrl_t.clone(), 0);
+    assert_eq!(app.focus(), Focus::QueryBar);
+}
+
+#[test]
+fn ctrl_t_preserves_pane_focus_across_round_trip() {
+    let (mut app, _rx) = app();
+    app.query_form_mut().focus(SimplePane::OrderBy);
+    let ctrl_t = ctrl(Key::Char('t'));
+    app.on_key(ctrl_t.clone(), 0);
+    app.on_key(ctrl_t, 0);
+    assert_eq!(app.focus(), Focus::QueryBar);
+    assert_eq!(
+        app.query_form().focused_pane(),
+        SimplePane::OrderBy,
+        "Ctrl+T round-trip preserves which Simple pane was focused"
+    );
 }
 
 // ── Ctrl+Q toggles modes, preserving context ────────────────────────────────────────────────────
@@ -248,17 +340,4 @@ fn focused_cursor_follows_focus_change() {
         reversed, 1,
         "after focus change, still exactly ONE cursor cell"
     );
-}
-
-// ── Up navigation in Simple closed-popup ─────────────────────────────────────────────────────────
-
-#[test]
-fn up_in_simple_focuses_previous_pane() {
-    let (mut app, _rx) = app();
-    // Default WHERE -> Up should land on SELECT.
-    app.on_key(KeyEvent::new(Key::Up, KeyMods::NONE), 0);
-    assert_eq!(app.query_form().focused_pane(), SimplePane::Select);
-    // Up on SELECT stays put (no surface above the bar).
-    app.on_key(KeyEvent::new(Key::Up, KeyMods::NONE), 0);
-    assert_eq!(app.query_form().focused_pane(), SimplePane::Select);
 }

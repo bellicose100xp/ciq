@@ -236,23 +236,30 @@ impl QueryForm {
         self.panes[pane.index()].set_text(text);
     }
 
-    /// Move focus to the next Simple pane (cycling). No-op in Power mode.
+    /// Move focus to the next Simple pane (`SELECT` → `WHERE` → … → `LIMIT`). **Bounded — no
+    /// wrap.** On `LIMIT` (the last pane) it stays put. No-op in Power mode. The bound matches
+    /// the "directed-move" semantics of `Alt+J`/`Alt+Down`.
     pub fn focus_next(&mut self) {
         if self.mode != QueryMode::Simple {
             return;
         }
-        let next = (self.focused_pane.index() + 1) % SimplePane::ALL.len();
-        self.set_focus(SimplePane::ALL[next]);
+        let i = self.focused_pane.index();
+        if i + 1 < SimplePane::ALL.len() {
+            self.set_focus(SimplePane::ALL[i + 1]);
+        }
     }
 
-    /// Move focus to the previous Simple pane (cycling). No-op in Power mode.
+    /// Move focus to the previous Simple pane (`LIMIT` → `ORDER BY` → … → `SELECT`). **Bounded —
+    /// no wrap.** On `SELECT` (the first pane) it stays put. No-op in Power mode. The bound
+    /// matches the "directed-move" semantics of `Alt+K`/`Alt+Up`.
     pub fn focus_prev(&mut self) {
         if self.mode != QueryMode::Simple {
             return;
         }
-        let len = SimplePane::ALL.len();
-        let prev = (self.focused_pane.index() + len - 1) % len;
-        self.set_focus(SimplePane::ALL[prev]);
+        let i = self.focused_pane.index();
+        if i > 0 {
+            self.set_focus(SimplePane::ALL[i - 1]);
+        }
     }
 
     /// Set focus to `pane` (the click-to-focus path). Resets the new pane's editor to Insert

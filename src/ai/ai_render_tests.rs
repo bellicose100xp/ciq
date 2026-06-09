@@ -2,7 +2,7 @@
 //! `ratatui::TestBackend`, logical cells only).
 //!
 //! The snapshot proves the *logical* cell grid (the prompt line, the status line). True-terminal
-//! glyphs, popup placement against a real screen, the magenta border color, and the real `Ctrl+G`
+//! glyphs, popup placement against a real screen, the magenta border color, and the real `Ctrl+A`
 //! chord are the §4.7 human surface, NOT asserted here.
 
 use super::*;

@@ -1,6 +1,6 @@
 //! Column palette — the generated-state column picker (`dev/PLAN.md` §6.2, `dev/DECISIONS.md` D3).
 //!
-//! The headline CSV convenience: a chord (`Ctrl+K`) opens a fuzzy-filterable list of every column
+//! The headline CSV convenience: a chord (`Ctrl+P`) opens a fuzzy-filterable list of every column
 //! with its sniffed type and a checkbox; the user multi-selects/reorders, and ciq **generates a
 //! fresh canonical `SELECT`** from the palette's own structured state — they never hand-type
 //! `SELECT a, b, c`.

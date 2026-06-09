@@ -360,7 +360,7 @@ fn click_in_blank_band_of_needle_filtered_palette_is_bounded() {
     // filtered count, so a click below the single drawn row does not resolve into the box as a
     // phantom row (region-vs-drawn geometry must match). Regression for the all_columns sizing.
     let (mut app, _rx) = wide_schema_app();
-    app.on_key(KeyEvent::new(Key::Char('k'), crate::app::KeyMods::CTRL), 0);
+    app.on_key(KeyEvent::new(Key::Char('p'), crate::app::KeyMods::CTRL), 0);
     assert!(app.is_palette_open());
     // Filter to columns containing the subsequence of the first column's distinctive needle.
     let needle = first_column_unique_needle(&app);

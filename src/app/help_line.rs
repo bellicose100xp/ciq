@@ -76,35 +76,47 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
             "Home" => "top",
             "Left/Right" => "columns",
             "f" => "facet",
+            "Ctrl+T" => "query",
             "Ctrl+C" => "quit",
         ];
     }
     // Query bar focused. Insert mode is the typing path (live query); the vim command modes share a
-    // motion-oriented hint set. The Ctrl chords (palette / AI / history) are reachable from both.
-    // With the autocomplete popup CLOSED, Tab's meaning depends on mode: in Simple it cycles to
-    // the next pane (not "complete"); in Power it inserts a literal tab into the textarea (or
-    // would be intercepted by the popup if it were open).
+    // motion-oriented hint set. With the autocomplete popup CLOSED, the Simple-mode bar uses
+    // `Alt+↑/↓` (or `Alt+J/K`) for pane nav and Tab inserts a literal `\t`; Power mode keeps Tab as
+    // autocomplete-complete (or a textarea tab when no popup is up). `Ctrl+T` toggles focus to the
+    // results pane.
     if app.editor_mode().is_insert() {
-        let tab_hint: (&'static str, &'static str) = match app.query_form().mode() {
-            QueryMode::Simple => ("Tab", "next pane"),
-            QueryMode::Power => ("Tab", "complete"),
-        };
-        vec![
-            tab_hint,
-            ("Ctrl+K", "columns"),
-            ("Ctrl+Q", "SQL"),
-            ("Ctrl+G", "AI"),
-            ("Ctrl+R", "history"),
-            ("Esc", "vim"),
-            ("Ctrl+C", "quit"),
-        ]
+        match app.query_form().mode() {
+            QueryMode::Simple => vec![
+                ("Alt+\u{2191}\u{2193}", "panes"),
+                ("Tab", "\\t"),
+                ("Ctrl+A", "AI"),
+                ("Ctrl+P", "columns"),
+                ("Ctrl+R", "history"),
+                ("Ctrl+T", "results"),
+                ("Ctrl+Q", "SQL"),
+                ("Esc", "vim"),
+                ("Ctrl+C", "quit"),
+            ],
+            QueryMode::Power => vec![
+                ("Tab", "complete"),
+                ("Ctrl+A", "AI"),
+                ("Ctrl+P", "columns"),
+                ("Ctrl+R", "history"),
+                ("Ctrl+T", "results"),
+                ("Ctrl+Q", "SQL"),
+                ("Esc", "vim"),
+                ("Ctrl+C", "quit"),
+            ],
+        }
     } else {
         hints![
             "hjkl" => "move",
             "i" => "insert",
             "dd/dw" => "delete",
-            "Ctrl+K" => "columns",
+            "Ctrl+P" => "columns",
             "Ctrl+R" => "history",
+            "Ctrl+T" => "results",
             "Ctrl+C" => "quit",
         ]
     }

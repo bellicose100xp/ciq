@@ -45,24 +45,35 @@ polarity, or the on-screen feel. Confirm by hand (light + dark terminal):
 3. **Per-mode badge color.** Confirm Insert is cyan, Normal is yellow, an operator-pending state
    like `d(` is green, and a char-search-pending state like `f` is pink (jiq's per-mode palette).
 4. **Hints follow the open popup.** Open each popup and confirm the box bottom border shows that
-   popup's keys: autocomplete (`Tab accept`, `Up/Down select`, `Esc close`); `Ctrl+K` palette
+   popup's keys: autocomplete (`Tab accept`, `Up/Down select`, `Esc close`); `Ctrl+P` palette
    (`Space toggle`, `Left/Right reorder`, `Enter apply`); `Ctrl+R` history (`Enter recall`);
-   `Ctrl+G` AI (`Enter generate`); `f` facet in the results pane (`Esc close`).
-4a. **Simple-mode bar (no popup) shows `Tab next pane`.** With no popup open and the query bar in
-   Insert mode, the bottom border reads `Tab next pane` (Tab cycles SELECT -> WHERE -> GROUP BY ->
-   ORDER BY -> LIMIT) plus the `Ctrl+Q SQL` toggle and the chord set. Power mode shows `Tab complete`
-   instead (Tab in the textarea opens / accepts an autocomplete suggestion).
-4b. **Cursor only on the focused pane.** In Simple mode, exactly ONE pane shows a reverse-video
-   block cursor — the focused one. Tab/Shift+Tab cycle the cursor; Up/Down move between panes
-   when the popup is closed (Up = previous pane, Down = next pane / out to results from `LIMIT`).
+   `Ctrl+A` AI (`Enter generate`); `f` facet in the results pane (`Esc close`). NOTE on tmux:
+   `Ctrl+A` is sometimes the screen-style tmux prefix; if your tmux config uses it, rebind tmux's
+   prefix or use the mouse to open the AI popup.
+4a. **Simple-mode bar (no popup) shows pane-nav and Tab=\t.** With no popup open and the query bar
+   in Insert mode, the bottom border reads `Alt+↑↓ panes` followed by `Tab \t`, `Ctrl+A AI`,
+   `Ctrl+P columns`, `Ctrl+R history`, `Ctrl+T results`, `Ctrl+Q SQL`, `Esc vim`, `Ctrl+C quit`.
+   Power mode shows `Tab complete` instead (Tab in the textarea opens / accepts an autocomplete
+   suggestion).
+4b. **Cursor only on the focused pane + Alt-nav is bounded.** In Simple mode, exactly ONE pane
+   shows a reverse-video block cursor — the focused one. `Alt+J` / `Alt+Down` move focus forward
+   (SELECT → WHERE → GROUP BY → ORDER BY → LIMIT), BOUNDED — at LIMIT it stays put (no wrap).
+   `Alt+K` / `Alt+Up` move back, bounded at SELECT. Plain Tab no longer cycles panes (it inserts
+   a literal `\t`); plain Up/Down in the bar are no-ops.
 4c. **Popup-aware Up/Down/Tab.** With the autocomplete popup open: Up/Down move the highlighted
-   suggestion (NOT pane focus); Tab and Enter accept the highlight (insert + close); Shift+Tab
-   moves selection back; Esc closes the popup but does NOT flip vim Insert -> Normal. With the
-   popup closed: Tab/Shift+Tab cycle panes; Up/Down move pane focus; Esc flips Insert -> Normal.
-5. **Results-pane hints.** Press Down past the last query line to focus the grid -> the bottom
-   border shows scroll/page/column hints (`Up/Down scroll`, `PgUp/PgDn page`, `Left/Right columns`,
-   `f facet`) and **no** mode badge on the top border (the editor is not the focused surface). Press
-   Up at the top -> focus returns to the bar and the mode badge is back on the top border.
+   suggestion (NOT pane focus); Tab and Enter accept the highlight (insert + close); Esc closes
+   the popup but does NOT flip vim Insert -> Normal. With the popup closed: `Alt+↑↓` (or
+   `Alt+J/K`) move pane focus, bounded; Tab inserts a literal `\t`; plain Up/Down are no-ops;
+   Esc flips Insert -> Normal.
+4d. **Ctrl+T toggles focus.** From the query bar, `Ctrl+T` shifts focus to the results grid (the
+   border styling swaps and the bottom hints change to scroll/page/column). Press `Ctrl+T` again
+   to come back to the query bar with the same Simple pane focused as before. Works in both
+   Simple and Power modes.
+5. **Results-pane hints.** Press `Ctrl+T` from the query bar (or `Down` past the last line in
+   Power mode) to focus the grid -> the bottom border shows scroll/page/column hints
+   (`Up/Down scroll`, `PgUp/PgDn page`, `Left/Right columns`, `f facet`, `Ctrl+T query`,
+   `Ctrl+C quit`) and **no** mode badge on the top border (the editor is not the focused surface).
+   Press `Ctrl+T` again to return.
 6. **Narrow terminal.** Shrink the terminal width; confirm low-priority trailing hints drop whole
    (no clipped mid-word text, no overflow past the box's right corner) while the highest-priority
    hint stays. The mode badge stays as long as the label fits the top border.

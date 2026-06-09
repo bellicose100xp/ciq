@@ -97,7 +97,7 @@ impl App {
         self.ai_tx = Some(request_tx);
     }
 
-    /// Whether the AI feature is wired (a provider channel is installed). The `Ctrl+G` chord and
+    /// Whether the AI feature is wired (a provider channel is installed). The `Ctrl+A` chord and
     /// the popup are no-ops unless this is true.
     pub fn ai_enabled(&self) -> bool {
         self.ai_tx.is_some()

@@ -1,4 +1,4 @@
-//! `App`-shell + end-to-end tests for AI NL->SQL (P5.1): the `Ctrl+G` chord opens the popup, the
+//! `App`-shell + end-to-end tests for AI NL->SQL (P5.1): the `Ctrl+A` chord opens the popup, the
 //! popup's key routing (type / submit / close / quit), a generated SQL reply dropping into the bar
 //! and firing through the **normal** preprocess-validate + dispatch path, the read-only guard
 //! rejecting a DML reply (the model can't smuggle a mutation), the canned SQL validated against a
@@ -40,7 +40,7 @@ fn ai_app() -> (App, std::sync::mpsc::Receiver<AiJob>) {
 fn ctrl_g_opens_the_ai_popup() {
     let (mut app, _ai_rx) = ai_app();
     assert!(!app.is_ai_open());
-    app.on_key(ctrl('g'), 0);
+    app.on_key(ctrl('a'), 0);
     assert!(app.is_ai_open());
     assert_eq!(app.ai().phase(), &AiPhase::Editing);
 }
@@ -49,14 +49,14 @@ fn ctrl_g_opens_the_ai_popup() {
 fn ctrl_g_is_a_no_op_without_a_provider() {
     let (mut app, _rx) = loaded_app(); // no set_ai_channel -> feature unwired
     assert!(!app.ai_enabled());
-    app.on_key(ctrl('g'), 0);
+    app.on_key(ctrl('a'), 0);
     assert!(!app.is_ai_open(), "no provider => the chord does nothing");
 }
 
 #[test]
 fn typing_builds_the_prompt_in_the_popup() {
     let (mut app, _ai_rx) = ai_app();
-    app.on_key(ctrl('g'), 0);
+    app.on_key(ctrl('a'), 0);
     type_str(&mut app, "rows in EU", 0);
     assert_eq!(app.ai().input(), "rows in EU");
     // The query bar is untouched while the AI popup is open (typing fills the popup, not the bar).
@@ -66,7 +66,7 @@ fn typing_builds_the_prompt_in_the_popup() {
 #[test]
 fn esc_closes_the_popup_without_quitting() {
     let (mut app, _ai_rx) = ai_app();
-    app.on_key(ctrl('g'), 0);
+    app.on_key(ctrl('a'), 0);
     let quit = app.on_key(KeyEvent::plain(Key::Esc), 0);
     assert!(!quit, "Esc closes the popup, it does not quit");
     assert!(!app.is_ai_open());
@@ -75,7 +75,7 @@ fn esc_closes_the_popup_without_quitting() {
 #[test]
 fn ctrl_c_quits_from_the_popup() {
     let (mut app, _ai_rx) = ai_app();
-    app.on_key(ctrl('g'), 0);
+    app.on_key(ctrl('a'), 0);
     assert!(app.on_key(ctrl('c'), 0), "Ctrl-C quits even from the popup");
 }
 
@@ -84,7 +84,7 @@ fn ctrl_c_quits_from_the_popup() {
 #[test]
 fn enter_submits_a_schema_grounded_prompt() {
     let (mut app, ai_rx) = ai_app();
-    app.on_key(ctrl('g'), 0);
+    app.on_key(ctrl('a'), 0);
     type_str(&mut app, "count rows by status", 0);
     app.on_key(KeyEvent::plain(Key::Enter), 0);
 
@@ -111,7 +111,7 @@ fn enter_submits_a_schema_grounded_prompt() {
 #[test]
 fn empty_prompt_does_not_submit() {
     let (mut app, ai_rx) = ai_app();
-    app.on_key(ctrl('g'), 0);
+    app.on_key(ctrl('a'), 0);
     app.on_key(KeyEvent::plain(Key::Enter), 0); // empty
     assert_eq!(app.ai().phase(), &AiPhase::Editing);
     assert!(ai_rx.try_recv().is_err(), "no job sent for an empty prompt");
@@ -122,7 +122,7 @@ fn empty_prompt_does_not_submit() {
 #[test]
 fn generated_sql_drops_into_bar_and_dispatches() {
     let (mut app, ai_rx) = ai_app();
-    app.on_key(ctrl('g'), 0);
+    app.on_key(ctrl('a'), 0);
     type_str(&mut app, "everything", 0);
     app.on_key(KeyEvent::plain(Key::Enter), 0);
     let job = ai_rx.try_recv().expect("job sent");
@@ -153,7 +153,7 @@ fn fenced_select_reply_lands_as_runnable_sql() {
     // no-fences rule. Without unwrapping, the leading backtick/`sql` token makes preprocess reject
     // it as "read-only SELECT queries only"; the fence-strip must let the good SELECT through.
     let (mut app, ai_rx) = ai_app();
-    app.on_key(ctrl('g'), 0);
+    app.on_key(ctrl('a'), 0);
     type_str(&mut app, "rows in EU", 0);
     app.on_key(KeyEvent::plain(Key::Enter), 0);
     let job = ai_rx.try_recv().expect("job sent");
@@ -174,7 +174,7 @@ fn fenced_select_reply_lands_as_runnable_sql() {
 #[test]
 fn dml_reply_is_rejected_by_the_read_only_guard() {
     let (mut app, ai_rx) = ai_app();
-    app.on_key(ctrl('g'), 0);
+    app.on_key(ctrl('a'), 0);
     type_str(&mut app, "drop the table", 0);
     app.on_key(KeyEvent::plain(Key::Enter), 0);
     let job = ai_rx.try_recv().expect("job sent");
@@ -204,7 +204,7 @@ fn dml_reply_is_rejected_by_the_read_only_guard() {
 #[test]
 fn multi_statement_reply_is_rejected() {
     let (mut app, ai_rx) = ai_app();
-    app.on_key(ctrl('g'), 0);
+    app.on_key(ctrl('a'), 0);
     type_str(&mut app, "two things", 0);
     app.on_key(KeyEvent::plain(Key::Enter), 0);
     let job = ai_rx.try_recv().unwrap();
@@ -224,7 +224,7 @@ fn multi_statement_reply_is_rejected() {
 #[test]
 fn error_reply_surfaces_in_the_popup() {
     let (mut app, ai_rx) = ai_app();
-    app.on_key(ctrl('g'), 0);
+    app.on_key(ctrl('a'), 0);
     type_str(&mut app, "anything", 0);
     app.on_key(KeyEvent::plain(Key::Enter), 0);
     let job = ai_rx.try_recv().unwrap();
@@ -245,7 +245,7 @@ fn error_reply_surfaces_in_the_popup() {
 #[test]
 fn stale_ai_result_is_discarded() {
     let (mut app, ai_rx) = ai_app();
-    app.on_key(ctrl('g'), 0);
+    app.on_key(ctrl('a'), 0);
     type_str(&mut app, "first", 0);
     app.on_key(KeyEvent::plain(Key::Enter), 0);
     let _first = ai_rx.try_recv().unwrap();
