@@ -29,9 +29,14 @@ pub enum CursorContext {
     FromTable { partial: String },
     /// After `WHERE` / `AND` / `OR` / `HAVING` / `ON`. Expect a column (a predicate LHS).
     Predicate { partial: String },
-    /// After a column in a predicate (`WHERE col `). Expect a comparison operator. `lhs_col` is
-    /// informational (titles the popup); the operator candidates come from the operator table.
-    ComparisonOp { lhs_col: Option<String> },
+    /// After a column in a predicate (`WHERE col `, or extending an operator name like
+    /// `WHERE col li`). Expect a comparison operator. `lhs_col` is informational (titles the popup);
+    /// the operator candidates come from the operator table, fuzzy-filtered by `partial`. Empty
+    /// `partial` at a fresh post-column position offers the full table.
+    ComparisonOp {
+        lhs_col: Option<String>,
+        partial: String,
+    },
     /// Inside a value literal after `col <op>` (`WHERE col = '`, `col IN ('`, `col LIKE '`).
     /// Expect the distinct *values* of `col`. `kind` records which operator triggered it.
     ColumnValue {
@@ -104,6 +109,26 @@ pub fn detect_context(src: &str, tokens: &[Token], cursor: usize) -> CursorConte
     {
         return CursorContext::ComparisonOp {
             lhs_col: lhs_col_text(src, tokens, prev),
+            partial: String::new(),
+        };
+    }
+
+    // `WHERE col li|` — the cursor is extending an alphabetic identifier, and the previous content
+    // token is a complete LHS (column / qualified column / `lower(city)`-style call). The user is
+    // typing the start of an operator name (`LIKE`/`IN`/`IS NULL`/`BETWEEN`/`NOT`); classify as
+    // ComparisonOp with that partial so the operator table is fuzzy-filtered, instead of falling
+    // through to `Predicate` (which would offer columns matching `li`). Non-alphabetic partials
+    // (digit-leading, special chars) keep the existing fall-through.
+    if let Some(idx) = cursor_tok
+        && tokens[idx].kind == TokenKind::Ident
+        && partial.chars().all(|c| c.is_ascii_alphabetic())
+        && !partial.is_empty()
+        && let Some(prev) = prev_content(tokens, idx)
+        && is_predicate_lhs_position(src, tokens, prev)
+    {
+        return CursorContext::ComparisonOp {
+            lhs_col: lhs_col_text(src, tokens, prev),
+            partial,
         };
     }
 

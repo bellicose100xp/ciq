@@ -119,17 +119,20 @@ fn predicate_after_where_and_boolean_connectors() {
 
 #[test]
 fn comparison_op_after_a_predicate_column() {
-    // `WHERE col ` (column then space) -> ComparisonOp with the column as the (informational) lhs.
+    // `WHERE col ` (column then space) -> ComparisonOp with the column as the (informational) lhs
+    // and an empty `partial` (the user is at a fresh operator position).
     assert_eq!(
         ctx("WHERE status "),
         CursorContext::ComparisonOp {
-            lhs_col: Some("status".into())
+            lhs_col: Some("status".into()),
+            partial: String::new(),
         }
     );
     assert_eq!(
         ctx("WHERE a = 1 AND amount "),
         CursorContext::ComparisonOp {
-            lhs_col: Some("amount".into())
+            lhs_col: Some("amount".into()),
+            partial: String::new(),
         }
     );
 }
@@ -498,7 +501,10 @@ fn function_wrapped_lhs_is_comparison_op_position() {
     // operator next; the popup title carries no single column (the LHS is an expression).
     assert_eq!(
         ctx("WHERE lower(city) "),
-        CursorContext::ComparisonOp { lhs_col: None }
+        CursorContext::ComparisonOp {
+            lhs_col: None,
+            partial: String::new(),
+        }
     );
 }
 
@@ -522,7 +528,8 @@ fn qualified_column_comparison_op_strips_qualifier() {
     assert_eq!(
         ctx("WHERE t.created_at "),
         CursorContext::ComparisonOp {
-            lhs_col: Some("created_at".into())
+            lhs_col: Some("created_at".into()),
+            partial: String::new(),
         }
     );
 }
@@ -569,7 +576,40 @@ fn quoted_ident_as_comparison_lhs() {
     assert_eq!(
         ctx("WHERE \"order\" "),
         CursorContext::ComparisonOp {
-            lhs_col: Some("order".into())
+            lhs_col: Some("order".into()),
+            partial: String::new(),
+        }
+    );
+}
+
+// ── partial-after-column-LHS classifies as ComparisonOp (the LIKE-autocomplete bug) ────────────
+
+#[test]
+fn partial_after_predicate_column_is_comparison_op() {
+    // `WHERE col l` — cursor is extending an alphabetic ident immediately after a complete column
+    // LHS. Classify as ComparisonOp{partial} so the operator table can be filtered (LIKE survives).
+    // This is the user-reported regression (popup emptied when they typed `l`).
+    assert_eq!(
+        ctx("WHERE status l"),
+        CursorContext::ComparisonOp {
+            lhs_col: Some("status".into()),
+            partial: "l".into(),
+        }
+    );
+    assert_eq!(
+        ctx("WHERE status li"),
+        CursorContext::ComparisonOp {
+            lhs_col: Some("status".into()),
+            partial: "li".into(),
+        }
+    );
+    // Function-call LHS ending in `)` also qualifies — the popup loses its `lhs_col` title (the
+    // expression has no single column) but still filters the operator table by the partial.
+    assert_eq!(
+        ctx("WHERE lower(city) l"),
+        CursorContext::ComparisonOp {
+            lhs_col: None,
+            partial: "l".into(),
         }
     );
 }
@@ -739,9 +779,8 @@ proptest::proptest! {
                 | CursorContext::Predicate { partial }
                 | CursorContext::ColumnValue { partial, .. }
                 | CursorContext::GroupOrderList { partial }
-                | CursorContext::Keyword { partial } => partial,
-                // ComparisonOp carries no partial (operator position); skip.
-                CursorContext::ComparisonOp { .. } => continue,
+                | CursorContext::Keyword { partial }
+                | CursorContext::ComparisonOp { partial, .. } => partial,
             };
             proptest::prop_assert_eq!(got, expected, "partial mismatch at cursor {}", cursor);
         }

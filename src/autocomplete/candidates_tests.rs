@@ -169,6 +169,52 @@ fn comparison_op_offers_the_operator_table() {
     );
 }
 
+#[test]
+fn comparison_op_filters_operators_by_partial_l_keeps_like() {
+    // The user's exact bug repro: `WHERE col l|` keeps the operator popup OPEN with operators
+    // matching `l` (only `LIKE` from the table, since other operators don't start with `l`/`L`).
+    let s = suggest("SELECT * FROM t WHERE status l");
+    let t = texts(&s);
+    assert!(
+        t.contains(&"LIKE"),
+        "popup must keep LIKE when partial is `l`: {t:?}"
+    );
+    assert!(
+        s.iter()
+            .all(|x| x.suggestion_type == SuggestionType::Operator),
+        "filtered list must still be operators only: {t:?}"
+    );
+}
+
+#[test]
+fn comparison_op_filters_operators_by_partial_b_keeps_between() {
+    // Same shape with `b` -> `BETWEEN`.
+    let s = suggest("SELECT * FROM t WHERE status b");
+    let t = texts(&s);
+    assert!(t.contains(&"BETWEEN"), "expected BETWEEN in {t:?}");
+    assert!(
+        s.iter()
+            .all(|x| x.suggestion_type == SuggestionType::Operator)
+    );
+}
+
+#[test]
+fn comparison_op_filters_operators_by_partial_i_keeps_in_and_is_variants() {
+    // `i` matches `IN`, `IS NULL`, `IS NOT NULL` — all three should survive the filter.
+    let s = suggest("SELECT * FROM t WHERE status i");
+    let t = texts(&s);
+    assert!(t.contains(&"IN"), "expected IN in {t:?}");
+    assert!(t.contains(&"IS NULL"), "expected IS NULL in {t:?}");
+    assert!(t.contains(&"IS NOT NULL"), "expected IS NOT NULL in {t:?}");
+}
+
+#[test]
+fn comparison_op_filters_case_insensitively_uppercase_partial() {
+    // The fuzzy ranker is case-insensitive (`L` matches `LIKE` just like `l` does).
+    let s = suggest("SELECT * FROM t WHERE status L");
+    assert!(texts(&s).contains(&"LIKE"));
+}
+
 // ── §5.4 row: ColumnValue ───────────────────────────────────────────────────────────────────────
 
 #[test]

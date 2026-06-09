@@ -79,9 +79,13 @@ fn gather_for_context(
             let out = column_suggestions(schema);
             rank_and_cap(out, partial)
         }
-        // The static operator table. No partial to filter on (the cursor is at a fresh operator
-        // position after `col `), so the full table is offered in canonical order.
-        CursorContext::ComparisonOp { .. } => operator_suggestions(operators),
+        // The static operator table. Empty `partial` (the cursor is at a fresh operator position
+        // after `col `) offers the full table in canonical order; a non-empty partial (the user
+        // started typing an operator name like `l` for LIKE) filters the table case-insensitively
+        // through the same fuzzy ranker the column/keyword branches use.
+        CursorContext::ComparisonOp { partial, .. } => {
+            rank_and_cap(operator_suggestions(operators), partial)
+        }
         // Distinct values of the column, from the cache, fuzzy-filtered by the partial. A cache miss
         // yields an empty list (the worker fills it for the next keystroke — P3.7). The detected
         // column keeps the user's casing; resolve it to the canonical header spelling (DuckDB is

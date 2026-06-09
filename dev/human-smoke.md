@@ -146,6 +146,10 @@ polarity. Confirm by hand:
 6. **Value completion (P3.7).** Type `SELECT * FROM t WHERE status = '`. After a beat the popup
    shows the *distinct actual values* of `status` (fetched through the worker). Type a letter to
    filter; accept one and confirm it inserts as a single-quoted literal, e.g. `'active'`.
+6a. **Operator filtering.** In the WHERE pane type `status ` (column then space) — popup shows the
+   operator table (`=`, `!=`, `<`, …, `LIKE`, `IN`, `BETWEEN`, `IS NULL`, `IS NOT NULL`). Continue
+   typing `l` — popup STAYS OPEN and filters to operators starting with `L` (just `LIKE`). Same for
+   `b` → `BETWEEN`, `i` → `IN` / `IS NULL` / `IS NOT NULL`. Case-insensitive (`L` works too).
 7. **Placement / overflow.** Resize the window narrow and tall, and short and wide, while a popup is
    open. Confirm the popup stays anchored just above the bottom query bar, grows upward without
    overflowing the top of the pane, and does not corrupt the grid behind it.
