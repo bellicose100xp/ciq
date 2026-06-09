@@ -176,6 +176,16 @@ src/history/history_state.rs
 src/app/query_form/composer.rs
 src/app/query_form/simplifier.rs
 
+# Post-5 UX redesign (Stage 1 foundation): the per-pane Simple-mode autocomplete adapter. Pure
+# data-in/data-out — given (pane, pane_text, cursor, &Schema, &OperatorTable, &ValueCache) it
+# synthesizes the governing clause prefix, classifies the cursor context, and merges the
+# ranked column candidates with the ASC/DESC tail (filtered by the active partial). Every
+# Simple-mode keystroke flows through this adapter (the App's `autocomplete_app::refresh_simple_mode`
+# calls `pane_suggestions` and the value-fetch path calls `pane_context`); a wrong synthesized
+# prefix, a wrong cursor offset, or a wrong slot detection silently corrupts every Simple-mode
+# suggestion — the same failure mode that earned `clause_context.rs` its hard floor.
+src/autocomplete/pane_context.rs
+
 # config.rs itself (the top-level loader) is a thin serde-parse-to-default + filesystem/env seam
 # (load_config / config_path read $HOME) — its pure half (load_config_str) is covered by
 # config_tests, but the floor lives on the pure section modules above (same judgment as csv_config).
