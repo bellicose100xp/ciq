@@ -4,7 +4,9 @@
 use proptest::prelude::*;
 
 use crate::engine::{Cell, Column, Table};
-use crate::grid::grid_layout::{Align, GridView, layout_grid};
+use crate::grid::grid_layout::{
+    Align, GridView, columns_dropped_at, layout_grid, prefix_left_edge,
+};
 use crate::schema::ColumnType;
 
 fn sample_table() -> Table {
@@ -165,6 +167,67 @@ fn h_col_offset_past_end_yields_empty_visible() {
     assert!(frame.body.iter().all(|l| l.is_empty()));
 }
 
+// --- char-grain horizontal slide (trackpad axis) ---
+
+#[test]
+fn h_char_offset_zero_yields_zero_body_scroll() {
+    let t = sample_table();
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    // No char slide; the body scroll is 0.
+    assert_eq!(frame.body_scroll_chars, 0);
+}
+
+#[test]
+fn h_char_offset_within_first_column_slides_paragraph() {
+    let t = sample_table();
+    let mut view = GridView::new(80, 24);
+    view.h_char_offset = 4;
+    // Still inside col 0 (first col is at least 4 chars wide); h_col_offset stays 0 by design.
+    let frame = layout_grid(&t, &view);
+    assert_eq!(
+        frame.body_scroll_chars, 4,
+        "char slide rides INSIDE the leftmost visible column"
+    );
+}
+
+#[test]
+fn h_char_offset_with_h_col_offset_subtracts_dropped_left_edge() {
+    let t = sample_table();
+    let mut view = GridView::new(80, 24);
+    // Drop col 0 (h_col_offset = 1). Col 0's left-edge-after = width(8 chars) + gutter(2) = 10.
+    // A user with `h_char_offset = 12` has slid the trackpad 2 chars INTO col 1.
+    view.h_col_offset = 1;
+    view.h_char_offset = 12;
+    let frame = layout_grid(&t, &view);
+    assert_eq!(
+        frame.body_scroll_chars, 2,
+        "12 chars slid - 10 chars dropped = 2 chars into col 1"
+    );
+}
+
+#[test]
+fn prefix_left_edge_includes_trailing_gutter() {
+    // Empty -> 0; one column -> w + gutter; two columns -> w0 + gutter + w1 + gutter.
+    assert_eq!(prefix_left_edge(&[]), 0);
+    assert_eq!(prefix_left_edge(&[3]), 5);
+    assert_eq!(prefix_left_edge(&[3, 7]), 14);
+}
+
+#[test]
+fn columns_dropped_at_returns_largest_fully_off_column_count() {
+    let widths = [3u16, 7, 5];
+    // 0 chars: nothing dropped.
+    assert_eq!(columns_dropped_at(&widths, 0), 0);
+    // 4 chars: still inside col 0 (col 1 starts at 5); 0 dropped.
+    assert_eq!(columns_dropped_at(&widths, 4), 0);
+    // 5 chars: col 1 starts here; col 0 fully off-screen.
+    assert_eq!(columns_dropped_at(&widths, 5), 1);
+    // 14 chars: cols 0 + 1 fully off.
+    assert_eq!(columns_dropped_at(&widths, 14), 2);
+    // Past the end: all dropped.
+    assert_eq!(columns_dropped_at(&widths, 999), 3);
+}
+
 #[test]
 fn narrow_viewport_shows_at_least_one_column() {
     let t = sample_table();
@@ -262,7 +325,13 @@ proptest! {
         hoff in 0usize..10,
         voff in 0usize..10,
     ) {
-        let view = GridView { width: w, height: h, h_col_offset: hoff, v_row_offset: voff };
+        let view = GridView {
+            width: w,
+            height: h,
+            h_col_offset: hoff,
+            h_char_offset: 0,
+            v_row_offset: voff,
+        };
         let _ = layout_grid(&t, &view);
     }
 }

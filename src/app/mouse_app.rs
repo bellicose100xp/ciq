@@ -15,6 +15,12 @@ impl App {
     /// How many grid rows a single mouse-wheel notch scrolls (jiq's `RESULTS_SCROLL_LINES`).
     const WHEEL_ROWS: usize = 3;
 
+    /// How many characters one trackpad horizontal-swipe notch slides the grid. Matches
+    /// [`WHEEL_ROWS`](Self::WHEEL_ROWS)' grain on the vertical axis, so left/right and up/down
+    /// felt scroll rates are consistent. Char-granular (not column-granular) so the trackpad
+    /// glides across columns of varying widths without jerk.
+    const CHAR_SCROLL_STEP: u16 = 3;
+
     /// Route one mouse event to the surface under the pointer (`dev/PLAN.md` §3.1; ported from jiq's
     /// `app/mouse_events.rs`). The event loop translates a real `crossterm::event::MouseEvent` into
     /// the neutral [`MouseEvent`](crate::app::MouseEvent) and calls this; tests drive it directly
@@ -70,9 +76,14 @@ impl App {
         }
     }
 
-    /// Horizontal trackpad swipe: column-granular grid h-scroll when over the results pane (or
-    /// outside any surface). `left` moves the viewport toward earlier columns. A swipe over a popup
-    /// or the query bar is a no-op (those have no horizontal scroll axis ciq exposes).
+    /// Horizontal trackpad swipe: smooth char-granular grid h-scroll when over the results pane
+    /// (or outside any surface). `left` moves the viewport toward earlier columns. A swipe over
+    /// a popup or the query bar is a no-op (those have no horizontal scroll axis ciq exposes).
+    ///
+    /// Each notch slides by [`CHAR_SCROLL_STEP`](Self::CHAR_SCROLL_STEP) chars (the same grain as
+    /// the grid's wheel-rows-per-tick on the vertical axis), letting the user trackpad past wide
+    /// columns smoothly. The slide updates `h_char_offset` (the render axis) and recomputes
+    /// `h_col_offset` so keyboard ←/→ still lands on whole-column boundaries.
     fn mouse_scroll_horizontal(&mut self, target: Option<MouseTarget>, left: bool) {
         if matches!(
             target,
@@ -80,11 +91,9 @@ impl App {
         ) {
             return;
         }
-        if left {
-            self.h_col_offset = self.h_col_offset.saturating_sub(1);
-        } else {
-            self.scroll_right();
-        }
+        let delta = i32::from(Self::CHAR_SCROLL_STEP);
+        let signed_delta = if left { -delta } else { delta };
+        self.slide_h_chars(signed_delta);
     }
 
     /// A left click/drag: focus + position by the resolved target.

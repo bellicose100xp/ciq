@@ -97,17 +97,133 @@ fn scroll_down_clamps_at_last_row() {
 }
 
 #[test]
-fn horizontal_swipe_over_results_scrolls_columns() {
-    let mut app = app_with_result_on_bar(5); // 2 columns -> h max 1
+fn horizontal_swipe_over_a_narrow_grid_clamps_to_zero() {
+    // Two narrow columns ("id (int)"=8 + gutter 2 + "name (txt)"=10 = 20 chars total) easily
+    // fit the 80-char viewport, so the right-edge cap (`total - viewport/2`) saturates at 0 —
+    // there is nothing to scroll. The trackpad cannot drag the user into empty space.
+    let mut app = app_with_result_on_bar(5);
     render_and_record(&app);
     app.on_mouse(MouseEvent::ScrollRight { col: 5, row: 5 });
-    assert_eq!(app.h_col_offset(), 1);
-    app.on_mouse(MouseEvent::ScrollRight { col: 5, row: 5 });
-    assert_eq!(app.h_col_offset(), 1, "clamps at last column");
-    app.on_mouse(MouseEvent::ScrollLeft { col: 5, row: 5 });
+    assert_eq!(app.h_char_offset(), 0, "right-cap pins narrow grid at 0");
     assert_eq!(app.h_col_offset(), 0);
     app.on_mouse(MouseEvent::ScrollLeft { col: 5, row: 5 });
-    assert_eq!(app.h_col_offset(), 0, "clamps at 0");
+    assert_eq!(app.h_char_offset(), 0, "clamps at 0 going left");
+    assert_eq!(app.h_col_offset(), 0);
+}
+
+/// A loaded App with a wide enough result for the trackpad to actually slide. Eight columns
+/// (header label "col_NN (int)" ≈ 13 chars each, sample cells fit) gives a total grid width
+/// well past the 80-col viewport, so the right-edge cap leaves room for several notches.
+fn app_with_wide_result_on_bar() -> App {
+    use crate::engine::{Cell, Column, Table};
+    use crate::query::worker::types::ProcessedResult;
+    use crate::schema::ColumnType;
+
+    let (mut app, _rx) = loaded_app();
+    type_query(&mut app, "SELECT * FROM t");
+    app.tick(150);
+    let id = app.latest_request_id();
+    let cols: Vec<Column> = (0..8)
+        .map(|i| {
+            let cells: Vec<Cell> = (0..3).map(|r| Cell::Int((i * 100 + r) as i64)).collect();
+            Column::new(format!("col_{i:02}"), ColumnType::Int, cells)
+        })
+        .collect();
+    let table = Table::new(cols);
+    let schema = table.schema();
+    let result = ProcessedResult::new(table, schema, 0);
+    app.on_response(QueryResponse::ProcessedSuccess {
+        result,
+        request_id: id,
+        kind: RequestKind::Main,
+    });
+    app
+}
+
+#[test]
+fn trackpad_swipe_right_advances_h_char_offset_smoothly() {
+    let mut app = app_with_wide_result_on_bar();
+    render_and_record(&app);
+    let before_chars = app.h_char_offset();
+    let before_col = app.h_col_offset();
+    app.on_mouse(MouseEvent::ScrollRight { col: 5, row: 5 });
+    let after_chars = app.h_char_offset();
+    // One notch = CHAR_SCROLL_STEP (3) chars of slide; the first column is wider than 3, so
+    // h_col_offset stays put — the trackpad slid INSIDE the leftmost visible column.
+    assert_eq!(
+        after_chars,
+        before_chars.saturating_add(3),
+        "one notch slides 3 chars"
+    );
+    assert_eq!(
+        app.h_col_offset(),
+        before_col,
+        "still inside the leftmost column"
+    );
+}
+
+#[test]
+fn trackpad_swipe_eventually_drops_a_column() {
+    let mut app = app_with_wide_result_on_bar();
+    render_and_record(&app);
+    // Swipe right enough notches to cross the first column's full width plus the gutter so
+    // h_col_offset bumps from 0 to 1. Each notch slides 3 chars; after enough notches the
+    // first column (≈13 + 2 = 15 char left-edge for col 1) is fully off-screen.
+    for _ in 0..6 {
+        app.on_mouse(MouseEvent::ScrollRight { col: 5, row: 5 });
+    }
+    assert!(
+        app.h_col_offset() >= 1,
+        "after enough notches h_col_offset advances to drop col 0; got {}",
+        app.h_col_offset()
+    );
+    // h_char_offset is still synced with how many chars have been slid.
+    assert_eq!(app.h_char_offset(), 18, "6 notches × 3 chars = 18");
+}
+
+#[test]
+fn trackpad_swipe_left_clamps_at_zero() {
+    let mut app = app_with_wide_result_on_bar();
+    render_and_record(&app);
+    app.on_mouse(MouseEvent::ScrollLeft { col: 5, row: 5 });
+    assert_eq!(app.h_char_offset(), 0);
+    assert_eq!(app.h_col_offset(), 0);
+}
+
+#[test]
+fn keyboard_left_after_partial_trackpad_slide_snaps_to_a_column_boundary() {
+    let mut app = app_with_wide_result_on_bar();
+    render_and_record(&app);
+    // Slide partially into col 0 (3 chars).
+    app.on_mouse(MouseEvent::ScrollRight { col: 5, row: 5 });
+    assert_eq!(app.h_char_offset(), 3);
+    assert_eq!(app.h_col_offset(), 0);
+    // Move focus into the results pane so the keyboard ←/→ handler fires.
+    app.on_key(
+        KeyEvent::new(Key::Char('t'), super::super::KeyMods::CTRL),
+        0,
+    ); // Ctrl+T -> Results
+    app.on_key(KeyEvent::plain(Key::Left), 0);
+    // Left from col 0 stays at col 0; h_char_offset snaps back to the column's left edge (0).
+    assert_eq!(app.h_char_offset(), 0, "snapped back to col 0 left edge");
+    assert_eq!(app.h_col_offset(), 0);
+}
+
+#[test]
+fn keyboard_right_after_no_slide_advances_one_full_column() {
+    let mut app = app_with_wide_result_on_bar();
+    render_and_record(&app);
+    app.on_key(
+        KeyEvent::new(Key::Char('t'), super::super::KeyMods::CTRL),
+        0,
+    ); // focus Results
+    app.on_key(KeyEvent::plain(Key::Right), 0);
+    // h_col_offset advanced to 1; h_char_offset snapped to col 1's left edge.
+    assert_eq!(app.h_col_offset(), 1);
+    assert!(
+        app.h_char_offset() > 0,
+        "h_char_offset is the cumulative left-edge of col 1, not 0"
+    );
 }
 
 // --- click to focus / position ---

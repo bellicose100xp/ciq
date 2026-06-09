@@ -478,6 +478,7 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
             width: inner.width,
             height: inner.height,
             h_col_offset: app.h_col_offset(),
+            h_char_offset: app.h_char_offset(),
             v_row_offset: app.v_row_offset(),
         };
         let grid = layout_grid(&result.rows, &view);

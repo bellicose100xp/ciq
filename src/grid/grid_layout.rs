@@ -53,16 +53,27 @@ impl Align {
 ///
 /// `width`/`height` are the inner viewport in terminal cells (the blit subtracts the sticky
 /// header row from `height` before slicing the body; `layout_grid` itself doesn't slice rows —
-/// the caller passes the already-chosen page). `h_col_offset` is the **column-granular**
-/// horizontal scroll: that many leading columns are dropped from the left edge.
+/// the caller passes the already-chosen page).
+///
+/// **Two horizontal-scroll variables, by design:** `h_col_offset` is column-granular (the
+/// keyboard ←/→ axis — predictable, snaps to whole columns); `h_char_offset` is the absolute
+/// char-grain slide of the grid (the trackpad axis — smooth). The renderer uses
+/// `h_char_offset`; the App keeps both consistent so keyboard nav lands on column boundaries
+/// even after a partial trackpad swipe (`h_char_offset = prefix_width(0..h_col_offset)`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct GridView {
     /// Inner viewport width in terminal cells.
     pub width: u16,
     /// Inner viewport height in terminal cells (rows, header included).
     pub height: u16,
-    /// Number of leading columns scrolled off the left edge (column-granular h-scroll).
+    /// Number of leading columns scrolled off the left edge (column-granular h-scroll;
+    /// drives which columns layout_grid emits).
     pub h_col_offset: usize,
+    /// Absolute char-grain horizontal slide of the grid (trackpad axis). The render layer
+    /// applies `h_char_offset - prefix_width(0..h_col_offset)` chars of `Paragraph::scroll`
+    /// to BOTH the header and the body so they slide in lockstep within the leftmost
+    /// visible column.
+    pub h_char_offset: u16,
     /// Number of leading rows scrolled off the top (recorded for the caller's slice math;
     /// `layout_grid` lays out exactly the rows it is given).
     pub v_row_offset: usize,
@@ -74,6 +85,7 @@ impl GridView {
             width,
             height,
             h_col_offset: 0,
+            h_char_offset: 0,
             v_row_offset: 0,
         }
     }
@@ -124,6 +136,12 @@ pub struct GridFrame {
     pub aligns: Vec<Align>,
     /// Total rendered width (sum of visible widths + gutters) — feeds h-scroll bounds.
     pub total_width: u16,
+    /// Horizontal char-grain slide to apply to header + body Paragraphs (`Paragraph::scroll`).
+    /// This is the residue of `view.h_char_offset` *within* the leftmost visible column —
+    /// i.e. `view.h_char_offset - prefix_width(0..view.h_col_offset)`, clamped to fit the
+    /// leftmost visible column's width. Always 0 when h_char_offset matches the column
+    /// boundary at h_col_offset (the keyboard-snapped state).
+    pub body_scroll_chars: u16,
 }
 
 /// Alias for [`GridFrame`] (`dev/DECISIONS.md` S6). Canonical name is `GridFrame`.
@@ -215,6 +233,14 @@ pub fn layout_grid(table: &Table, view: &GridView) -> GridFrame {
         })
         .collect();
 
+    // Body scroll chars: how far INTO the leftmost visible column the user has trackpad-slid.
+    // Subtract the cumulative left-edge X of the leftmost visible column from `h_char_offset`.
+    // The App is responsible for keeping `h_col_offset` and `h_char_offset` consistent (every
+    // mouse-wheel notch recomputes h_col_offset via `columns_dropped_at`), so the residue always
+    // sits within the leftmost visible column's width. Clamp at 0 only as a safety floor.
+    let leftmost_x = prefix_left_edge(&all_widths[..start]);
+    let body_scroll_chars = view.h_char_offset.saturating_sub(leftmost_x);
+
     GridFrame {
         header,
         body,
@@ -222,7 +248,37 @@ pub fn layout_grid(table: &Table, view: &GridView) -> GridFrame {
         widths,
         aligns,
         total_width,
+        body_scroll_chars,
     }
+}
+
+/// Cumulative left-edge X (in chars) of the column at index `widths.len()` — i.e. the
+/// horizontal position where the *next* column would start, including the trailing gutter
+/// after the last column in the slice. `prefix_left_edge(&[])` is 0; `prefix_left_edge(&[w])`
+/// is `w + COL_GAP_WIDTH`; `prefix_left_edge(&[a, b])` is `a + COL_GAP_WIDTH + b + COL_GAP_WIDTH`.
+/// Pure; the App and the layout share this for char-vs-column conversion: when h_col_offset is
+/// `start`, the leftmost visible column begins at x = prefix_left_edge(&widths[..start]).
+pub fn prefix_left_edge(widths: &[u16]) -> u16 {
+    let mut sum: u16 = 0;
+    for w in widths {
+        sum = sum.saturating_add(*w).saturating_add(COL_GAP_WIDTH);
+    }
+    sum
+}
+
+/// The largest `k` such that the column at index `k` is fully scrolled off the left edge given
+/// `chars` of total horizontal slide — i.e. the start of column `k+1` (= `prefix_left_edge(0..=k)`)
+/// is `<= chars`. Used by the mouse handler to recompute the column-granular `h_col_offset`
+/// after a trackpad swipe slid `h_char_offset` past one or more whole columns. Pure.
+pub fn columns_dropped_at(widths: &[u16], chars: u16) -> usize {
+    let mut sum: u16 = 0;
+    for (k, w) in widths.iter().enumerate() {
+        sum = sum.saturating_add(*w).saturating_add(COL_GAP_WIDTH);
+        if sum > chars {
+            return k;
+        }
+    }
+    widths.len()
 }
 
 /// Truncate a plain header string to `width` chars with the same ellipsis rule as cells.

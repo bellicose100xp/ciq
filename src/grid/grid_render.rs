@@ -45,10 +45,15 @@ pub fn render_grid(f: &mut Frame, area: Rect, grid: &GridFrame, v_row_offset: us
     };
 
     let header_area = Rect { height: 1, ..area };
+    // Both header and body slide horizontally by `grid.body_scroll_chars` (char-grain) so they
+    // stay in lockstep — the trackpad smooth scroll. ratatui's `Paragraph::scroll((rows, cols))`
+    // is exactly the right primitive: cols is char-offset into the laid-out line.
+    let h = grid.body_scroll_chars;
     let header = Paragraph::new(Line::from(Span::styled(
         grid.header.clone(),
         theme::grid::header().add_modifier(extra),
-    )));
+    )))
+    .scroll((0, h));
     f.render_widget(header, header_area);
 
     let body_height = body_viewport_height(area.height);
@@ -71,7 +76,7 @@ pub fn render_grid(f: &mut Frame, area: Rect, grid: &GridFrame, v_row_offset: us
         .iter()
         .map(|row| style_body_line(row, extra))
         .collect();
-    f.render_widget(Paragraph::new(lines), body_area);
+    f.render_widget(Paragraph::new(lines).scroll((0, h)), body_area);
 }
 
 /// Style one body line: dim the byte ranges `layout_grid` flagged as genuine SQL nulls so a

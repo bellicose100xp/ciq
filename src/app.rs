@@ -150,8 +150,16 @@ pub struct App {
     result_is_stale: bool,
     /// Vertical row scroll offset into the result body.
     v_row_offset: usize,
-    /// Horizontal column scroll offset (column-granular).
+    /// Horizontal column scroll offset (column-granular). Driven by keyboard ←/→ — predictable,
+    /// always lands on a column boundary. Kept consistent with `h_char_offset` after every
+    /// mouse-wheel notch (`columns_dropped_at` recomputes this from the char offset) and after
+    /// every keyboard ←/→ (which then snaps `h_char_offset` to this column's left edge).
     h_col_offset: usize,
+    /// Absolute char-grain horizontal slide of the grid (trackpad axis). The render layer uses
+    /// only this; trackpad horizontal swipes increment it by `CHAR_SCROLL_STEP` chars per notch
+    /// for smooth char-by-char movement, while keyboard ←/→ keeps `h_col_offset` and
+    /// `h_char_offset` snapped together at column boundaries.
+    h_char_offset: u16,
     /// The status-line text shown at the bottom.
     status: String,
     /// Whether the user edited the query while still `Loading`, so we must fire once `Ready`.
@@ -238,6 +246,7 @@ impl App {
             result_is_stale: false,
             v_row_offset: 0,
             h_col_offset: 0,
+            h_char_offset: 0,
             status: "loading CSV…".to_string(),
             pending_query_on_ready: false,
             schema: None,
@@ -372,6 +381,12 @@ impl App {
 
     pub fn h_col_offset(&self) -> usize {
         self.h_col_offset
+    }
+
+    /// Char-grain horizontal slide of the grid (trackpad axis). Header + body Paragraphs apply
+    /// this much `Paragraph::scroll` to stay in lockstep within the leftmost visible column.
+    pub fn h_char_offset(&self) -> u16 {
+        self.h_char_offset
     }
 
     /// The most recently issued query's `request_id` (0 before any dispatch).
@@ -715,7 +730,10 @@ impl App {
             Key::Down => self.scroll_down(1),
             Key::PageUp => self.v_row_offset = self.v_row_offset.saturating_sub(10),
             Key::PageDown => self.scroll_down(10),
-            Key::Left => self.h_col_offset = self.h_col_offset.saturating_sub(1),
+            Key::Left => {
+                self.h_col_offset = self.h_col_offset.saturating_sub(1);
+                self.snap_h_char_to_col();
+            }
             Key::Right => self.scroll_right(),
             Key::Home => self.v_row_offset = 0,
             _ => {}
@@ -740,6 +758,60 @@ impl App {
             .unwrap_or(0);
         let max = col_count.saturating_sub(1);
         self.h_col_offset = (self.h_col_offset + 1).min(max);
+        self.snap_h_char_to_col();
+    }
+
+    /// Snap `h_char_offset` to the left edge of the column at `h_col_offset` so keyboard ←/→
+    /// always lands cleanly on a column boundary (no half-shown leftmost column after a partial
+    /// trackpad slide). Pure App-side computation: ask the laid-out widths for the prefix edge.
+    /// No-op when there is no result (no widths to compute against).
+    fn snap_h_char_to_col(&mut self) {
+        let Some(result) = self.result.as_ref() else {
+            self.h_char_offset = 0;
+            return;
+        };
+        let inner_w = self.results_inner_width();
+        let widths = crate::grid::col_width::compute_widths(&result.rows, inner_w);
+        let take = self.h_col_offset.min(widths.len());
+        self.h_char_offset = crate::grid::grid_layout::prefix_left_edge(&widths[..take]);
+    }
+
+    /// Slide the grid horizontally by `delta` chars (positive right, negative left), then
+    /// recompute `h_col_offset` so keyboard nav still lands on a column boundary. Used by the
+    /// trackpad horizontal-swipe handler. Bounds: never < 0 chars; never past
+    /// `total_grid_width.saturating_sub(viewport_width / 2)` (keep at least half a viewport of
+    /// content visible at the right edge so the user can not scroll into the void).
+    pub(crate) fn slide_h_chars(&mut self, delta: i32) {
+        let Some(result) = self.result.as_ref() else {
+            return;
+        };
+        let inner_w = self.results_inner_width();
+        let widths = crate::grid::col_width::compute_widths(&result.rows, inner_w);
+        // Total rendered grid width: cumulative left edge after the LAST column with the trailing
+        // gutter subtracted (no gutter follows the rightmost column).
+        let total: u16 = crate::grid::grid_layout::prefix_left_edge(&widths).saturating_sub(2);
+        // Right-edge cap: keep at least half the viewport visible.
+        let right_cap = total.saturating_sub(inner_w / 2);
+        let new_chars = i32::from(self.h_char_offset).saturating_add(delta);
+        let clamped: u16 = new_chars.max(0).min(i32::from(right_cap)) as u16;
+        self.h_char_offset = clamped;
+        self.h_col_offset = crate::grid::grid_layout::columns_dropped_at(&widths, clamped);
+    }
+
+    /// Inner viewport width of the results pane (border-stripped), floored at MIN_COL_WIDTH so
+    /// `compute_widths` always has a non-zero budget. Reads the recorded layout region — the
+    /// last frame's results-pane Rect — so the trackpad handler uses the same width the
+    /// renderer just laid out against.
+    fn results_inner_width(&self) -> u16 {
+        let view_width = self
+            .layout_regions
+            .get()
+            .results_pane
+            .map(|r| r.width)
+            .unwrap_or(0);
+        view_width
+            .saturating_sub(2)
+            .max(crate::grid::col_width::MIN_COL_WIDTH)
     }
 
     // The mouse-routing impl block (on_mouse / scroll / click / popup) lives in
@@ -865,6 +937,7 @@ impl App {
         self.result_is_stale = false;
         self.v_row_offset = 0;
         self.h_col_offset = 0;
+        self.h_char_offset = 0;
     }
 
     // --- response handling (stale-discard + state update) ---

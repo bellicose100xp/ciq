@@ -381,9 +381,12 @@ CSV large enough that the result scrolls, with several columns):
 1. **Wheel scroll over the results pane.** Run a query so the grid has many rows. Roll the mouse
    wheel up/down with the pointer over the grid. Confirm the grid body scrolls (a few rows per
    notch), clamped at the top and the last row — the same motion as keyboard PgUp/PgDn.
-2. **Horizontal swipe.** With a wide result (more columns than fit), two-finger swipe left/right on
-   a trackpad. Confirm the visible columns scroll one column per swipe (column-granular, like
-   keyboard Left/Right), clamped at the first/last column.
+2. **Horizontal swipe (smooth, char-granular).** With a wide result (more columns than fit),
+   two-finger swipe left/right on a trackpad. Confirm the grid slides smoothly char-by-char
+   (≈3 chars per notch), so wide columns don't cause a jerky jump — the header and body slide in
+   lockstep. Keyboard `Left`/`Right` still jumps a whole column at a time and snaps the slide back
+   to the column's left edge. Clamps at 0 on the left and at a sensible right-edge cap (keeps half
+   the viewport of content visible).
 3. **Click to focus the results pane.** With focus in the query bar, click anywhere in the grid
    body. Confirm focus moves to the results pane (subsequent keyboard scroll/`f`-facet apply to the
    grid). Clicking the pane with no result yet is a no-op (stays on the bar).
