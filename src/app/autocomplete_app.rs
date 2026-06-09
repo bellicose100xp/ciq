@@ -48,8 +48,8 @@ impl App {
     /// Power-mode refresh: the editor's text + cursor go through the single-buffer pipeline. Issues
     /// a value-fetch when the cursor is in a `ColumnValue` position for an uncached column.
     fn refresh_power_mode(&mut self) -> Vec<crate::autocomplete::autocomplete_state::Suggestion> {
-        let query = self.editor.text();
-        let cursor = self.editor.cursor_byte();
+        let query = self.query_form.power().text();
+        let cursor = self.query_form.power().cursor_byte();
         // Resolve the value-fetch column under an immutable borrow of `schema`, then drop the
         // borrow before issuing the dispatch (which borrows `self` mutably) — splitting the borrows
         // keeps the same single source of `schema` without a clone.

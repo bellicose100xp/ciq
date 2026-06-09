@@ -23,7 +23,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use crate::ai::ai_render::render_ai;
 use crate::app::help_line;
 use crate::app::layout_regions::{LayoutRegions, PopupKind};
-use crate::app::{App, AppPhase, Focus};
+use crate::app::{App, AppPhase, Focus, QueryMode, SimplePane};
 use crate::autocomplete::autocomplete_render::{MAX_VISIBLE_ROWS, render_popup};
 use crate::facets::facet_render::render_facet;
 use crate::grid::{GridView, grid_render, layout_grid};
@@ -44,10 +44,14 @@ const FACET_POPUP_ROWS: u16 = 12;
 /// out the results pane. The box itself is 2 rows taller (top + bottom border) — see [`box_height`].
 const MAX_BAR_ROWS: u16 = 5;
 
-/// The number of editable text rows for the current query: one per line, clamped to
-/// [1, [`MAX_BAR_ROWS`]].
+/// The number of editable text rows for the current query: one per line in Power, clamped to
+/// [1, [`MAX_BAR_ROWS`]]. In Simple mode the bar is a fixed five-pane form (one row per pane),
+/// independent of the focused pane's content — the panes are always visible.
 fn bar_text_rows(app: &App) -> u16 {
-    (app.editor().line_count() as u16).clamp(1, MAX_BAR_ROWS)
+    match app.query_form().mode() {
+        QueryMode::Simple => SIMPLE_PANE_COUNT as u16,
+        QueryMode::Power => (app.editor().line_count() as u16).clamp(1, MAX_BAR_ROWS),
+    }
 }
 
 /// The total height of the bordered query box: the text rows plus the top + bottom border rows.
@@ -55,6 +59,10 @@ fn bar_text_rows(app: &App) -> u16 {
 fn box_height(app: &App) -> u16 {
     bar_text_rows(app).saturating_add(2)
 }
+
+/// How many panes the Simple-mode query form has (`SELECT` / `WHERE` / `GROUP BY` / `ORDER BY` /
+/// `LIMIT`). The bar reserves exactly this many text rows in Simple mode.
+const SIMPLE_PANE_COUNT: usize = 5;
 
 /// Render the whole app into `frame`.
 pub fn render(app: &App, frame: &mut Frame) {
@@ -278,6 +286,19 @@ fn render_query_box(app: &App, frame: &mut Frame, area: Rect) -> Rect {
         return Rect::new(inner.x, inner.y, 0, 0);
     }
 
+    match app.query_form().mode() {
+        QueryMode::Simple => render_simple_panes(app, frame, inner),
+        QueryMode::Power => render_power_textarea(app, frame, inner),
+    }
+    // Record the INNER rect (before the prompt) as the click target: `text_col` subtracts the
+    // prompt from it, matching the borderless-bar contract the mouse mapping was written against.
+    // In Simple mode the per-pane row mapping uses the inner rect's `y` as the origin too —
+    // `MouseTarget::QueryBar { row, .. }` is `y - inner.y`, which the App reads as the pane index.
+    inner
+}
+
+/// Power-mode bar render: a `> ` prompt in the fixed left column and the textarea in the rest.
+fn render_power_textarea(app: &App, frame: &mut Frame, inner: Rect) {
     let prompt_w = PROMPT_WIDTH.min(inner.width);
     let prompt_area = Rect {
         height: 1,
@@ -296,10 +317,70 @@ fn render_query_box(app: &App, frame: &mut Frame, area: Rect) -> Rect {
     if text_area.width > 0 {
         frame.render_widget(app.editor().textarea(), text_area);
     }
-    // Record the INNER rect (before the prompt) as the click target: `text_col` subtracts the
-    // prompt from it, matching the borderless-bar contract the mouse mapping was written against.
-    inner
 }
+
+/// Simple-mode bar render: 5 stacked single-line panes, one per [`SimplePane`], with a fixed-width
+/// label column on the left of each row. Only the focused pane's textarea paints its cursor cell;
+/// the others render as plain text rows. The pane order is the canonical SELECT / WHERE / GROUP BY
+/// / ORDER BY / LIMIT — matching `SimplePane::ALL`.
+fn render_simple_panes(app: &App, frame: &mut Frame, inner: Rect) {
+    // Need at least one row to render anything; we silently truncate if the box is shorter than
+    // five rows (the layout sizes box_height to 7 rows in Simple mode, so this is defensive).
+    if inner.height == 0 {
+        return;
+    }
+    let label_w = SIMPLE_LABEL_WIDTH.min(inner.width);
+    let panes = [
+        SimplePane::Select,
+        SimplePane::Where,
+        SimplePane::GroupBy,
+        SimplePane::OrderBy,
+        SimplePane::Limit,
+    ];
+    let focused = app.query_form().focused_pane();
+    for (i, &pane) in panes.iter().enumerate() {
+        let i = i as u16;
+        if i >= inner.height {
+            break;
+        }
+        let row = Rect {
+            x: inner.x,
+            y: inner.y.saturating_add(i),
+            width: inner.width,
+            height: 1,
+        };
+        let label_area = Rect {
+            width: label_w,
+            ..row
+        };
+        let label_style = if pane == focused {
+            theme::app::pane_label_focused()
+        } else {
+            theme::app::pane_label()
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(pane.label(), label_style))),
+            label_area,
+        );
+        let text_x = inner.x.saturating_add(label_w);
+        let text_area = Rect {
+            x: text_x,
+            y: row.y,
+            width: inner.width.saturating_sub(label_w),
+            height: 1,
+        };
+        if text_area.width == 0 {
+            continue;
+        }
+        frame.render_widget(app.query_form().pane(pane).textarea(), text_area);
+    }
+}
+
+/// Width of the left label column in a Simple-mode pane row (`SELECT  `, `WHERE   `, `GROUP BY`,
+/// `ORDER BY`, `LIMIT   `). 9 fits the longest label (`GROUP BY` / `ORDER BY` = 8) plus a single
+/// space gutter before the editor text. Kept `pub(crate)` so the mouse click→text-col mapping in
+/// [`super::layout_regions::LayoutRegions::text_col`] subtracts the same offset.
+pub(crate) const SIMPLE_LABEL_WIDTH: u16 = 9;
 
 /// The results pane: a bordered box containing the aligned grid, a loading indicator, or an
 /// empty hint. The grid is re-laid-out against the actual inner viewport. The pane border is

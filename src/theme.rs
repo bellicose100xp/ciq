@@ -122,6 +122,19 @@ pub mod app {
             .fg(p::TEXT_MUTED)
             .add_modifier(Modifier::DIM)
     }
+
+    /// The fixed-width label column on a Simple-mode pane row (`SELECT`/`WHERE`/`GROUP BY`/
+    /// `ORDER BY`/`LIMIT`) when that pane is **unfocused** — muted text so the eye drops to the
+    /// editable text on the right.
+    pub fn pane_label() -> Style {
+        Style::default().fg(p::TEXT_MUTED)
+    }
+
+    /// The Simple-mode pane label when that pane is **focused** — bright cyan + bold so the
+    /// focused pane reads at a glance, matching the box's focus-aware border accent.
+    pub fn pane_label_focused() -> Style {
+        Style::default().fg(p::CYAN).add_modifier(Modifier::BOLD)
+    }
 }
 
 /// Border styles, focus-aware (`dev/PLAN.md` §3.1 felt-loop polish).

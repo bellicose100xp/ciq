@@ -174,6 +174,7 @@ fn debounce_coalescing_hits_engine_exactly_once() {
     let worker = spawn_worker(Box::new(counting), req_rx, resp_tx);
 
     let mut app = App::new(req_tx, interrupt);
+    app.force_power_mode_for_tests("");
     app.on_loaded("ready");
 
     // Type a valid SELECT one char at a time, all within one 150ms window, then go quiet.
@@ -215,6 +216,7 @@ fn cancel_surfaces_only_latest_result() {
     let worker = spawn_worker(Box::new(engine), req_rx, resp_tx);
 
     let mut app = App::new(req_tx, interrupt);
+    app.force_power_mode_for_tests("");
     app.on_loaded("ready");
 
     // First query (id=1): type + fire.
@@ -293,6 +295,7 @@ fn query_typed_during_load_reaches_engine_on_ready() {
     let worker = spawn_worker(Box::new(counting), req_rx, resp_tx);
 
     let mut app = App::new(req_tx, interrupt);
+    app.force_power_mode_for_tests("");
     // Type while Loading; window elapses; no dispatch yet.
     for (i, c) in "SELECT * FROM t".chars().enumerate() {
         app.on_key(KeyEvent::char(c), i as u64);
@@ -339,6 +342,7 @@ fn value_completion_round_trips_through_the_worker() {
     let worker = spawn_worker(Box::new(engine), req_rx, resp_tx);
 
     let mut app = App::new(req_tx, interrupt);
+    app.force_power_mode_for_tests("");
     app.set_schema(schema());
     app.on_loaded("ready");
 

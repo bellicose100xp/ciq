@@ -16,9 +16,17 @@ use crate::query::worker::types::{ProcessedResult, QueryRequest, QueryResponse, 
 use crate::schema::ColumnType;
 
 /// Build an App over a request channel whose receiver the test keeps (to inspect dispatches).
+///
+/// **Power mode by default for legacy tests.** Production launches Simple mode (the post-5 UX
+/// redesign), but the bulk of the existing tests pre-date Simple mode and exercise the bar as a
+/// single textarea that accumulates `app.query()` verbatim. Forcing Power on construction keeps
+/// those semantics for tests written against the old shape; Simple-mode behavior has its own
+/// dedicated tests (`crate::app::query_form_tests` + the new Simple-mode integration cases).
 fn app() -> (App, Receiver<QueryRequest>) {
     let (tx, rx) = channel();
-    (App::new(tx, InterruptHandle::noop()), rx)
+    let mut app = App::new(tx, InterruptHandle::noop());
+    app.force_power_mode_for_tests("");
+    (app, rx)
 }
 
 fn type_str(app: &mut App, s: &str, now_ms: u64) {
@@ -959,3 +967,5 @@ mod mouse_tests;
 mod palette_tests;
 #[path = "app_tests/polish_tests.rs"]
 mod polish_tests;
+#[path = "app_tests/simple_mode_tests.rs"]
+mod simple_mode_tests;

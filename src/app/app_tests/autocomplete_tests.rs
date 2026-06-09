@@ -261,7 +261,7 @@ fn simple_mode_tab_inserts_into_focused_pane_not_power_editor() {
         "Tab inserted the suggestion into the focused WHERE pane"
     );
     assert_eq!(
-        app.editor().text(),
+        app.query_form().power().text(),
         "",
         "the Power editor stays empty — the accept did not target it"
     );

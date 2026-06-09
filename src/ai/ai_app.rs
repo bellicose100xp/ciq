@@ -198,8 +198,16 @@ impl App {
                 let sql = strip_code_fences(&sql);
                 self.ai.set_success(&sql);
                 // Drop the generated SQL into the bar and run it through the normal path — the
-                // read-only single-statement guard rejects any DML/multi-statement reply.
-                self.editor.set_text(&sql);
+                // read-only single-statement guard rejects any DML/multi-statement reply. The AI
+                // reply is full SQL, so accept always lands the user in Power mode (the design
+                // call: AI flips to Power so the user can refine before dispatch); switching modes
+                // is itself a status-worthy event.
+                use crate::app::QueryMode;
+                let was_simple = matches!(self.query_form.mode(), QueryMode::Simple);
+                self.query_form.enter_power_with_sql(&sql);
+                if was_simple {
+                    self.set_status("ai: switched to power mode for the generated SQL");
+                }
                 self.refresh_autocomplete();
                 self.ai.close();
                 self.schedule(now_ms);

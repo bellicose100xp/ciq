@@ -45,9 +45,13 @@ impl AppHarness {
     }
 
     /// Build a harness whose `App` holds the given interrupt handle (for cancellation tests).
+    /// Forces the App into **Power** mode so the harness's textarea-shaped test API
+    /// (`type_text`, query() == verbatim) keeps its semantics — Simple-mode behavior is exercised
+    /// by the dedicated `query_form` tests, not the harness.
     pub fn with_interrupt(width: u16, height: u16, interrupt: InterruptHandle) -> Self {
         let (request_tx, request_rx) = channel();
-        let app = App::new(request_tx, interrupt);
+        let mut app = App::new(request_tx, interrupt);
+        app.force_power_mode_for_tests("");
         let backend = TestBackend::new(width, height);
         let terminal = Terminal::new(backend).expect("TestBackend terminal");
         Self {

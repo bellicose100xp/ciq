@@ -221,7 +221,9 @@ fn click_in_query_bar_during_load_error_is_frozen() {
         use crate::engine::InterruptHandle;
         use std::sync::mpsc::channel;
         let (tx, rx) = channel();
-        (App::new(tx, InterruptHandle::noop()), rx)
+        let mut app = App::new(tx, InterruptHandle::noop());
+        app.force_power_mode_for_tests("");
+        (app, rx)
     };
     app.on_load_error("boom");
     let (_w, h) = render_and_record(&app);
@@ -240,7 +242,9 @@ fn click_in_results_with_no_result_does_not_focus() {
         use crate::engine::InterruptHandle;
         use std::sync::mpsc::channel;
         let (tx, rx) = channel();
-        (App::new(tx, InterruptHandle::noop()), rx)
+        let mut app = App::new(tx, InterruptHandle::noop());
+        app.force_power_mode_for_tests("");
+        (app, rx)
     };
     app.set_schema(test_schema());
     app.on_loaded("ready");

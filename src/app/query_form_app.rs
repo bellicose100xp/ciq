@@ -8,8 +8,8 @@
 //! All of it is headless: pane edits are plain in-memory mutations and the only side effect is
 //! scheduling a debounced query through the **same** dispatch path a typed query uses.
 
+use crate::app::App;
 use crate::app::editor::Editor;
-use crate::app::{App, QueryMode};
 use crate::autocomplete::insertion::insert_suggestion;
 
 impl App {
@@ -44,12 +44,9 @@ impl App {
     }
 
     /// The editor where an accepted suggestion should land. In Simple mode that's the focused
-    /// pane's editor (the one the user is typing into); in Power mode that's the App's `editor`.
-    /// A single seam so the popup never inserts into the wrong surface.
+    /// pane's editor; in Power mode that's the textarea. A single seam so the popup never inserts
+    /// into the wrong surface — delegates to the App's [`input_editor_mut`](App::input_editor_mut).
     pub(crate) fn suggestion_target_editor_mut(&mut self) -> &mut Editor {
-        match self.query_form.mode() {
-            QueryMode::Simple => self.query_form.focused_editor_mut(),
-            QueryMode::Power => &mut self.editor,
-        }
+        self.input_editor_mut()
     }
 }

@@ -121,11 +121,13 @@ pub enum Focus {
 pub struct App {
     pub(crate) phase: AppPhase,
     focus: Focus,
-    pub(crate) editor: Editor,
-    /// The Simple/Power query form (the post-5 UX redesign foundation). Default is **Power** so the
-    /// `editor` above remains the authoritative input surface; Simple-mode panes only become live
-    /// when the form is toggled (a future input-routing change). The autocomplete pipeline already
-    /// routes per-pane through this when in Simple mode — see [`autocomplete_app`].
+    /// The Simple/Power query form — five labeled clause panes (`SELECT` / `WHERE` / `GROUP BY` /
+    /// `ORDER BY` / `LIMIT`) in Simple mode, or one full-SQL textarea in Power mode (toggle with
+    /// `Ctrl+Q`). Default is **Simple**, with the cursor parked on `WHERE` and the other panes
+    /// pre-seeded so the launch composes `SELECT * FROM t LIMIT 1000` and the grid populates
+    /// immediately. All input — typing, vim chords, autocomplete inserts — routes through
+    /// [`Self::input_editor_mut`] to the active editor (the focused pane in Simple, the textarea in
+    /// Power), so the rest of the App is mode-agnostic.
     pub(crate) query_form: QueryForm,
     debouncer: Debouncer,
     dispatcher: Dispatcher,
@@ -227,8 +229,7 @@ impl App {
         Self {
             phase: AppPhase::Loading,
             focus: Focus::QueryBar,
-            editor: Editor::new(),
-            query_form: query_form::power_default(),
+            query_form: QueryForm::new(),
             debouncer: Debouncer::new(),
             dispatcher: Dispatcher::new(request_tx, interrupt),
             result: None,
@@ -283,24 +284,81 @@ impl App {
         self.layout_regions.set(regions);
     }
 
-    /// The full query text (the textarea lines joined with `\n`). Owned because the multiline
-    /// buffer joins on demand; equality assertions against a `&str` still work.
+    /// The query string the dispatcher will send to the engine.
+    ///
+    /// In **Simple** mode this is the composed canonical SQL (e.g. `SELECT * FROM t LIMIT 1000`)
+    /// from the five panes. In **Power** mode it is the textarea's text verbatim (multiline
+    /// joined by `\n`). On a [`ComposeError`] (a non-numeric LIMIT pane, etc.) the empty string is
+    /// returned so dispatch falls back to the empty-input path; callers should consult
+    /// [`QueryForm::limit_error`] to surface a status-line message.
     pub fn query(&self) -> String {
-        self.editor.text()
+        match self.query_form.mode() {
+            QueryMode::Simple => self
+                .query_form
+                .to_full_sql(self.viewport_row_limit)
+                .unwrap_or_default(),
+            QueryMode::Power => self.query_form.power().text(),
+        }
     }
 
+    /// The active input editor — the focused Simple pane in Simple mode, or the Power textarea in
+    /// Power mode. The single source of truth for "where typing goes," used by the render layer,
+    /// autocomplete inserts, mouse cursor positioning, and tests.
     pub fn editor(&self) -> &Editor {
-        &self.editor
+        match self.query_form.mode() {
+            QueryMode::Simple => self.query_form.focused_editor(),
+            QueryMode::Power => self.query_form.power(),
+        }
     }
 
-    /// The query bar's current vim mode (`INSERT`/`NORMAL`/…), surfaced in the status line and
-    /// (later) the help bar so the mode is always visible.
+    /// Mutable view of the active input editor (see [`Self::editor`]). Routes typing /
+    /// vim chords / autocomplete inserts to the right surface without callers having to branch on
+    /// mode.
+    pub(crate) fn input_editor_mut(&mut self) -> &mut Editor {
+        match self.query_form.mode() {
+            QueryMode::Simple => self.query_form.focused_editor_mut(),
+            QueryMode::Power => self.query_form.power_mut(),
+        }
+    }
+
+    /// The query bar's current vim mode (`INSERT`/`NORMAL`/…), surfaced in the status line and the
+    /// help bar so the mode is always visible. Reads the active editor.
     pub fn editor_mode(&self) -> crate::app::editor::EditorMode {
-        self.editor.mode()
+        self.editor().mode()
+    }
+
+    /// Read-only view of the Simple/Power query form (the 5 panes + the Power textarea + the mode
+    /// flag). The render layer reads it to branch on mode and to draw the focused pane's editor;
+    /// tests reach in to assert pane text + focus without going through the App.
+    pub fn query_form(&self) -> &QueryForm {
+        &self.query_form
+    }
+
+    /// Mutable view of the form. `pub(crate)` so the orchestration helpers (palette_app /
+    /// history_app / ai_app) can install full SQL strings via [`QueryForm::enter_simple_with_parts`]
+    /// or [`QueryForm::enter_power_with_sql`] without going through more granular accessors. Tests
+    /// also reach for it via the [`Self::force_power_mode_for_tests`] shim.
+    pub(crate) fn query_form_mut(&mut self) -> &mut QueryForm {
+        &mut self.query_form
+    }
+
+    /// Test-only seam: switch the form into Power mode with the given SQL preloaded, so legacy
+    /// tests that assert `app.query() == "<verbatim>"` keep their semantics. Production code never
+    /// calls this — the chord users see is `Ctrl+Q` (which routes through [`Self::toggle_query_mode`]).
+    #[cfg(test)]
+    pub(crate) fn force_power_mode_for_tests(&mut self, sql: &str) {
+        self.query_form.enter_power_with_sql(sql);
     }
 
     pub fn status(&self) -> &str {
         &self.status
+    }
+
+    /// Set the status-line text. `pub(crate)` so the orchestration helpers (palette_app /
+    /// history_app / ai_app) can surface a one-liner on a mode flip / simplifier refusal /
+    /// generated-SQL acceptance without exposing the raw field.
+    pub(crate) fn set_status(&mut self, status: impl Into<String>) {
+        self.status = status.into();
     }
 
     pub fn result(&self) -> Option<&ProcessedResult> {
@@ -492,6 +550,16 @@ impl App {
             self.open_ai();
             return false;
         }
+        // Ctrl+Q toggles between Simple (5 panes) and Power (free-form SQL) query modes. Simple ->
+        // Power composes the panes into the textarea so refinement preserves context; Power ->
+        // Simple parses the textarea via the simplifier and distributes into the panes — refusing
+        // (with a clear status message) when the SQL has features Simple can't represent
+        // (JOIN/CTE/HAVING/subquery/multi-statement/etc.). Mode flip schedules a re-dispatch via the
+        // debouncer so the grid reflects the (possibly different) composed SQL.
+        if ev.mods.ctrl && matches!(ev.key, Key::Char('q') | Key::Char('Q')) {
+            self.toggle_query_mode(now_ms);
+            return false;
+        }
         if self.autocomplete.is_open() && self.handle_popup_key(&ev, now_ms) {
             return false; // the popup consumed the key
         }
@@ -601,12 +669,25 @@ impl App {
         if matches!(self.phase, AppPhase::LoadError(_)) {
             return; // bar is frozen once load failed
         }
+        // In Simple mode, Tab/Shift+Tab cycle pane focus (intercepted before the editor's text path
+        // so they never become a literal `\t` in a pane). Power mode keeps Tab as autocomplete-
+        // accept (handled by `handle_popup_key` upstream when the popup is open) or as a literal
+        // textarea Tab when no popup is up.
+        if matches!(self.query_form.mode(), QueryMode::Simple) && matches!(ev.key, Key::Tab) {
+            if ev.mods.shift {
+                self.query_form.focus_prev();
+            } else {
+                self.query_form.focus_next();
+            }
+            self.refresh_autocomplete();
+            return;
+        }
         // Vim modal routing: in any non-Insert mode, the key is a vim command (motion / edit /
         // mode flip), not text. `Esc` in Insert mode drops to Normal (the one Insert key vim owns).
         // Everything else in Insert mode is the text-editing path below (typing, Enter=newline,
         // autocomplete) — unchanged, so the live-query + completion wiring is untouched.
-        if !self.editor.mode().is_insert() || matches!(ev.key, Key::Esc) {
-            let changed = self.editor.on_vim_key(&ev);
+        if !self.editor().mode().is_insert() || matches!(ev.key, Key::Esc) {
+            let changed = self.input_editor_mut().on_vim_key(&ev);
             // A vim edit changed the cursor context (and possibly the text) — recompute the popup.
             self.refresh_autocomplete();
             if changed {
@@ -614,42 +695,83 @@ impl App {
             }
             return;
         }
-        let before = self.editor.text();
+        let before = self.editor().text();
         match ev.key {
-            Key::Char(c) => self.editor.insert_char(c),
+            Key::Char(c) => self.input_editor_mut().insert_char(c),
             Key::Backspace => {
-                self.editor.backspace();
+                self.input_editor_mut().backspace();
             }
             Key::Delete => {
-                self.editor.delete();
+                self.input_editor_mut().delete();
             }
-            Key::Left => self.editor.move_left(),
-            Key::Right => self.editor.move_right(),
-            Key::Home => self.editor.move_home(),
-            Key::End => self.editor.move_end(),
-            // Within a multiline query, Up moves between lines; on the first line it is a no-op
-            // (there is nowhere above the bar to go).
-            Key::Up => self.editor.move_up(),
-            // Enter (and Shift+Enter) insert a newline — newline universally, since queries run
-            // live on debounce and there is no submit key (locked decision).
-            Key::Enter => self.editor.insert_newline(),
-            Key::Paste(ref s) => self.editor.insert_str(s),
-            // Down moves between lines in a multiline query; from the last line it hands navigation
-            // off to the results grid (the single-line case, so the felt behavior is unchanged).
-            Key::Down => {
-                if self.editor.is_on_last_line() {
-                    self.focus = Focus::Results;
-                } else {
-                    self.editor.move_down();
+            Key::Left => self.input_editor_mut().move_left(),
+            Key::Right => self.input_editor_mut().move_right(),
+            Key::Home => self.input_editor_mut().move_home(),
+            Key::End => self.input_editor_mut().move_end(),
+            // Within a multiline query, Up moves between lines; on the first line in Power, or in
+            // any Simple pane, it's a no-op (a Simple pane is single-line; pane-to-pane navigation
+            // is `Tab`/`Shift+Tab`/click).
+            Key::Up => self.input_editor_mut().move_up(),
+            // Enter (and Shift+Enter) insert a newline in Power; in Simple, panes are single-line
+            // so the textarea swallows it as a no-op (its single-line nature is enforced by
+            // construction).
+            Key::Enter => self.input_editor_mut().insert_newline(),
+            Key::Paste(ref s) => self.input_editor_mut().insert_str(s),
+            // Down moves between lines in Power; from the last line it hands focus off to the
+            // results grid. In Simple, it focuses the next pane (or hands off to results if we're
+            // on `LIMIT`, the last pane).
+            Key::Down => match self.query_form.mode() {
+                QueryMode::Simple => self.simple_pane_down(),
+                QueryMode::Power => {
+                    if self.editor().is_on_last_line() {
+                        self.focus = Focus::Results;
+                    } else {
+                        self.input_editor_mut().move_down();
+                    }
                 }
-            }
+            },
             _ => {}
         }
         // Recompute autocomplete on any edit/cursor move (the popup tracks the cursor context).
         self.refresh_autocomplete();
         // Only (re)schedule a query when the text actually changed — pure cursor moves don't.
-        if self.editor.text() != before {
+        if self.editor().text() != before {
             self.schedule(now_ms);
+        }
+    }
+
+    /// `Down` in Simple mode: focus the next pane below the current one (`SELECT` → `WHERE` →
+    /// `GROUP BY` → `ORDER BY` → `LIMIT`); on `LIMIT` it hands focus off to the results grid,
+    /// mirroring the existing Power `Down`-on-last-line behavior.
+    fn simple_pane_down(&mut self) {
+        if matches!(self.query_form.focused_pane(), SimplePane::Limit) {
+            self.focus = Focus::Results;
+        } else {
+            self.query_form.focus_next();
+        }
+    }
+
+    /// Toggle Simple ↔ Power query modes. Simple → Power composes the panes into the textarea so
+    /// the user can refine without losing context; Power → Simple parses the textarea via the
+    /// simplifier and on success distributes into the five panes (else surfaces "can't simplify:
+    /// <reason>" and stays in Power). The mode flip schedules a re-dispatch through the existing
+    /// debouncer so the grid reflects the (now possibly different) composed SQL.
+    fn toggle_query_mode(&mut self, now_ms: u64) {
+        match self.query_form.toggle_mode(self.viewport_row_limit) {
+            Ok(()) => {
+                let into = match self.query_form.mode() {
+                    QueryMode::Simple => "simple",
+                    QueryMode::Power => "power",
+                };
+                self.status = format!("query mode: {into}");
+                self.refresh_autocomplete();
+                self.schedule(now_ms);
+            }
+            Err(e) => {
+                // The simplifier refused (Power → Simple has features it can't represent).
+                // toggle_mode left the form in Power per its documented contract.
+                self.status = format!("can't simplify: {}", e.message());
+            }
         }
     }
 
@@ -658,7 +780,7 @@ impl App {
             Key::Up if self.v_row_offset == 0 => {
                 // Returning focus to the bar lands in Insert mode so typing resumes immediately.
                 self.focus = Focus::QueryBar;
-                self.editor.reset_to_insert();
+                self.input_editor_mut().reset_to_insert();
             }
             Key::Up => self.v_row_offset = self.v_row_offset.saturating_sub(1),
             Key::Down => self.scroll_down(1),
@@ -724,8 +846,29 @@ impl App {
 
     /// Preprocess + dispatch the current query text. Empty input clears the result; a rejected
     /// grammar sets a status-line error and issues no engine call.
+    ///
+    /// In **Simple** mode, the dispatched text is the composed canonical SQL from the five panes
+    /// (the user-visible text is the panes themselves; the composer assembles the dispatch). A
+    /// non-numeric LIMIT pane fails composition with [`ComposeError::InvalidLimit`]: we surface its
+    /// message in the status line, skip dispatch, and *do not* dim the prior result (a local
+    /// pane-validation issue isn't an engine error). The next valid edit clears the limit error and
+    /// dispatches.
     fn dispatch_current(&mut self) -> bool {
-        let raw = self.editor.text().trim().to_string();
+        // Composer fallibility (Simple mode only). Power mode is the textarea verbatim; never fails.
+        if matches!(self.query_form.mode(), QueryMode::Simple) {
+            match self.query_form.to_full_sql(self.viewport_row_limit) {
+                Ok(_) => self.query_form.set_limit_error(None),
+                Err(e) => {
+                    self.query_form
+                        .set_limit_error(Some(e.message().to_string()));
+                    self.status = e.message().to_string();
+                    // Pane-validation error: do NOT touch result_is_stale (the prior good result
+                    // stays normal, not dimmed) and do NOT dispatch.
+                    return false;
+                }
+            }
+        }
+        let raw = self.query().trim().to_string();
         if raw.is_empty() {
             // Clearing the bar returns to the pre-first-query empty state (the "type a query" hint),
             // not a zero-row *result* — drop the result so the empty-state picks the right line.
@@ -927,9 +1070,16 @@ impl App {
     /// palette / never emitted) -> the user hand-typed SQL and palette actions must offer a soft
     /// "Replace?" rather than silently rewriting. A pure byte-compare; **no SQL parsing** anywhere.
     pub fn palette_owns_query(&self) -> bool {
+        // Power mode: byte-compare the textarea against the last palette emission. In Simple mode
+        // ownership is implicit (palette emit goes through `enter_simple_with_parts`, distributing
+        // into the panes), so we report `false` there — the soft "Replace?" prompt is a Power-mode
+        // affordance.
+        if !matches!(self.query_form.mode(), QueryMode::Power) {
+            return false;
+        }
         self.palette
             .as_ref()
-            .is_some_and(|p| p.owns(&self.editor.text()))
+            .is_some_and(|p| p.owns(&self.query_form.power().text()))
     }
 
     // --- query history (P5.2, §7.6): the open/close/handle/recall/record block lives in

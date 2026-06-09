@@ -20,7 +20,11 @@ use crate::schema::{ColumnMeta, ColumnType, Schema};
 
 fn app() -> App {
     let (tx, _rx) = channel();
-    App::new(tx, InterruptHandle::noop())
+    let mut app = App::new(tx, InterruptHandle::noop());
+    // Help-bar hint tests assert on Power-mode chord set (the bulk surface). Simple-mode hints
+    // (which include `Tab next-pane` rather than `Tab complete`) have their own dedicated tests.
+    app.force_power_mode_for_tests("");
+    app
 }
 
 fn test_schema() -> Schema {
@@ -200,6 +204,7 @@ fn facet_popup_hints() {
     // succeeds — `loaded_app` drops it, which would silently no-op `open_facet`.
     let (tx, _rx) = channel();
     let mut app = App::new(tx, InterruptHandle::noop());
+    app.force_power_mode_for_tests("");
     app.set_schema(test_schema());
     app.on_loaded("ready");
     // Put a result on screen so the `f` chord has a focused column to facet (`id` resolves against

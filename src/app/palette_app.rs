@@ -82,7 +82,7 @@ impl App {
         };
         let sql = emit_palette_with_limit(palette, limit);
         palette.record_emitted(&sql);
-        self.editor.set_text(&sql);
+        install_full_sql_into_form(self, &sql);
         self.refresh_autocomplete();
         self.close_palette();
         self.schedule(now_ms);
@@ -95,7 +95,7 @@ impl App {
     /// own and schedules the query so the grid populates. The event loop calls this once after
     /// load. Returns `true` if it seeded.
     pub fn seed_palette_query(&mut self, now_ms: u64) -> bool {
-        if !self.editor.text().is_empty() {
+        if !self.editor().text().is_empty() {
             return false;
         }
         let limit = self.viewport_row_limit;
@@ -104,7 +104,7 @@ impl App {
         };
         let sql = emit_palette_with_limit(palette, limit);
         palette.record_emitted(&sql);
-        self.editor.set_text(&sql);
+        install_full_sql_into_form(self, &sql);
         self.refresh_autocomplete();
         self.schedule(now_ms);
         true
@@ -121,9 +121,29 @@ impl App {
         let palette = self.palette.as_mut()?;
         let sql = emit_palette_with_limit(palette, limit);
         palette.record_emitted(&sql);
-        self.editor.set_text(&sql);
+        install_full_sql_into_form(self, &sql);
         self.refresh_autocomplete();
         self.schedule(now_ms);
         Some(sql)
+    }
+}
+
+/// Install a full SQL string into the form. In **Simple** mode, parse it via the simplifier and
+/// distribute into the five panes; on a simplify failure (the SQL has features Simple can't
+/// represent — shouldn't happen for the palette's canonical `SELECT col,... FROM t LIMIT N`
+/// emission, but we degrade gracefully) flip to Power mode and put the text in the textarea. In
+/// **Power** mode, set the textarea text directly. The single seam every "set the bar from a
+/// generated SQL string" path goes through (palette emit, palette pre-seed, palette replace), so
+/// the mode-switching behavior is consistent.
+fn install_full_sql_into_form(app: &mut crate::app::App, sql: &str) {
+    use crate::app::QueryMode;
+    use crate::app::query_form::try_simplify_from_sql;
+    let limit = app.viewport_row_limit();
+    match app.query_form_mut().mode() {
+        QueryMode::Simple => match try_simplify_from_sql(sql) {
+            Ok(parts) => app.query_form_mut().enter_simple_with_parts(parts, limit),
+            Err(_) => app.query_form_mut().enter_power_with_sql(sql),
+        },
+        QueryMode::Power => app.query_form_mut().power_mut().set_text(sql),
     }
 }

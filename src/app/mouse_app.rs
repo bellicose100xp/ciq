@@ -9,7 +9,7 @@
 //! after a `TestBackend` render recorded the regions (see `app_tests/mouse_tests.rs`).
 
 use crate::app::layout_regions::{MouseTarget, PopupKind};
-use crate::app::{App, AppPhase, Focus, MouseEvent, app_render};
+use crate::app::{App, AppPhase, Focus, MouseEvent, SimplePane, app_render};
 
 impl App {
     /// How many grid rows a single mouse-wheel notch scrolls (jiq's `RESULTS_SCROLL_LINES`).
@@ -104,11 +104,26 @@ impl App {
                 }
                 // Focus the bar and land the cursor at the clicked (line, column), in Insert mode so
                 // typing resumes immediately (jiq's click_input_field: focus, then position the
-                // cursor). The row lands the cursor on the clicked visual line of a multiline query.
+                // cursor). In Simple mode, the row indexes into the five-pane stack — clicking pane
+                // N focuses it. In Power mode, the row indexes into the multiline textarea.
                 self.focus = Focus::QueryBar;
-                self.editor.reset_to_insert();
-                self.editor.set_cursor_row_col(row, col);
-                self.refresh_autocomplete();
+                use crate::app::QueryMode;
+                match self.query_form.mode() {
+                    QueryMode::Simple => {
+                        if let Some(pane) = SimplePane::from_index(row) {
+                            self.query_form.focus(pane);
+                            // The pane is single-line; place the cursor at the clicked column.
+                            self.input_editor_mut().reset_to_insert();
+                            self.input_editor_mut().set_cursor_row_col(0, col);
+                            self.refresh_autocomplete();
+                        }
+                    }
+                    QueryMode::Power => {
+                        self.input_editor_mut().reset_to_insert();
+                        self.input_editor_mut().set_cursor_row_col(row, col);
+                        self.refresh_autocomplete();
+                    }
+                }
             }
             // Outside any surface, or a results click with no result to focus — nothing to do.
             _ => {}

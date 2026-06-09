@@ -17,7 +17,12 @@ use crate::theme;
 
 fn app() -> App {
     let (tx, _rx) = channel();
-    App::new(tx, InterruptHandle::noop())
+    let mut app = App::new(tx, InterruptHandle::noop());
+    // Force Power mode so the legacy render assertions (single textarea, 1-text-row bar by default)
+    // keep their geometry. Simple-mode rendering has dedicated tests in `query_form_tests`; the
+    // bulk of `app_render_tests` predates Simple mode.
+    app.force_power_mode_for_tests("");
+    app
 }
 
 fn render(app: &App, w: u16, h: u16) -> String {
@@ -204,6 +209,7 @@ fn capped_result_renders_row_counter_with_plus_suffix() {
     // dropped receiver fails the send and never records the flag).
     let (tx, _rx) = std::sync::mpsc::channel();
     let mut a = App::new(tx, InterruptHandle::noop());
+    a.force_power_mode_for_tests("");
     a.on_loaded("ready");
     for c in "SELECT * FROM t".chars() {
         a.on_key(KeyEvent::char(c), 0);

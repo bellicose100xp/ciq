@@ -12,7 +12,9 @@ use crate::schema::{ColumnMeta, ColumnType, Schema};
 
 fn app() -> (App, Receiver<crate::query::worker::types::QueryRequest>) {
     let (tx, rx) = channel();
-    (App::new(tx, InterruptHandle::noop()), rx)
+    let mut app = App::new(tx, InterruptHandle::noop());
+    app.force_power_mode_for_tests("");
+    (app, rx)
 }
 
 fn type_str(app: &mut App, s: &str, now_ms: u64) {

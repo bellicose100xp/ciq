@@ -22,7 +22,10 @@ impl App {
         }
         self.autocomplete.close();
         self.palette_open = false;
-        let seed = self.editor.text();
+        // Seed the needle with whatever the dispatcher would send right now (the composed SQL in
+        // Simple mode, the textarea in Power) so a list pre-filters to "queries that look like the
+        // current one". `query()` is the same string the dispatch path sees.
+        let seed = self.query();
         self.history.open(Some(&seed));
         self.history_open = true;
     }
@@ -62,7 +65,23 @@ impl App {
     fn recall_selected_history(&mut self, now_ms: u64) {
         let recalled = self.history.selected_entry().map(str::to_string);
         if let Some(sql) = recalled {
-            self.editor.set_text(&sql);
+            // Recalled SQL is a full string. In Simple mode try to parse it back into the five
+            // panes; on failure (the entry has features Simple can't represent) fall through to
+            // Power mode with a status message — the user explicitly recalled this entry, so
+            // pushing them to Power is correct (they can refine and re-toggle when ready).
+            use crate::app::QueryMode;
+            use crate::app::query_form::try_simplify_from_sql;
+            let limit = self.viewport_row_limit();
+            match self.query_form.mode() {
+                QueryMode::Simple => match try_simplify_from_sql(&sql) {
+                    Ok(parts) => self.query_form.enter_simple_with_parts(parts, limit),
+                    Err(e) => {
+                        self.query_form.enter_power_with_sql(&sql);
+                        self.set_status(format!("can't simplify history entry: {}", e.message()));
+                    }
+                },
+                QueryMode::Power => self.query_form.power_mut().set_text(&sql),
+            }
             self.refresh_autocomplete();
             self.schedule(now_ms);
         }
