@@ -189,26 +189,25 @@ impl AutocompleteState {
         }
     }
 
-    /// Move the selection down one (the next candidate), wrapping from the last back to the first.
+    /// Move the selection down one (the next candidate), **bounded** at the last entry — no
+    /// wrap, matching the rest of ciq's nav semantics (Alt+nav, palette cursor, mouse wheel).
     /// No-op when closed.
     pub fn select_next(&mut self) {
         if !self.open || self.suggestions.is_empty() {
             return;
         }
-        self.selected = (self.selected + 1) % self.suggestions.len();
+        if self.selected + 1 < self.suggestions.len() {
+            self.selected += 1;
+        }
     }
 
-    /// Move the selection up one (the previous candidate), wrapping from the first to the last.
-    /// No-op when closed.
+    /// Move the selection up one (the previous candidate), **bounded** at the first entry — no
+    /// wrap. No-op when closed.
     pub fn select_prev(&mut self) {
         if !self.open || self.suggestions.is_empty() {
             return;
         }
-        self.selected = if self.selected == 0 {
-            self.suggestions.len() - 1
-        } else {
-            self.selected - 1
-        };
+        self.selected = self.selected.saturating_sub(1);
     }
 
     /// Number of candidates currently shown.

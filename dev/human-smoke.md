@@ -69,6 +69,15 @@ polarity, or the on-screen feel. Confirm by hand (light + dark terminal):
    border styling swaps and the bottom hints change to scroll/page/column). Press `Ctrl+T` again
    to come back to the query bar with the same Simple pane focused as before. Works in both
    Simple and Power modes.
+4e. **Popup scrolloff (jiq-style margin).** Open any list popup (autocomplete via typing in any
+   pane, history via `Ctrl+R`, column picker via `Ctrl+P` from SELECT). Walk the highlighted row
+   down with `↓` (or scroll the wheel down over the popup): the highlight stays ~4 rows from the
+   bottom of the visible window before the window slides; near the data top/bottom it reaches the
+   absolute edge (the margin clamps to half the viewport on tiny windows). Walk back up: same
+   behavior, mirrored. **Mouse wheel** advances/retreats the selection by `WHEEL_ROWS=3` per
+   notch and follows the same scrolloff rule (no longer fights the keyboard cursor). Bounded at
+   the ends; never wraps. The results grid keeps its current wheel-scroll behavior (no row-cursor
+   yet, so scrolloff doesn't apply there).
 5. **Results-pane hints.** Press `Ctrl+T` from the query bar (or `Down` past the last line in
    Power mode) to focus the grid -> the bottom border shows scroll/page/column hints
    (`Up/Down scroll`, `PgUp/PgDn page`, `Left/Right columns`, `f facet`, `Ctrl+T query`,

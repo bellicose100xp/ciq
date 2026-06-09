@@ -99,7 +99,7 @@ fn close_clears_state() {
 }
 
 #[test]
-fn select_next_wraps() {
+fn select_next_is_bounded_at_the_last_entry() {
     let mut s = AutocompleteState::new();
     s.open_with(suggestions(&["a", "b", "c"]));
     s.select_next();
@@ -107,15 +107,18 @@ fn select_next_wraps() {
     s.select_next();
     assert_eq!(s.selected(), 2);
     s.select_next();
-    assert_eq!(s.selected(), 0, "wraps from last to first");
+    assert_eq!(s.selected(), 2, "no wrap; bounded at the last entry");
 }
 
 #[test]
-fn select_prev_wraps() {
+fn select_prev_is_bounded_at_the_first_entry() {
     let mut s = AutocompleteState::new();
     s.open_with(suggestions(&["a", "b", "c"]));
     s.select_prev();
-    assert_eq!(s.selected(), 2, "wraps from first to last");
+    assert_eq!(s.selected(), 0, "no wrap; bounded at 0");
+    s.select_next();
+    s.select_next();
+    assert_eq!(s.selected(), 2);
     s.select_prev();
     assert_eq!(s.selected(), 1);
 }

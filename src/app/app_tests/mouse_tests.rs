@@ -265,7 +265,7 @@ fn scroll_outside_all_surfaces_falls_back_to_grid() {
 // --- popup scroll + click selection ---
 
 #[test]
-fn scroll_over_autocomplete_popup_moves_selection() {
+fn scroll_over_autocomplete_popup_moves_selection_by_wheel_rows() {
     let (mut app, _rx) = loaded_app();
     type_query(&mut app, "SELECT "); // empty partial -> all columns
     assert!(app.autocomplete().is_open());
@@ -274,21 +274,70 @@ fn scroll_over_autocomplete_popup_moves_selection() {
     // The popup anchors just above the bar; find a cell inside it and scroll.
     let (kind, rect) = app.layout_regions().popup.expect("popup recorded");
     assert_eq!(kind, crate::app::PopupKind::Autocomplete);
-    let inner_row = rect.y + 1; // first inner row
+    let inner_row = rect.y + 1;
+    // One wheel notch advances the selection by `WHEEL_ROWS` (3), matching the grid's per-tick
+    // grain so the felt rate is consistent. The popup's auto-scroll then keeps the cursor inside
+    // the visible window with the SCROLLOFF margin.
     app.on_mouse(MouseEvent::ScrollDown {
         col: rect.x + 1,
         row: inner_row,
     });
     assert_eq!(
         app.autocomplete().selected(),
-        1,
-        "wheel-down moves selection"
+        3,
+        "wheel-down advances selection by WHEEL_ROWS"
     );
     app.on_mouse(MouseEvent::ScrollUp {
         col: rect.x + 1,
         row: inner_row,
     });
+    assert_eq!(
+        app.autocomplete().selected(),
+        0,
+        "wheel-up retreats selection by WHEEL_ROWS, bounded at 0 (no wrap)"
+    );
+}
+
+#[test]
+fn wheel_up_at_top_of_autocomplete_popup_clamps_at_zero() {
+    let (mut app, _rx) = loaded_app();
+    type_query(&mut app, "SELECT ");
+    assert!(app.autocomplete().is_open());
+    render_and_record(&app);
     assert_eq!(app.autocomplete().selected(), 0);
+    let (_, rect) = app.layout_regions().popup.expect("popup recorded");
+    app.on_mouse(MouseEvent::ScrollUp {
+        col: rect.x + 1,
+        row: rect.y + 1,
+    });
+    assert_eq!(
+        app.autocomplete().selected(),
+        0,
+        "wheel-up at the top is a bounded no-op, never wraps"
+    );
+}
+
+#[test]
+fn wheel_down_past_end_of_autocomplete_popup_clamps_at_last() {
+    let (mut app, _rx) = loaded_app();
+    type_query(&mut app, "SELECT ");
+    assert!(app.autocomplete().is_open());
+    render_and_record(&app);
+    let last = app.autocomplete().len() - 1;
+    let (_, rect) = app.layout_regions().popup.expect("popup recorded");
+    // Spam wheel-down past the end of the list. Each tick advances by WHEEL_ROWS but the
+    // bounded per-step select_next clamps at `last`, so no wrap.
+    for _ in 0..(last + 5) {
+        app.on_mouse(MouseEvent::ScrollDown {
+            col: rect.x + 1,
+            row: rect.y + 1,
+        });
+    }
+    assert_eq!(
+        app.autocomplete().selected(),
+        last,
+        "wheel-down past the end is bounded at the last entry; no wrap"
+    );
 }
 
 #[test]

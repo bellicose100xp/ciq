@@ -386,22 +386,17 @@ impl HistoryState {
         self.adjust_scroll_to_selection();
     }
 
-    /// Keep the cursor inside the visible window: scroll down when the cursor falls below it, up
-    /// when above, and clamp the offset so the last window isn't over-scrolled. (jiq's
-    /// `adjust_scroll_to_selection`.)
+    /// Keep the cursor inside the visible window with the jiq-style SCROLLOFF margin: the cursor
+    /// stays ~4 rows from the top/bottom of the popup before the window slides (clamped to half
+    /// the viewport on tiny windows). Delegates to the shared
+    /// [`crate::scroll_window::scroll_offset_for_cursor`] so every list popup follows one rule.
     fn adjust_scroll_to_selection(&mut self) {
-        let visible = self.filtered_indices.len().min(MAX_VISIBLE_HISTORY);
-        if visible == 0 {
-            self.scroll_offset = 0;
-            return;
-        }
-        if self.selected_index >= self.scroll_offset + visible {
-            self.scroll_offset = self.selected_index - visible + 1;
-        } else if self.selected_index < self.scroll_offset {
-            self.scroll_offset = self.selected_index;
-        }
-        let max_offset = self.filtered_indices.len().saturating_sub(visible);
-        self.scroll_offset = self.scroll_offset.min(max_offset);
+        self.scroll_offset = crate::scroll_window::scroll_offset_for_cursor(
+            self.selected_index,
+            self.filtered_indices.len(),
+            MAX_VISIBLE_HISTORY,
+            self.scroll_offset,
+        );
     }
 }
 

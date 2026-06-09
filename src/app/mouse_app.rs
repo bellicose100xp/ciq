@@ -130,34 +130,41 @@ impl App {
         }
     }
 
-    /// Scroll an open list popup's selection by one (mouse wheel over the popup). Only the list
+    /// Scroll an open list popup's selection by one wheel notch. Each notch advances the
+    /// popup's selection by [`WHEEL_ROWS`](Self::WHEEL_ROWS) — the same grain as the grid's
+    /// wheel-rows-per-tick, so the felt scroll rate is consistent across surfaces. Only the list
     /// popups (autocomplete / palette / history) have a movable selection; facet/AI are not lists.
+    /// The popup's own `select_*`/`cursor_*` methods are bounded (no-op past the end) and
+    /// recompute the visible-window through the shared SCROLLOFF helper, so the selection stays
+    /// inside the visible window with the jiq margin.
     fn popup_scroll(&mut self, kind: PopupKind, up: bool) {
-        match kind {
-            PopupKind::Autocomplete => {
-                if up {
-                    self.autocomplete.select_prev();
-                } else {
-                    self.autocomplete.select_next();
-                }
-            }
-            PopupKind::Palette => {
-                if let Some(palette) = self.palette.as_mut() {
+        for _ in 0..Self::WHEEL_ROWS {
+            match kind {
+                PopupKind::Autocomplete => {
                     if up {
-                        palette.cursor_up();
+                        self.autocomplete.select_prev();
                     } else {
-                        palette.cursor_down();
+                        self.autocomplete.select_next();
                     }
                 }
-            }
-            PopupKind::History => {
-                if up {
-                    self.history.select_previous();
-                } else {
-                    self.history.select_next();
+                PopupKind::Palette => {
+                    if let Some(palette) = self.palette.as_mut() {
+                        if up {
+                            palette.cursor_up();
+                        } else {
+                            palette.cursor_down();
+                        }
+                    }
                 }
+                PopupKind::History => {
+                    if up {
+                        self.history.select_previous();
+                    } else {
+                        self.history.select_next();
+                    }
+                }
+                PopupKind::Facet | PopupKind::Ai => {}
             }
-            PopupKind::Facet | PopupKind::Ai => {}
         }
     }
 

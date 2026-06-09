@@ -138,7 +138,11 @@ fn selection_moves_with_next_prev() {
     assert_eq!(state.selected(), 0);
     state.select_next();
     assert_eq!(state.selected(), 1);
-    state.select_next(); // wraps
+    state.select_next(); // bounded at the last entry; no wrap
+    assert_eq!(state.selected(), 1);
+    state.select_prev();
+    assert_eq!(state.selected(), 0);
+    state.select_prev(); // bounded at 0; no wrap
     assert_eq!(state.selected(), 0);
 }
 
