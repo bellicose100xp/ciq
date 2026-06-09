@@ -29,15 +29,21 @@ pub const MAX_VISIBLE_ROWS: u16 = 8;
 ///
 /// `area` is the region the popup should occupy (the App computes it from the query-bar position
 /// and the available space — see `App` popup placement). The popup draws a border and, inside it,
-/// one line per visible candidate, the selected one reverse-video.
-pub fn render_popup(state: &AutocompleteState, f: &mut Frame, area: Rect) {
+/// one line per visible candidate, the selected one reverse-video. The bottom border carries
+/// context-sensitive hints (centered, with `\u{2022}` separators); when `show_columns_hint` is true
+/// the SELECT-pane-only `Ctrl+P columns` hint is added (the dedicated column-picker palette).
+pub fn render_popup(state: &AutocompleteState, f: &mut Frame, area: Rect, show_columns_hint: bool) {
     if !state.is_open() || area.width == 0 || area.height == 0 {
         return;
     }
 
+    let usable = area.width.saturating_sub(2) as usize;
+    let hint_line = Line::from(hint_spans(show_columns_hint, usable)).centered();
+
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme::autocomplete::border());
+        .border_style(theme::autocomplete::border())
+        .title_bottom(hint_line);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -47,6 +53,43 @@ pub fn render_popup(state: &AutocompleteState, f: &mut Frame, area: Rect) {
 
     let lines = popup_lines(state, inner.width, inner.height);
     f.render_widget(Paragraph::new(lines), inner);
+}
+
+/// The styled hint spans for the popup's bottom border. Always-on hints (`Tab accept`, `Up/Down
+/// select`, `Esc close`, `Ctrl+C quit`); when `show_columns_hint` is true (focus on the SELECT
+/// pane), `Ctrl+P columns` is interleaved between `select` and `close` so the user discovers the
+/// dedicated column-picker palette. Drops trailing low-priority hints whole if `max_width` is
+/// tight (same narrow-width policy as every other hint line).
+pub(crate) fn hint_spans(show_columns_hint: bool, max_width: usize) -> Vec<Span<'static>> {
+    let key_style = theme::help_line::key();
+    let desc_style = theme::help_line::description();
+    let sep_style = theme::help_line::separator();
+
+    // Most-important first; trailing hints drop on narrow widths.
+    let mut hints: Vec<(&'static str, &'static str)> =
+        vec![("Tab", "accept"), ("\u{2191}\u{2193}", "select")];
+    if show_columns_hint {
+        hints.push(("Ctrl+P", "columns"));
+    }
+    hints.push(("Esc", "close"));
+    hints.push(("Ctrl+C", "quit"));
+
+    let mut out: Vec<Span<'static>> = Vec::with_capacity(hints.len() * 4);
+    let mut width = 0usize;
+    for (k, d) in &hints {
+        let lead_first = out.is_empty();
+        let sep = if lead_first { " " } else { " \u{2022} " };
+        let chunk = sep.chars().count() + k.chars().count() + 1 + d.chars().count();
+        if width + chunk > max_width {
+            break;
+        }
+        out.push(Span::styled(sep.to_string(), sep_style));
+        out.push(Span::styled(*k, key_style));
+        out.push(Span::raw(" "));
+        out.push(Span::styled(*d, desc_style));
+        width += chunk;
+    }
+    out
 }
 
 /// Build the styled candidate lines for an inner width/height: a window of [`MAX_VISIBLE_ROWS`]

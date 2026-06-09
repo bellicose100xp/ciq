@@ -227,7 +227,12 @@ fn render_autocomplete(app: &App, frame: &mut Frame, bar: Rect, results: Rect) {
         return;
     }
     let area = popup_rect_for(app, PopupKind::Autocomplete, bar, results);
-    render_popup(state, frame, area);
+    // The `Ctrl+P columns` hint surfaces only when focus is on the SELECT pane (Simple mode) — the
+    // chord is anchored to that pane, and revealing it on the autocomplete popup gives the user
+    // the discoverable jump to the dedicated column-picker palette.
+    let show_columns_hint = matches!(app.query_form().mode(), crate::app::QueryMode::Simple)
+        && app.query_form().focused_pane() == crate::app::SimplePane::Select;
+    render_popup(state, frame, area, show_columns_hint);
 }
 
 /// The popup width: a readable fraction of the pane width, clamped so it neither overflows nor

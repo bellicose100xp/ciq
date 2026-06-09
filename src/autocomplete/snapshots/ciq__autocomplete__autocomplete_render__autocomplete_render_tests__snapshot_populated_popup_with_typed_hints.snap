@@ -1,5 +1,6 @@
 ---
 source: src/autocomplete/autocomplete_render_tests.rs
+assertion_line: 126
 expression: screen
 ---
 "┌──────────────────────────┐            "
@@ -9,6 +10,6 @@ expression: screen
 "│created_at            date│            "
 "│COUNT                  agg│            "
 "│                          │            "
-"└──────────────────────────┘            "
+"└─ Tab accept • ↑↓ select──┘            "
 "                                        "
 "                                        "

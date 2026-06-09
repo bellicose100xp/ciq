@@ -1,5 +1,6 @@
 ---
 source: src/autocomplete/autocomplete_render_tests.rs
+assertion_line: 139
 expression: screen
 ---
 "┌──────────────────────┐                "
@@ -7,6 +8,6 @@ expression: screen
 "│archived           txt│                "
 "│pending            txt│                "
 "│                      │                "
-"└──────────────────────┘                "
+"└───── Tab accept──────┘                "
 "                                        "
 "                                        "

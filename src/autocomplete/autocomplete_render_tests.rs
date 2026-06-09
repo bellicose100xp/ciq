@@ -14,8 +14,19 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 
 fn render(state: &AutocompleteState, w: u16, h: u16, area: Rect) -> String {
+    render_with(state, w, h, area, false)
+}
+
+fn render_with(
+    state: &AutocompleteState,
+    w: u16,
+    h: u16,
+    area: Rect,
+    show_columns_hint: bool,
+) -> String {
     let mut t = Terminal::new(TestBackend::new(w, h)).expect("TestBackend");
-    t.draw(|f| render_popup(state, f, area)).expect("draw");
+    t.draw(|f| render_popup(state, f, area, show_columns_hint))
+        .expect("draw");
     t.backend().to_string()
 }
 
@@ -153,4 +164,47 @@ fn render_does_not_panic_on_degenerate_area() {
     for (w, h) in [(1u16, 1u16), (2, 2), (3, 1), (1, 3)] {
         let _ = render(&state, w.max(1), h.max(1), Rect::new(0, 0, w, h));
     }
+}
+
+// --- bottom-border hints ---
+
+#[test]
+fn bottom_border_carries_always_on_hints() {
+    let mut state = AutocompleteState::new();
+    state.open_with(vec![Suggestion::new("id", SuggestionType::Field)]);
+    let screen = render(&state, 80, 8, Rect::new(0, 0, 80, 6));
+    assert!(
+        screen.contains("Tab") && screen.contains("accept"),
+        "bottom border carries Tab accept: {screen}"
+    );
+    assert!(
+        screen.contains("select"),
+        "bottom border carries Up/Down select: {screen}"
+    );
+    assert!(
+        screen.contains("Esc") && screen.contains("close"),
+        "bottom border carries Esc close: {screen}"
+    );
+}
+
+#[test]
+fn bottom_border_shows_columns_hint_when_select_pane_focused() {
+    let mut state = AutocompleteState::new();
+    state.open_with(vec![Suggestion::new("id", SuggestionType::Field)]);
+    let screen = render_with(&state, 80, 8, Rect::new(0, 0, 80, 6), true);
+    assert!(
+        screen.contains("Ctrl+P") && screen.contains("columns"),
+        "Ctrl+P columns hint surfaces when focus is on the SELECT pane: {screen}"
+    );
+}
+
+#[test]
+fn bottom_border_omits_columns_hint_off_select_pane() {
+    let mut state = AutocompleteState::new();
+    state.open_with(vec![Suggestion::new("id", SuggestionType::Field)]);
+    let screen = render_with(&state, 80, 8, Rect::new(0, 0, 80, 6), false);
+    assert!(
+        !screen.contains("Ctrl+P"),
+        "Ctrl+P columns hint must NOT appear off the SELECT pane: {screen}"
+    );
 }
