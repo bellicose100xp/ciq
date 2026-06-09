@@ -372,7 +372,18 @@ fn render_simple_panes(app: &App, frame: &mut Frame, inner: Rect) {
         if text_area.width == 0 {
             continue;
         }
-        frame.render_widget(app.query_form().pane(pane).textarea(), text_area);
+        // Only the focused pane shows a cursor. tui-textarea paints its cursor cell into the
+        // buffer (the visible block-cursor is reverse-video — see `theme::app::cursor`), and that
+        // style is per-textarea state. Rendering the focused pane's `&TextArea` directly keeps
+        // its mode-driven cursor color; for unfocused panes we render a clone with the cursor
+        // style stripped so no extra cursor cells appear elsewhere in the bar.
+        if pane == focused {
+            frame.render_widget(app.query_form().pane(pane).textarea(), text_area);
+        } else {
+            let mut cloned = app.query_form().pane(pane).textarea().clone();
+            cloned.set_cursor_style(theme::app::cursor_suppressed());
+            frame.render_widget(&cloned, text_area);
+        }
     }
 }
 

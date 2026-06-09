@@ -5,6 +5,10 @@
 
 use std::sync::mpsc::{Receiver, channel};
 
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use ratatui::style::Modifier;
+
 use crate::app::{App, Focus, Key, KeyEvent, KeyMods, QueryMode, SimplePane};
 use crate::engine::InterruptHandle;
 use crate::query::worker::types::QueryRequest;
@@ -203,4 +207,58 @@ fn invalid_limit_does_not_dispatch_or_dim_prior_result() {
         !app.result_is_stale(),
         "invalid-LIMIT pane validation does NOT dim the last good result"
     );
+}
+
+// ── Cursor only on the focused pane ──────────────────────────────────────────────────────────────
+
+/// Count cells in the rendered buffer carrying `Modifier::REVERSED` — the cursor-cell signature
+/// (`theme::app::cursor`). One per visible cursor; zero on an unfocused single-line pane.
+fn count_reversed_cells(app: &App, w: u16, h: u16) -> usize {
+    let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
+    t.draw(|f| app.render(f)).unwrap();
+    t.backend()
+        .buffer()
+        .content()
+        .iter()
+        .filter(|c| c.modifier.contains(Modifier::REVERSED))
+        .count()
+}
+
+#[test]
+fn only_focused_pane_shows_a_cursor_cell() {
+    let (app, _rx) = app();
+    // Default focus = WHERE. Render a comfortably-sized backend (the box is 7 rows tall + the
+    // results pane + status above it; 10 rows is plenty for the bar to appear).
+    // Five panes in Simple mode would each paint a reverse-video cursor cell if the cursor weren't
+    // suppressed on the unfocused four — assert we see exactly one.
+    let reversed = count_reversed_cells(&app, 60, 14);
+    assert_eq!(
+        reversed, 1,
+        "expected exactly ONE reverse-video cursor cell (focused pane), got {reversed}"
+    );
+}
+
+#[test]
+fn focused_cursor_follows_focus_change() {
+    let (mut app, _rx) = app();
+    // Focus moves to LIMIT — still exactly one cursor cell, just in a different pane.
+    app.query_form_mut().focus(SimplePane::Limit);
+    let reversed = count_reversed_cells(&app, 60, 14);
+    assert_eq!(
+        reversed, 1,
+        "after focus change, still exactly ONE cursor cell"
+    );
+}
+
+// ── Up navigation in Simple closed-popup ─────────────────────────────────────────────────────────
+
+#[test]
+fn up_in_simple_focuses_previous_pane() {
+    let (mut app, _rx) = app();
+    // Default WHERE -> Up should land on SELECT.
+    app.on_key(KeyEvent::new(Key::Up, KeyMods::NONE), 0);
+    assert_eq!(app.query_form().focused_pane(), SimplePane::Select);
+    // Up on SELECT stays put (no surface above the bar).
+    app.on_key(KeyEvent::new(Key::Up, KeyMods::NONE), 0);
+    assert_eq!(app.query_form().focused_pane(), SimplePane::Select);
 }

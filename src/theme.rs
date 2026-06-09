@@ -65,6 +65,13 @@ pub mod app {
         Style::default().add_modifier(Modifier::REVERSED)
     }
 
+    /// The "no cursor" style applied to UNFOCUSED Simple-mode panes so only the focused pane
+    /// shows a cursor cell (otherwise tui-textarea paints a reverse-video cursor on every pane it
+    /// renders). Plain default style: nothing reversed, nothing colored — text reads as text.
+    pub fn cursor_suppressed() -> Style {
+        Style::default()
+    }
+
     /// The query-bar cursor cell in vim **Normal** mode — colored reverse-video so the mode reads
     /// at the cursor itself (vim convention).
     pub fn cursor_normal() -> Style {
