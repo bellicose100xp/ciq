@@ -714,18 +714,34 @@ fn successful_response_after_an_error_clears_dim_in_render() {
 
 #[test]
 fn open_palette_overlays_columns_with_checkboxes() {
+    use crate::app::SimplePane;
     use crate::schema::{ColumnMeta, Schema};
-    let mut a = app();
+    // Build a Simple-mode App (the picker is anchored to the SELECT pane in Simple mode).
+    let (tx, _rx) = channel();
+    let mut a = App::new(tx, InterruptHandle::noop());
     a.set_schema(Schema::new(vec![
         ColumnMeta::new("id", ColumnType::Int),
         ColumnMeta::new("status", ColumnType::Text),
     ]));
     a.on_loaded("ready");
-    // Ctrl+P opens the column palette; it overlays the results area with checkbox rows.
+    // Close any post-load autocomplete popup so Ctrl+P actually reaches the palette open path.
+    let mut guard = 0;
+    while a.autocomplete().is_open() && guard < 4 {
+        a.on_key(KeyEvent::new(Key::Esc, crate::app::KeyMods::NONE), 0);
+        guard += 1;
+    }
+    a.query_form_mut().focus(SimplePane::Select);
+    let mut guard2 = 0;
+    while a.autocomplete().is_open() && guard2 < 4 {
+        a.on_key(KeyEvent::new(Key::Esc, crate::app::KeyMods::NONE), 0);
+        guard2 += 1;
+    }
+    // Ctrl+P opens the column palette from the SELECT pane; it overlays the results area with
+    // checkbox rows.
     a.on_key(KeyEvent::new(Key::Char('p'), crate::app::KeyMods::CTRL), 0);
     assert!(a.is_palette_open());
     let screen = render(&a, 40, 12);
-    assert!(screen.contains("[ ]"), "checkbox rows, screen:\n{screen}");
+    assert!(screen.contains("[x]"), "checkbox rows, screen:\n{screen}");
     assert!(screen.contains("status"), "column row, screen:\n{screen}");
     assert!(screen.contains("columns"), "title, screen:\n{screen}");
 }

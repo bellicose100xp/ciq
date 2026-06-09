@@ -169,14 +169,14 @@ pub struct App {
     /// (`None` = DuckDB auto-detected it) and whether the first row is a header. Defaults to
     /// `(None, true)` until the loader reports the dialect ([`set_csv_summary`](Self::set_csv_summary)).
     csv_summary: (Option<char>, bool),
-    /// The column-palette generated-state machine (P4.2-P4.5, §0/D3). Built from the schema on
-    /// load ([`set_schema`](Self::set_schema)); `None` until then. The palette owns a ciq-generated
-    /// query state and emits SQL from it — it never parses the bar. Ownership ("is the palette
-    /// live?") is a byte-compare of the bar against the last string the palette emitted
-    /// ([`palette_owns_query`](Self::palette_owns_query)); the App never inspects user SQL grammar.
+    /// The SELECT-pane column picker (`Ctrl+P` from the SELECT pane). Built from the schema on
+    /// load ([`set_schema`](Self::set_schema)); `None` until then. Every toggle in the popup
+    /// rewrites the SELECT pane immediately — the popup is the live editor for the SELECT
+    /// projection, not a separate emission with its own ownership semantics (the prior generated-
+    /// state design, §0/D3, was replaced by the user-locked redesign 2026-06-09).
     palette: Option<PaletteState>,
-    /// Whether the palette popup is currently open (P4.5). When open it intercepts keys (toggle /
-    /// reorder / filter / emit) before the query-bar routing, like the autocomplete popup.
+    /// Whether the column-picker popup is currently open. When open it intercepts keys before the
+    /// query-bar routing, like every other popup.
     pub(crate) palette_open: bool,
     /// The instant-facet popup (P4.6, §6.5): the focused column + its parsed stats, filled
     /// out-of-band by the worker. `None` when no facet is open. Opened by `f` on the focused grid
@@ -334,10 +334,11 @@ impl App {
         &self.query_form
     }
 
-    /// Mutable view of the form. `pub(crate)` so the orchestration helpers (palette_app /
-    /// history_app / ai_app) can install full SQL strings via [`QueryForm::enter_simple_with_parts`]
-    /// or [`QueryForm::enter_power_with_sql`] without going through more granular accessors. Tests
-    /// also reach for it via the [`Self::force_power_mode_for_tests`] shim.
+    /// Mutable view of the form. Test-only — production paths use the more granular
+    /// `query_form.set_text(…)` / `query_form.focus(…)` etc. directly. Gated `#[cfg(test)]` so
+    /// clippy's dead-code lint doesn't fire on a release build (this is `pub(crate)` and only
+    /// reached from `#[cfg(test)]` modules).
+    #[cfg(test)]
     pub(crate) fn query_form_mut(&mut self) -> &mut QueryForm {
         &mut self.query_form
     }
@@ -540,13 +541,9 @@ impl App {
             };
             return false;
         }
-        // Ctrl+P opens the column palette (when a schema is loaded). Checked before the popup /
-        // quit routing so the chord is reachable from any non-palette state. (Ctrl+K is reserved
-        // for tmux's HJKL pane-nav.)
-        if ev.mods.ctrl && matches!(ev.key, Key::Char('p') | Key::Char('P')) {
-            self.open_palette();
-            return false;
-        }
+        // Ctrl+P (column picker) is anchored to the SELECT pane in Simple mode — it's NOT a
+        // top-level chord. The dispatch lives inside `on_key_query_bar` so the gate (focused pane
+        // == SELECT) can be checked there cleanly. (Ctrl+K is reserved for tmux's HJKL pane-nav.)
         // Ctrl+R opens the query-history popup (the recall chord, §7.6). Reachable from any
         // non-popup state. Seeds the needle with the current bar text so the list pre-filters to
         // similar prior queries.
@@ -756,6 +753,17 @@ impl App {
         if matches!(self.phase, AppPhase::Loading) {
             self.pending_query_on_ready = true;
         }
+    }
+
+    /// Schedule the **initial** post-load query so the grid populates on launch without the user
+    /// typing anything. In Simple mode the default panes always compose a non-empty SQL
+    /// (`SELECT * FROM t LIMIT 1000`); in Power mode an empty textarea is a no-op. The event
+    /// loop calls this once after [`on_loaded`].
+    pub fn schedule_initial_query(&mut self, now_ms: u64) {
+        if self.query().trim().is_empty() {
+            return;
+        }
+        self.schedule(now_ms);
     }
 
     // --- the debounce fire edge ---
@@ -995,23 +1003,6 @@ impl App {
     /// Whether the palette popup is currently open.
     pub fn is_palette_open(&self) -> bool {
         self.palette_open
-    }
-
-    /// Whether the **palette owns the current query** — i.e. the bar text byte-equals the last
-    /// string the palette emitted (§0/D3). Equal -> the palette's edits stay live; different (or no
-    /// palette / never emitted) -> the user hand-typed SQL and palette actions must offer a soft
-    /// "Replace?" rather than silently rewriting. A pure byte-compare; **no SQL parsing** anywhere.
-    pub fn palette_owns_query(&self) -> bool {
-        // Power mode: byte-compare the textarea against the last palette emission. In Simple mode
-        // ownership is implicit (palette emit goes through `enter_simple_with_parts`, distributing
-        // into the panes), so we report `false` there — the soft "Replace?" prompt is a Power-mode
-        // affordance.
-        if !matches!(self.query_form.mode(), QueryMode::Power) {
-            return false;
-        }
-        self.palette
-            .as_ref()
-            .is_some_and(|p| p.owns(&self.query_form.power().text()))
     }
 
     // --- query history (P5.2, §7.6): the open/close/handle/recall/record block lives in

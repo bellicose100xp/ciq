@@ -148,7 +148,7 @@ fn popup_rect_for(app: &App, kind: PopupKind, bar: Rect, results: Rect) -> Rect 
         }
         PopupKind::Palette => app
             .palette()
-            .map(|p| (p.filtered_indices().len().max(1) as u16).min(PALETTE_MAX_ROWS))
+            .map(|p| (p.all_columns().len().max(1) as u16).min(PALETTE_MAX_ROWS))
             .unwrap_or(1),
         PopupKind::Facet => FACET_POPUP_ROWS,
         PopupKind::Autocomplete => (app.autocomplete().len() as u16).min(MAX_VISIBLE_ROWS),

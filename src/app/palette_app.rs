@@ -1,149 +1,134 @@
-//! Column-palette App orchestration (`dev/PLAN.md` §6.2, `dev/DECISIONS.md` D3) — an `impl App`
-//! block lifted out of `app.rs` to keep that file under the 1000-line cap, like the autocomplete /
-//! history / AI blocks. It owns opening/closing the palette popup, routing its keys (toggle /
-//! reorder / filter / emit / close), and the two emitter paths that install the palette's generated
-//! SQL into the bar (the load-time seed and the explicit Replace).
+//! Column-palette App orchestration — an `impl App` block lifted out of `app.rs` to keep that
+//! file under the 1000-line cap. Owns opening / closing the SELECT-pane column picker, routing
+//! its keys, and **mirroring every toggle into the SELECT pane immediately** (the live-rewrite
+//! contract — see [`crate::palette`]).
 //!
-//! All of it is headless: the palette state machine is pure data, and the only side effects are
-//! setting the bar text + scheduling a debounced query through the **same** dispatch path a typed
+//! Headless: the palette state machine is pure data, and the only side effect is setting the
+//! SELECT pane's text + scheduling a debounced query through the **same** dispatch path a typed
 //! query uses (so there is no second engine entry).
 
-use crate::app::{App, AppPhase, Key, KeyEvent};
-use crate::palette::query_emit::emit_with_limit as emit_palette_with_limit;
+use crate::app::query_form::SimplePane;
+use crate::app::{App, AppPhase, Key, KeyEvent, QueryMode};
 
 impl App {
-    /// Open the column palette (P4.5/D3). No-op while loading / on a load error, or with no schema
-    /// (nothing to pick). Closes the autocomplete popup so the two overlays never stack. The
-    /// palette keeps whatever selection/needle state it already had (so reopening resumes where the
-    /// user left off).
+    /// Open the column-picker popup (anchored to the SELECT pane).
+    ///
+    /// No-op:
+    ///  * while loading / on a load error;
+    ///  * with no schema (nothing to pick);
+    ///  * in Power mode (the popup is a Simple-mode SELECT-pane affordance);
+    ///  * when the focused pane is anything other than `SELECT`.
+    ///
+    /// On open the popup pre-checks against the live SELECT pane text (`*` or empty → all
+    /// checked; comma list → only those checked). Closes the autocomplete popup so the two
+    /// overlays never stack.
     pub(crate) fn open_palette(&mut self) {
-        if self.palette.is_none()
-            || matches!(self.phase, AppPhase::Loading | AppPhase::LoadError(_))
-        {
+        if matches!(self.phase, AppPhase::Loading | AppPhase::LoadError(_)) {
             return;
+        }
+        if self.palette.is_none() {
+            return;
+        }
+        if !matches!(self.query_form.mode(), QueryMode::Simple) {
+            return;
+        }
+        if self.query_form.focused_pane() != SimplePane::Select {
+            return;
+        }
+        let select_text = self.query_form.text(SimplePane::Select).to_string();
+        if let Some(palette) = self.palette.as_mut() {
+            palette.open_with_select(&select_text);
         }
         self.autocomplete.close();
         self.palette_open = true;
     }
 
-    /// Close the palette popup without emitting.
+    /// Close the popup. The SELECT-pane text the user shaped via toggles stays as it is — the
+    /// popup is a live editor, not an accept/cancel dialog.
     fn close_palette(&mut self) {
         self.palette_open = false;
     }
 
-    /// Handle a key while the palette is open (P4.5). Returns whether the app should quit (only
-    /// `Ctrl+C` quits from here; `Esc` closes the palette). The keys, mirroring the §6.2 chord set:
-    ///  - `Space` toggles the column under the cursor (checked <-> unchecked);
-    ///  - `Up`/`Down` move the cursor through the filtered list;
-    ///  - `Left`/`Right` reorder the cursor's checked column earlier/later in the projection;
-    ///  - a printable char appends to the fuzzy needle; `Backspace` pops it;
-    ///  - `Enter` emits the palette's query into the bar (-> debouncer -> worker) and closes;
-    ///  - `Esc` closes without emitting.
+    /// Handle a key while the popup is open. Returns whether the app should quit (only `Ctrl+C`
+    /// quits from here). Every toggle rewrites the SELECT pane and schedules a debounced
+    /// dispatch. Keys (the user-locked map):
+    ///  - `↑`/`↓`: cursor (bounded; no wrap).
+    ///  - `Space` / `Tab`: toggle the highlighted column.
+    ///  - `Enter`: close the popup (we're done).
+    ///  - `Esc`: close the popup.
+    ///  - `Ctrl+A`: select all.
+    ///  - `Ctrl+X`: deselect all.
+    ///  - `Ctrl+I`: invert.
+    ///  - `Ctrl+C`: quit.
+    ///  - any other key: consumed (does NOT fall through to the editor while the popup is open).
     pub(crate) fn handle_palette_key(&mut self, ev: &KeyEvent, now_ms: u64) -> bool {
+        // Ctrl+C universally quits.
         if ev.mods.ctrl && matches!(ev.key, Key::Char('c') | Key::Char('C')) {
-            return true; // Ctrl-C still quits
+            return true;
         }
-        let Some(palette) = self.palette.as_mut() else {
-            self.palette_open = false;
-            return false;
-        };
+        if ev.mods.ctrl {
+            match ev.key {
+                Key::Char('a') | Key::Char('A') => {
+                    if let Some(p) = self.palette.as_mut() {
+                        p.select_all();
+                    }
+                    self.write_palette_to_select_and_schedule(now_ms);
+                    return false;
+                }
+                Key::Char('x') | Key::Char('X') => {
+                    if let Some(p) = self.palette.as_mut() {
+                        p.deselect_all();
+                    }
+                    self.write_palette_to_select_and_schedule(now_ms);
+                    return false;
+                }
+                Key::Char('i') | Key::Char('I') => {
+                    if let Some(p) = self.palette.as_mut() {
+                        p.invert();
+                    }
+                    self.write_palette_to_select_and_schedule(now_ms);
+                    return false;
+                }
+                _ => {
+                    // Other Ctrl chords are consumed (don't leak through to the editor).
+                    return false;
+                }
+            }
+        }
         match &ev.key {
-            Key::Esc => self.close_palette(),
-            Key::Enter => self.emit_palette_query(now_ms),
-            Key::Char(' ') => palette.toggle_cursor(),
-            Key::Up => palette.cursor_up(),
-            Key::Down => palette.cursor_down(),
-            Key::Left => {
-                if let Some(i) = palette.cursor_column_index() {
-                    palette.move_selection_up(i);
+            Key::Esc | Key::Enter => self.close_palette(),
+            Key::Up => {
+                if let Some(p) = self.palette.as_mut() {
+                    p.cursor_up();
                 }
             }
-            Key::Right => {
-                if let Some(i) = palette.cursor_column_index() {
-                    palette.move_selection_down(i);
+            Key::Down => {
+                if let Some(p) = self.palette.as_mut() {
+                    p.cursor_down();
                 }
             }
-            Key::Char(c) => palette.push_needle(*c),
-            Key::Backspace => palette.pop_needle(),
+            Key::Char(' ') | Key::Tab => {
+                if let Some(p) = self.palette.as_mut() {
+                    p.toggle_at_cursor();
+                }
+                self.write_palette_to_select_and_schedule(now_ms);
+            }
+            // All other keys are consumed while the popup owns the input.
             _ => {}
         }
         false
     }
 
-    /// Emit the palette's generated query into the bar, record it as palette-owned, schedule it
-    /// (-> debouncer -> worker, the normal path), and close the palette. The single point where a
-    /// palette `Enter` reaches the engine — through exactly the same dispatch path a typed query
-    /// uses, so there is no second engine entry.
-    fn emit_palette_query(&mut self, now_ms: u64) {
-        let limit = self.viewport_row_limit;
-        let Some(palette) = self.palette.as_mut() else {
-            self.palette_open = false;
-            return;
+    /// Write the palette's current checked set into the SELECT pane and schedule a debounced
+    /// dispatch. The single seam every toggle/Ctrl+A/Ctrl+X/Ctrl+I goes through, so the
+    /// SELECT-pane semantics (and the composer's empty-fallback to `*`) live in one place.
+    fn write_palette_to_select_and_schedule(&mut self, now_ms: u64) {
+        let new_select = match self.palette.as_ref() {
+            Some(p) => p.write_to_select(),
+            None => return,
         };
-        let sql = emit_palette_with_limit(palette, limit);
-        palette.record_emitted(&sql);
-        install_full_sql_into_form(self, &sql);
-        self.refresh_autocomplete();
-        self.close_palette();
-        self.schedule(now_ms);
-    }
-
-    /// Pre-seed the query bar with the palette's own emission (`SELECT * FROM t LIMIT n`) so the
-    /// common path — open a file, no SQL typed yet — starts **palette-owned** (§0/D3). Only seeds
-    /// when a palette exists and the bar is still empty (the user typed nothing during load); it
-    /// never clobbers a query the user already started. Records the emitted string as the palette's
-    /// own and schedules the query so the grid populates. The event loop calls this once after
-    /// load. Returns `true` if it seeded.
-    pub fn seed_palette_query(&mut self, now_ms: u64) -> bool {
-        if !self.editor().text().is_empty() {
-            return false;
-        }
-        let limit = self.viewport_row_limit;
-        let Some(palette) = self.palette.as_mut() else {
-            return false;
-        };
-        let sql = emit_palette_with_limit(palette, limit);
-        palette.record_emitted(&sql);
-        install_full_sql_into_form(self, &sql);
+        self.query_form.set_text(SimplePane::Select, new_select);
         self.refresh_autocomplete();
         self.schedule(now_ms);
-        true
-    }
-
-    /// Re-emit the palette's query and replace the bar with it (the "Replace query with column
-    /// selection?" affordance, §0/D3). This is the **only** path that overwrites hand-typed SQL,
-    /// and only on explicit user confirmation — accepting Replace discards whatever the user typed
-    /// and snaps to the palette's generated query (the documented UX cliff: a hand-typed
-    /// `… WHERE region='EU'` is discarded). Records the new emission as palette-owned and schedules
-    /// it. No-op without a palette. Returns the emitted SQL it installed.
-    pub fn replace_query_with_palette(&mut self, now_ms: u64) -> Option<String> {
-        let limit = self.viewport_row_limit;
-        let palette = self.palette.as_mut()?;
-        let sql = emit_palette_with_limit(palette, limit);
-        palette.record_emitted(&sql);
-        install_full_sql_into_form(self, &sql);
-        self.refresh_autocomplete();
-        self.schedule(now_ms);
-        Some(sql)
-    }
-}
-
-/// Install a full SQL string into the form. In **Simple** mode, parse it via the simplifier and
-/// distribute into the five panes; on a simplify failure (the SQL has features Simple can't
-/// represent — shouldn't happen for the palette's canonical `SELECT col,... FROM t LIMIT N`
-/// emission, but we degrade gracefully) flip to Power mode and put the text in the textarea. In
-/// **Power** mode, set the textarea text directly. The single seam every "set the bar from a
-/// generated SQL string" path goes through (palette emit, palette pre-seed, palette replace), so
-/// the mode-switching behavior is consistent.
-fn install_full_sql_into_form(app: &mut crate::app::App, sql: &str) {
-    use crate::app::QueryMode;
-    use crate::app::query_form::try_simplify_from_sql;
-    let limit = app.viewport_row_limit();
-    match app.query_form_mut().mode() {
-        QueryMode::Simple => match try_simplify_from_sql(sql) {
-            Ok(parts) => app.query_form_mut().enter_simple_with_parts(parts, limit),
-            Err(_) => app.query_form_mut().enter_power_with_sql(sql),
-        },
-        QueryMode::Power => app.query_form_mut().power_mut().set_text(sql),
     }
 }

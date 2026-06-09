@@ -69,6 +69,18 @@ impl App {
         if matches!(self.phase, AppPhase::LoadError(_)) {
             return; // bar is frozen once load failed
         }
+        // Ctrl+P opens the column-picker popup, **anchored to the SELECT pane in Simple mode**.
+        // Outside that context (Power mode, or any other Simple pane focused) it is a silent
+        // no-op — the popup is a SELECT-pane affordance only. Checked before pane nav so it isn't
+        // shadowed by the modifier match below.
+        if ev.mods.ctrl
+            && matches!(ev.key, Key::Char('p') | Key::Char('P'))
+            && matches!(self.query_form.mode(), QueryMode::Simple)
+            && self.query_form.focused_pane() == crate::app::SimplePane::Select
+        {
+            self.open_palette();
+            return;
+        }
         // Pane navigation in Simple mode — Alt+J / Alt+K / Alt+Down / Alt+Up. Bounded (no wrap):
         // Alt+J/Down stops at LIMIT; Alt+K/Up stops at SELECT. Alt-modified keys never carry
         // editor text, so this is intercepted before the editor's typing path. Power mode ignores

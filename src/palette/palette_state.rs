@@ -1,35 +1,32 @@
-//! Palette state machine — the generated-state column picker's structured state (`dev/PLAN.md`
-//! §6.2, `dev/DECISIONS.md` D3).
+//! Column palette state — the SELECT-pane column picker (`dev/PLAN.md` §6.2 update; user-locked
+//! redesign 2026-06-09).
 //!
-//! Pure owned data with pure transitions: which columns are checked (in selection order — that
-//! order drives the `SELECT` projection order), the conjunction of facet predicates, the fuzzy
-//! filter needle, and the cursor into the filtered list. No terminal, no engine, no clock — every
-//! transition is `&mut self` over plain data and is unit-tested with plain asserts.
+//! Pure state of "which schema columns are checked." Anchored to the SELECT pane: the popup is the
+//! ONLY place ciq lets the user toggle a column projection, and **every toggle rewrites the SELECT
+//! pane immediately** (the App layer, [`crate::app::palette_app`], wires this side effect — this
+//! module stays pure). The popup is open or closed; there is no separate "accept" action and no
+//! ownership byte-compare anymore (the SELECT pane *is* the source of truth, and this state mirrors
+//! it for the duration of the popup).
 //!
-//! **Ordered-unique selection without a new dependency.** The plan calls for an `IndexSet<usize>`
-//! to hold the checked columns (ordered + unique). Rather than add the `indexmap` crate for one
-//! field, ciq models it as a `Vec<usize>` with an explicit membership check on insert: pushing an
-//! already-present index is a no-op (uniqueness), and the push order is the projection order
-//! (insertion order). Toggling off removes by value, preserving the relative order of the rest. The
-//! set is small (column count), so the linear membership scan is free. This is the documented
-//! "prefer no new dep" choice from the task brief.
+//! The checked set is a [`BTreeSet<usize>`] over schema indices — emit order is **schema order**,
+//! not toggle order, so a click pattern can never reorder the projection. (Reordering is a future
+//! affordance; out of scope for v1 of the live picker.)
 //!
-//! **Ownership is a byte-compare, never a parse (§0/D3).** [`PaletteState::owns`] compares the
-//! current bar text against the last string the emitter produced. Equal -> the palette owns the
-//! query and its edits stay live; different -> the user hand-typed SQL and the palette is disabled
-//! (the App offers a soft "Replace?"). No SQL parsing anywhere.
+//! No fuzzy filter. The popup shows every schema column in order — selecting one is two keystrokes
+//! (cursor + Space/Tab/Enter), filtering doesn't earn its complexity for a typical CSV's column
+//! count. If a future CSV with hundreds of columns demands it, add a needle then.
+
+use std::collections::BTreeSet;
 
 use crate::schema::{ColumnType, Schema};
-use crate::text_match::is_subsequence;
+use crate::sql_ident::quote_ident_if_needed;
+use crate::sql_lexer::{TokenKind, tokenize};
 
-/// One column the palette can pick: its name (verbatim header text) and sniffed [`ColumnType`].
-/// A lightweight owned snapshot of a [`crate::schema::ColumnMeta`] so the palette state is
-/// self-contained (it does not borrow the `Schema` for its lifetime).
+/// One column the picker can toggle: name (verbatim header text) and sniffed [`ColumnType`].
+/// A self-contained snapshot of a [`crate::schema::ColumnMeta`] so the palette state owns its data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnRef {
-    /// The column name, exactly as the CSV header spells it.
     pub name: String,
-    /// The sniffed column type (drives the type badge in the popup + value quoting in the emit).
     pub ty: ColumnType,
 }
 
@@ -42,106 +39,21 @@ impl ColumnRef {
     }
 }
 
-/// A facet predicate operator — the comparison a [`Predicate`] applies. Deliberately a small,
-/// closed set covering the facet/quick-filter affordances the palette offers; richer SQL is the
-/// user's to hand-type (at which point the palette disables itself, §0/D3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PredicateOp {
-    /// `col = value` (or `col IS NULL` when the value is [`Predicate::is_null`]).
-    Eq,
-    /// `col != value` (or `col IS NOT NULL`).
-    Neq,
-    /// `col < value`.
-    Lt,
-    /// `col <= value`.
-    Le,
-    /// `col > value`.
-    Gt,
-    /// `col >= value`.
-    Ge,
-    /// `col LIKE value` (value emitted as a string literal).
-    Like,
-}
-
-/// One facet predicate in the palette's generated `WHERE` conjunction: a column, an operator, and a
-/// value. The value's quoting on emit is decided by the column's [`ColumnType`] (numeric/bool bare,
-/// text/temporal single-quoted) and by [`is_null`](Self::is_null) (which becomes `IS NULL` /
-/// `IS NOT NULL`). Holding the column's type here keeps [`query_emit`](super::query_emit) a pure
-/// `state -> String` with no `Schema` lookup.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Predicate {
-    /// The column the predicate constrains (verbatim header name).
-    pub column: String,
-    /// The column's type — decides value quoting on emit.
-    pub ty: ColumnType,
-    /// The comparison operator.
-    pub op: PredicateOp,
-    /// The comparison value as the user entered it (unquoted, unescaped). `None` means a NULL test
-    /// (`IS NULL` for [`PredicateOp::Eq`], `IS NOT NULL` for [`PredicateOp::Neq`]).
-    pub value: Option<String>,
-}
-
-impl Predicate {
-    /// A value predicate `col <op> value`.
-    pub fn new(
-        column: impl Into<String>,
-        ty: ColumnType,
-        op: PredicateOp,
-        value: impl Into<String>,
-    ) -> Self {
-        Self {
-            column: column.into(),
-            ty,
-            op,
-            value: Some(value.into()),
-        }
-    }
-
-    /// A NULL-test predicate (`col IS NULL` for `Eq`, `col IS NOT NULL` for `Neq`).
-    pub fn null_test(column: impl Into<String>, ty: ColumnType, op: PredicateOp) -> Self {
-        Self {
-            column: column.into(),
-            ty,
-            op,
-            value: None,
-        }
-    }
-
-    /// Whether this is a NULL test (no value -> `IS [NOT] NULL`).
-    pub fn is_null(&self) -> bool {
-        self.value.is_none()
-    }
-}
-
-/// The palette's structured state (`dev/PLAN.md` §6.2): the column universe, the ordered set of
-/// checked column indices (the projection order), the facet-predicate conjunction, the fuzzy
-/// filter needle, the cursor into the filtered view, and the last string the emitter produced (for
-/// the ownership byte-compare).
-///
-/// All fields are private; transitions go through the methods so the invariants hold (checked
-/// indices stay unique + in range; the cursor stays inside the filtered list).
+/// The palette popup's state: the column universe (schema order), which schema indices are checked,
+/// and the cursor (the highlighted row). All transitions are pure `&mut self`; out-of-range or
+/// empty-list operations are no-ops, never panics.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PaletteState {
-    /// Every column in table order — the pick universe.
+    /// Every column in schema order — the pick universe.
     all_columns: Vec<ColumnRef>,
-    /// Checked column indices in **selection order** (drives the `SELECT` projection order).
-    /// Ordered-unique: see the module docs for the no-new-dep `IndexSet` model.
-    checked: Vec<usize>,
-    /// The facet-predicate conjunction (`WHERE p1 AND p2 AND …`), in insertion order.
-    predicates: Vec<Predicate>,
-    /// The fuzzy filter needle (lowercased subsequence match against column names).
-    needle: String,
-    /// The cursor into the **filtered** column list (the currently highlighted row).
+    /// Schema indices that are currently checked. `BTreeSet` so emit order is naturally schema order.
+    checked: BTreeSet<usize>,
+    /// The highlight row in `all_columns` (0-based). Bounded at `[0, len)`.
     cursor: usize,
-    /// The last string [`query_emit::emit`](super::query_emit::emit) produced for this state, set by
-    /// [`record_emitted`](Self::record_emitted). The ownership check (§0/D3) byte-compares the bar
-    /// against this. `None` until the first emit.
-    last_emitted: Option<String>,
 }
 
 impl PaletteState {
-    /// Build a palette over a column universe (table order). Nothing checked, no predicates, empty
-    /// needle, cursor at the top.
+    /// Build a palette over a column universe (schema order). Nothing checked, cursor at the top.
     pub fn new(all_columns: Vec<ColumnRef>) -> Self {
         Self {
             all_columns,
@@ -162,209 +74,201 @@ impl PaletteState {
 
     // --- read-only accessors ---
 
-    /// Every column in the pick universe (table order).
+    /// Every column in the pick universe (schema order).
     pub fn all_columns(&self) -> &[ColumnRef] {
         &self.all_columns
     }
 
-    /// The checked column indices, in selection (projection) order.
-    pub fn checked(&self) -> &[usize] {
-        &self.checked
-    }
-
-    /// The checked columns resolved to [`ColumnRef`]s, in selection order — the projection the
-    /// emitter renders. Skips any stale index (none can occur through the public API, but the
-    /// resolve stays total).
-    pub fn checked_columns(&self) -> Vec<&ColumnRef> {
-        self.checked
-            .iter()
-            .filter_map(|&i| self.all_columns.get(i))
-            .collect()
-    }
-
-    /// The facet predicates, in insertion order.
-    pub fn predicates(&self) -> &[Predicate] {
-        &self.predicates
-    }
-
-    /// The current fuzzy filter needle.
-    pub fn needle(&self) -> &str {
-        &self.needle
-    }
-
-    /// The cursor into the filtered column list.
+    /// The cursor row (0-based index into `all_columns`).
     pub fn cursor(&self) -> usize {
         self.cursor
     }
 
-    /// Whether column index `i` is currently checked.
+    /// Whether schema column index `i` is checked.
     pub fn is_checked(&self, i: usize) -> bool {
         self.checked.contains(&i)
     }
 
-    /// The last string the emitter produced for this state, if any.
-    pub fn last_emitted(&self) -> Option<&str> {
-        self.last_emitted.as_deref()
-    }
-
-    // --- filtered view (the fuzzy needle decides which rows show) ---
-
-    /// The indices (into [`all_columns`](Self::all_columns)) of the columns matching the current
-    /// needle, in table order. An empty needle matches every column. The match is a
-    /// case-insensitive subsequence (the shared [`crate::text_match::is_subsequence`] — the same
-    /// rule the autocomplete ranker uses), so a needle never reorders the universe — it only filters
-    /// it (the determinism stable-order rule).
-    pub fn filtered_indices(&self) -> Vec<usize> {
-        if self.needle.is_empty() {
-            return (0..self.all_columns.len()).collect();
-        }
-        let needle = self.needle.to_ascii_lowercase();
-        self.all_columns
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| is_subsequence(&c.name.to_ascii_lowercase(), &needle))
-            .map(|(i, _)| i)
-            .collect()
-    }
-
-    /// The column at the cursor in the filtered view, if the filtered list is non-empty.
-    pub fn cursor_column_index(&self) -> Option<usize> {
-        self.filtered_indices().get(self.cursor).copied()
+    /// The schema-index set (read-only). Visible for tests and for the popup row chrome to render
+    /// `[x]` vs `[ ]`. Not part of the public API for non-test consumers.
+    pub fn checked_set(&self) -> &BTreeSet<usize> {
+        &self.checked
     }
 
     // --- transitions (pure `&mut self`) ---
 
-    /// Toggle the checked state of column index `i`. Checking appends it to the selection order (so
-    /// the projection lists columns in the order the user checked them); unchecking removes it,
-    /// preserving the relative order of the rest. Out-of-range `i` is ignored.
-    pub fn toggle(&mut self, i: usize) {
-        if i >= self.all_columns.len() {
+    /// Replace the checked set so it matches `select_text`'s semantics:
+    ///   * empty (or `*`) → every column checked;
+    ///   * non-empty comma list → only the named columns checked (case-insensitive against the
+    ///     schema; quoted idents `"order"` strip to `order` before comparison);
+    ///   * a name that doesn't exist in the schema is silently ignored.
+    ///
+    /// Used by the App when opening the popup so it pre-checks against the live SELECT pane.
+    pub fn open_with_select(&mut self, select_text: &str) {
+        let trimmed = select_text.trim();
+        self.cursor = 0;
+        if trimmed.is_empty() || trimmed == "*" {
+            self.checked = (0..self.all_columns.len()).collect();
             return;
         }
-        if let Some(pos) = self.checked.iter().position(|&c| c == i) {
-            self.checked.remove(pos);
-        } else {
-            self.checked.push(i);
+        let names = parse_select_list(trimmed);
+        let mut next = BTreeSet::new();
+        for n in names {
+            let n_lc = n.to_ascii_lowercase();
+            if let Some(idx) = self
+                .all_columns
+                .iter()
+                .position(|c| c.name.to_ascii_lowercase() == n_lc)
+            {
+                next.insert(idx);
+            }
+            // unknown column names are silently dropped — no crash, no error.
         }
+        self.checked = next;
     }
 
-    /// Toggle the column currently under the cursor (the filtered-view highlight). No-op when the
-    /// filtered list is empty.
-    pub fn toggle_cursor(&mut self) {
-        if let Some(i) = self.cursor_column_index() {
-            self.toggle(i);
-        }
-    }
-
-    /// Move a checked column one position **earlier** in the projection order (toward the front of
-    /// the `SELECT` list). Identified by its column index `i`; no-op if `i` is not checked or
-    /// already first.
-    pub fn move_selection_up(&mut self, i: usize) {
-        if let Some(pos) = self.checked.iter().position(|&c| c == i)
-            && pos > 0
-        {
-            self.checked.swap(pos, pos - 1);
-        }
-    }
-
-    /// Move a checked column one position **later** in the projection order (toward the end of the
-    /// `SELECT` list). No-op if `i` is not checked or already last.
-    pub fn move_selection_down(&mut self, i: usize) {
-        if let Some(pos) = self.checked.iter().position(|&c| c == i)
-            && pos + 1 < self.checked.len()
-        {
-            self.checked.swap(pos, pos + 1);
-        }
-    }
-
-    /// Move the cursor down one row in the filtered view, wrapping from the last back to the first.
-    /// No-op when the filtered list is empty.
+    /// Move the cursor down one row. **Bounded** — no wrap; at the bottom it is a no-op. Empty list
+    /// is a no-op.
     pub fn cursor_down(&mut self) {
-        let len = self.filtered_indices().len();
+        let len = self.all_columns.len();
         if len == 0 {
             return;
         }
-        self.cursor = (self.cursor + 1) % len;
+        if self.cursor + 1 < len {
+            self.cursor += 1;
+        }
     }
 
-    /// Move the cursor up one row in the filtered view, wrapping from the first to the last. No-op
-    /// when the filtered list is empty.
+    /// Move the cursor up one row. **Bounded** — no wrap; at the top it is a no-op. Empty list is a
+    /// no-op.
     pub fn cursor_up(&mut self) {
-        let len = self.filtered_indices().len();
-        if len == 0 {
-            return;
+        if self.cursor > 0 {
+            self.cursor -= 1;
         }
-        self.cursor = if self.cursor == 0 {
-            len - 1
-        } else {
-            self.cursor - 1
-        };
     }
 
-    /// Move the cursor to row `row` in the filtered view (the mouse click-to-select path), clamped
-    /// to the last filtered row. No-op when the filtered list is empty.
+    /// Move the cursor to row `row`, clamped to the last row. Empty list is a no-op.
     pub fn set_cursor(&mut self, row: usize) {
-        let len = self.filtered_indices().len();
+        let len = self.all_columns.len();
         if len == 0 {
             return;
         }
         self.cursor = row.min(len - 1);
     }
 
-    /// Append a character to the fuzzy filter needle and clamp the cursor back into the (now
-    /// possibly shorter) filtered list.
-    pub fn push_needle(&mut self, c: char) {
-        self.needle.push(c);
-        self.clamp_cursor();
-    }
-
-    /// Remove the last character from the needle and clamp the cursor into the filtered list.
-    pub fn pop_needle(&mut self) {
-        self.needle.pop();
-        self.clamp_cursor();
-    }
-
-    /// Replace the whole needle (and clamp the cursor).
-    pub fn set_needle(&mut self, needle: impl Into<String>) {
-        self.needle = needle.into();
-        self.clamp_cursor();
-    }
-
-    /// Add a facet predicate to the conjunction.
-    pub fn add_predicate(&mut self, p: Predicate) {
-        self.predicates.push(p);
-    }
-
-    /// Remove the facet predicate at `idx` (no-op if out of range).
-    pub fn remove_predicate(&mut self, idx: usize) {
-        if idx < self.predicates.len() {
-            self.predicates.remove(idx);
+    /// Toggle the checked state of schema index `i`. Out-of-range is ignored.
+    pub fn toggle(&mut self, i: usize) {
+        if i >= self.all_columns.len() {
+            return;
+        }
+        if !self.checked.insert(i) {
+            self.checked.remove(&i);
         }
     }
 
-    /// Record the string the emitter just produced, so a later [`owns`](Self::owns) byte-compare
-    /// can tell whether the bar still holds the palette's own emission (§0/D3).
-    pub fn record_emitted(&mut self, sql: impl Into<String>) {
-        self.last_emitted = Some(sql.into());
+    /// Toggle the column under the cursor. Empty list is a no-op.
+    pub fn toggle_at_cursor(&mut self) {
+        if self.all_columns.is_empty() {
+            return;
+        }
+        self.toggle(self.cursor);
     }
 
-    /// Whether the palette **owns** `bar_text` — i.e. it byte-equals the last string the emitter
-    /// produced. Equal -> palette-owned (its edits stay live); different (or never emitted) -> the
-    /// user hand-typed SQL and the palette is disabled (§0/D3). A pure byte-compare; **no parsing**.
-    pub fn owns(&self, bar_text: &str) -> bool {
-        self.last_emitted.as_deref() == Some(bar_text)
+    /// Check every column.
+    pub fn select_all(&mut self) {
+        self.checked = (0..self.all_columns.len()).collect();
     }
 
-    /// Clamp the cursor so it stays inside the current filtered list (used after a needle edit
-    /// shrinks the list). An empty list parks the cursor at 0.
-    fn clamp_cursor(&mut self) {
-        let len = self.filtered_indices().len();
-        if len == 0 {
-            self.cursor = 0;
-        } else if self.cursor >= len {
-            self.cursor = len - 1;
+    /// Uncheck every column.
+    pub fn deselect_all(&mut self) {
+        self.checked.clear();
+    }
+
+    /// Invert the checked set — checked becomes unchecked and vice versa.
+    pub fn invert(&mut self) {
+        let mut next = BTreeSet::new();
+        for i in 0..self.all_columns.len() {
+            if !self.checked.contains(&i) {
+                next.insert(i);
+            }
+        }
+        self.checked = next;
+    }
+
+    /// Render the checked set into the SELECT-pane text:
+    ///   * all columns checked → `*`;
+    ///   * subset checked → comma-separated names in **schema order**, each
+    ///     [`quote_ident_if_needed`](crate::sql_ident::quote_ident_if_needed)-quoted;
+    ///   * empty checked set → empty string (the composer falls back to `*`, so the grid keeps
+    ///     showing the full table — the user-locked behavior).
+    pub fn write_to_select(&self) -> String {
+        if self.all_columns.is_empty() {
+            return String::new();
+        }
+        if self.checked.len() == self.all_columns.len() {
+            return "*".to_string();
+        }
+        if self.checked.is_empty() {
+            return String::new();
+        }
+        let mut parts: Vec<String> = Vec::with_capacity(self.checked.len());
+        for &i in self.checked.iter() {
+            if let Some(c) = self.all_columns.get(i) {
+                parts.push(quote_ident_if_needed(&c.name));
+            }
+        }
+        parts.join(", ")
+    }
+}
+
+/// Split a SELECT-pane projection list at top-level commas. Whitespace around each name is
+/// trimmed; a `"quoted"` ident has its outer quotes stripped and its `""` doubled-quote escapes
+/// collapsed to `"`. Names containing top-level commas inside parens (e.g. `func(a, b)`) are
+/// preserved as a single name string — the App's column lookup will silently drop it as
+/// "not a known schema column," which is the documented behavior for a non-trivial projection.
+///
+/// Reuses [`crate::sql_lexer::tokenize`] for paren-depth + string/quoted-ident tracking — D6's "no
+/// parallel scanner" rule. The function is `pub(crate)` so tests can pin its behavior directly.
+pub(crate) fn parse_select_list(s: &str) -> Vec<String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Vec::new();
+    }
+    let toks = tokenize(s);
+    // Find every top-level (paren-depth 0) comma; the names live in the byte ranges between them.
+    let mut splits: Vec<(usize, usize)> = Vec::new();
+    let mut start = 0usize;
+    for t in &toks {
+        if t.depth == 0 && matches!(t.kind, TokenKind::Punct) && t.text(s) == "," {
+            splits.push((start, t.start));
+            start = t.end;
         }
     }
+    splits.push((start, s.len()));
+
+    splits
+        .into_iter()
+        .filter_map(|(a, b)| {
+            let raw = &s[a..b];
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            Some(strip_outer_quotes(trimmed))
+        })
+        .collect()
+}
+
+/// If `s` is a `"…"` quoted identifier, strip the outer quotes and collapse `""` to `"`. Otherwise
+/// return `s` verbatim. Tolerant: a half-quoted `"foo` returns `"foo` unchanged (the lookup will
+/// fail to match a real column anyway).
+fn strip_outer_quotes(s: &str) -> String {
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2 && bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"' {
+        let inner = &s[1..s.len() - 1];
+        return inner.replace("\"\"", "\"");
+    }
+    s.to_string()
 }
 
 #[cfg(test)]

@@ -1,9 +1,9 @@
 //! Tests for `palette_render` — the pure row helpers (`row_text`/`checkbox`) and the popup blit
-//! (`insta` + `ratatui::TestBackend`, logical cells only).
+//! (logical-cell snapshots via `ratatui::TestBackend`).
 //!
 //! The snapshot proves the *logical* cell grid (which checkboxes / column names / right-aligned
-//! type badges land where). True-terminal glyphs, popup placement against a real screen, the
-//! checked-checkbox accent color, and the real `Space`/arrow chords are the §4.7 human surface, NOT
+//! type badges land where) and that the bottom-border hints render. True-terminal glyphs, popup
+//! placement against a real screen, and the magenta accent color are the §4.7 human surface, NOT
 //! asserted here.
 
 use super::*;
@@ -49,7 +49,7 @@ fn row_text_truncates_long_names_with_ellipsis() {
     let c = ColumnRef::new("a_very_long_column_name", ColumnType::Text);
     let txt = row_text(&c, false, 10);
     assert_eq!(txt.chars().count(), 10);
-    assert!(txt.ends_with('…'), "got: {txt}");
+    assert!(txt.ends_with('\u{2026}'), "got: {txt}");
 }
 
 // --- render ---
@@ -74,34 +74,33 @@ fn popup_shows_columns_checkboxes_and_badges() {
 }
 
 #[test]
-fn popup_title_reflects_the_needle() {
-    let mut state = PaletteState::new(cols());
-    state.set_needle("am");
+fn popup_title_reads_columns() {
+    let state = PaletteState::new(cols());
     let screen = render(&state, 40, 8, Rect::new(0, 0, 30, 6));
-    // The title carries the active fuzzy filter so the user sees what they're matching on.
-    assert!(screen.contains("am"), "screen:\n{screen}");
-    // Filtered to the columns containing "am" as a subsequence (status -> no; amount -> yes; name?
-    // there's no name column). `created_at`? c-r-e-a-t-e-d-_-[a]-t -> a then m? no m. So just amount.
-    assert!(screen.contains("amount"), "screen:\n{screen}");
+    assert!(screen.contains("columns"), "screen:\n{screen}");
 }
 
 #[test]
-fn empty_filter_shows_no_match_hint() {
-    let mut state = PaletteState::new(cols());
-    state.set_needle("zzz");
-    let screen = render(&state, 40, 8, Rect::new(0, 0, 30, 6));
-    assert!(screen.contains("(no match)"), "screen:\n{screen}");
+fn popup_bottom_border_hints_render() {
+    // The popup's bottom border carries its own context-sensitive hints — toggle / nav / close.
+    let state = PaletteState::new(cols());
+    let screen = render(&state, 80, 8, Rect::new(0, 0, 80, 6));
+    // At 80 cols every hint fits.
+    assert!(screen.contains("toggle"), "screen:\n{screen}");
+    assert!(screen.contains("nav"), "screen:\n{screen}");
+    assert!(screen.contains("close"), "screen:\n{screen}");
+    assert!(screen.contains("Ctrl+A"), "screen:\n{screen}");
 }
 
 #[test]
 fn snapshot_palette_80x24() {
-    // The headless 80x24 snapshot the P4.5 exit criterion calls for: a populated palette with a
-    // mixed selection, rendered at the canonical terminal size.
+    // The headless 80x24 snapshot — a populated palette with a mixed selection at canonical
+    // terminal size, including the new bottom-border hint line.
     let mut state = PaletteState::new(cols());
     state.toggle(1); // status checked
     state.toggle(3); // created_at checked
     state.cursor_down(); // cursor on `status`
-    let screen = render(&state, 80, 24, Rect::new(0, 1, 30, 8));
+    let screen = render(&state, 80, 24, Rect::new(0, 1, 60, 8));
     insta::assert_snapshot!(screen);
 }
 
@@ -116,10 +115,32 @@ fn render_does_not_panic_on_degenerate_area() {
 #[test]
 fn render_no_op_on_zero_area() {
     let state = PaletteState::new(cols());
-    // Zero width/height: paints nothing, no panic.
     let screen = render(&state, 10, 3, Rect::new(0, 0, 0, 0));
     assert!(
         screen.chars().all(|c| c == ' ' || c == '\n' || c == '"'),
         "zero area must paint nothing, got:\n{screen}"
     );
+}
+
+// --- bottom-border hint helper ---
+
+#[test]
+fn hint_spans_drops_trailing_hints_on_a_narrow_box() {
+    // A 30-char-wide popup can't fit every hint; the trailing low-priority ones are dropped
+    // whole rather than overflowing the border.
+    let spans = hint_spans(30);
+    let rendered: String = spans.iter().map(|s| s.content.as_ref()).collect();
+    // The most-important hints survive (Space/Tab toggle).
+    assert!(rendered.contains("toggle"), "got: {rendered:?}");
+    // A low-priority hint is dropped.
+    assert!(
+        !rendered.contains("invert"),
+        "trailing hint dropped on narrow popup: {rendered:?}"
+    );
+}
+
+#[test]
+fn hint_spans_zero_width_yields_empty() {
+    let spans = hint_spans(0);
+    assert!(spans.is_empty());
 }

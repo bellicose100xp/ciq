@@ -1,308 +1,275 @@
-//! Tests for the palette state machine (`dev/PLAN.md` §6.2, `dev/DECISIONS.md` D3).
+//! Tests for the SELECT-pane column-picker state machine.
 //!
-//! Plain-assert unit tests, no terminal: the pure toggle/reorder/filter/predicate transitions and
-//! the ownership byte-compare. The pure-core hard floor lives on this module, so every branch is a
-//! real behavior case.
+//! Headless / pure: every assertion is over the in-memory `PaletteState` plus a fixture
+//! [`Schema`]; the popup's bidirectional sync with the SELECT pane (the App layer) is tested in
+//! `app/app_tests/palette_tests.rs`.
 
-use super::*;
+use std::collections::BTreeSet;
+
+use super::{PaletteState, parse_select_list};
 use crate::schema::{ColumnMeta, ColumnType, Schema};
 
-fn sample() -> PaletteState {
-    PaletteState::new(vec![
-        ColumnRef::new("id", ColumnType::Int),
-        ColumnRef::new("name", ColumnType::Text),
-        ColumnRef::new("amount", ColumnType::Float),
-        ColumnRef::new("created_at", ColumnType::Date),
+// --- fixtures ---
+
+fn five_col_schema() -> Schema {
+    Schema::new(vec![
+        ColumnMeta::new("id", ColumnType::Int),
+        ColumnMeta::new("name", ColumnType::Text),
+        ColumnMeta::new("region", ColumnType::Text),
+        ColumnMeta::new("amount", ColumnType::Float),
+        ColumnMeta::new("active", ColumnType::Bool),
     ])
 }
 
-// ── construction ──────────────────────────────────────────────────────────────────────────────
+fn make_state() -> PaletteState {
+    PaletteState::from_schema(&five_col_schema())
+}
+
+fn checked_indices(s: &PaletteState) -> BTreeSet<usize> {
+    s.checked_set().clone()
+}
+
+// --- open_with_select ---
 
 #[test]
-fn new_starts_empty() {
-    let s = sample();
-    assert_eq!(s.all_columns().len(), 4);
-    assert!(s.checked().is_empty());
-    assert!(s.predicates().is_empty());
-    assert_eq!(s.needle(), "");
-    assert_eq!(s.cursor(), 0);
-    assert_eq!(s.last_emitted(), None);
+fn open_with_select_star_checks_every_column() {
+    let mut s = make_state();
+    s.open_with_select("*");
+    assert_eq!(checked_indices(&s), (0..5).collect::<BTreeSet<_>>());
 }
 
 #[test]
-fn from_schema_snapshots_names_and_types() {
+fn open_with_select_empty_checks_every_column() {
+    let mut s = make_state();
+    s.open_with_select("");
+    assert_eq!(checked_indices(&s), (0..5).collect::<BTreeSet<_>>());
+}
+
+#[test]
+fn open_with_select_whitespace_only_checks_every_column() {
+    let mut s = make_state();
+    s.open_with_select("   ");
+    assert_eq!(checked_indices(&s), (0..5).collect::<BTreeSet<_>>());
+}
+
+#[test]
+fn open_with_select_subset_checks_only_named_columns() {
+    let mut s = make_state();
+    s.open_with_select("id, name");
+    assert_eq!(checked_indices(&s), [0, 1].into_iter().collect());
+}
+
+#[test]
+fn open_with_select_is_case_insensitive() {
+    let mut s = make_state();
+    s.open_with_select("ID, Name");
+    assert_eq!(checked_indices(&s), [0, 1].into_iter().collect());
+}
+
+#[test]
+fn open_with_select_strips_quoted_idents() {
     let schema = Schema::new(vec![
         ColumnMeta::new("id", ColumnType::Int),
-        ColumnMeta::new("city", ColumnType::Text),
+        ColumnMeta::new("order", ColumnType::Int),
+        ColumnMeta::new("region", ColumnType::Text),
     ]);
-    let s = PaletteState::from_schema(&schema);
-    assert_eq!(s.all_columns().len(), 2);
-    assert_eq!(s.all_columns()[0], ColumnRef::new("id", ColumnType::Int));
-    assert_eq!(s.all_columns()[1], ColumnRef::new("city", ColumnType::Text));
-}
-
-// ── toggle / selection order ──────────────────────────────────────────────────────────────────
-
-#[test]
-fn toggle_checks_in_selection_order() {
-    let mut s = sample();
-    s.toggle(2); // amount
-    s.toggle(0); // id
-    s.toggle(1); // name
-    // Selection order is insertion order, not table order.
-    assert_eq!(s.checked(), &[2, 0, 1]);
-    assert!(s.is_checked(0));
-    assert!(s.is_checked(1));
-    assert!(s.is_checked(2));
-    assert!(!s.is_checked(3));
+    let mut s = PaletteState::from_schema(&schema);
+    s.open_with_select("\"order\", id");
+    assert_eq!(checked_indices(&s), [0, 1].into_iter().collect());
 }
 
 #[test]
-fn toggle_off_removes_preserving_order() {
-    let mut s = sample();
-    s.toggle(0);
-    s.toggle(1);
-    s.toggle(2);
-    s.toggle(1); // uncheck the middle one
-    assert_eq!(s.checked(), &[0, 2]);
-    assert!(!s.is_checked(1));
+fn open_with_select_silently_drops_unknown_columns() {
+    let mut s = make_state();
+    s.open_with_select("id, nonexistent_col, name");
+    assert_eq!(checked_indices(&s), [0, 1].into_iter().collect());
 }
 
 #[test]
-fn toggle_is_unique_no_duplicate_push() {
-    // The ordered-unique invariant: toggling on then on again removes (it's a toggle), never dups.
-    let mut s = sample();
-    s.toggle(0);
-    assert_eq!(s.checked(), &[0]);
-    s.toggle(0);
-    assert_eq!(s.checked(), &[] as &[usize]);
+fn open_with_select_resets_cursor_to_top() {
+    let mut s = make_state();
+    s.set_cursor(3);
+    s.open_with_select("id");
+    assert_eq!(s.cursor(), 0);
 }
 
-#[test]
-fn toggle_out_of_range_is_ignored() {
-    let mut s = sample();
-    s.toggle(99);
-    assert!(s.checked().is_empty());
-}
+// --- cursor (bounded; no wrap) ---
 
 #[test]
-fn checked_columns_resolves_in_selection_order() {
-    let mut s = sample();
-    s.toggle(3); // created_at
-    s.toggle(0); // id
-    let names: Vec<&str> = s
-        .checked_columns()
-        .iter()
-        .map(|c| c.name.as_str())
-        .collect();
-    assert_eq!(names, vec!["created_at", "id"]);
-}
-
-#[test]
-fn toggle_cursor_toggles_the_highlighted_column() {
-    let mut s = sample();
-    s.cursor_down(); // cursor on index 1 (name)
-    s.toggle_cursor();
-    assert_eq!(s.checked(), &[1]);
-}
-
-#[test]
-fn toggle_cursor_on_empty_filter_is_noop() {
-    let mut s = sample();
-    s.set_needle("zzz"); // matches nothing
-    s.toggle_cursor();
-    assert!(s.checked().is_empty());
-}
-
-// ── reorder ───────────────────────────────────────────────────────────────────────────────────
-
-#[test]
-fn move_selection_up_and_down() {
-    let mut s = sample();
-    s.toggle(0);
-    s.toggle(1);
-    s.toggle(2); // checked = [0,1,2]
-    s.move_selection_down(0); // [1,0,2]
-    assert_eq!(s.checked(), &[1, 0, 2]);
-    s.move_selection_up(2); // [1,2,0]
-    assert_eq!(s.checked(), &[1, 2, 0]);
-}
-
-#[test]
-fn move_selection_at_ends_is_noop() {
-    let mut s = sample();
-    s.toggle(0);
-    s.toggle(1); // [0,1]
-    s.move_selection_up(0); // already first
-    assert_eq!(s.checked(), &[0, 1]);
-    s.move_selection_down(1); // already last
-    assert_eq!(s.checked(), &[0, 1]);
-}
-
-#[test]
-fn move_selection_of_unchecked_is_noop() {
-    let mut s = sample();
-    s.toggle(0); // [0]
-    s.move_selection_up(3); // 3 not checked
-    s.move_selection_down(3);
-    assert_eq!(s.checked(), &[0]);
-}
-
-// ── fuzzy filter ──────────────────────────────────────────────────────────────────────────────
-
-#[test]
-fn empty_needle_matches_all_in_table_order() {
-    let s = sample();
-    assert_eq!(s.filtered_indices(), vec![0, 1, 2, 3]);
-}
-
-#[test]
-fn needle_filters_by_subsequence_case_insensitive() {
-    let mut s = sample();
-    s.set_needle("am"); // "amount" matches; subsequence "am" also in "name"? n-a-m-e -> yes
-    let idxs = s.filtered_indices();
-    // Both "name" (n[a][m]e) and "amount" ([am]ount) contain "am" as a subsequence.
-    assert!(idxs.contains(&1));
-    assert!(idxs.contains(&2));
-    // The order is preserved (table order), never reordered by the needle.
-    assert_eq!(idxs, vec![1, 2]);
-}
-
-#[test]
-fn needle_no_match_is_empty() {
-    let mut s = sample();
-    s.set_needle("zzz");
-    assert!(s.filtered_indices().is_empty());
-    assert_eq!(s.cursor_column_index(), None);
-}
-
-#[test]
-fn push_and_pop_needle() {
-    let mut s = sample();
-    s.push_needle('i');
-    s.push_needle('d');
-    assert_eq!(s.needle(), "id");
-    // "id" subsequence: id (i-d), created_at? c-r-e-a-t-e-[d]... no leading i. only "id".
-    assert_eq!(s.filtered_indices(), vec![0]);
-    s.pop_needle();
-    assert_eq!(s.needle(), "i");
-    s.pop_needle();
-    assert_eq!(s.needle(), "");
-}
-
-// ── cursor navigation ─────────────────────────────────────────────────────────────────────────
-
-#[test]
-fn cursor_down_wraps() {
-    let mut s = sample(); // 4 columns, cursor at 0
+fn cursor_down_advances_then_stops_at_last_row() {
+    let mut s = make_state();
     s.cursor_down();
     assert_eq!(s.cursor(), 1);
-    s.cursor_down();
-    s.cursor_down();
-    assert_eq!(s.cursor(), 3);
-    s.cursor_down(); // wrap
-    assert_eq!(s.cursor(), 0);
+    for _ in 0..10 {
+        s.cursor_down();
+    }
+    assert_eq!(s.cursor(), 4, "stops at the last row, no wrap");
 }
 
 #[test]
-fn cursor_up_wraps() {
-    let mut s = sample();
-    s.cursor_up(); // wrap to last
-    assert_eq!(s.cursor(), 3);
+fn cursor_up_retreats_then_stops_at_first_row() {
+    let mut s = make_state();
+    s.set_cursor(3);
     s.cursor_up();
     assert_eq!(s.cursor(), 2);
+    for _ in 0..10 {
+        s.cursor_up();
+    }
+    assert_eq!(s.cursor(), 0, "stops at the first row, no wrap");
 }
 
 #[test]
-fn cursor_navigation_on_empty_filter_is_noop() {
-    let mut s = sample();
-    s.set_needle("zzz");
+fn cursor_ops_are_noop_on_empty() {
+    let mut s = PaletteState::new(Vec::new());
     s.cursor_down();
-    assert_eq!(s.cursor(), 0);
     s.cursor_up();
+    s.set_cursor(99);
     assert_eq!(s.cursor(), 0);
 }
 
+// --- toggle ---
+
 #[test]
-fn needle_edit_clamps_cursor_into_filtered_list() {
-    let mut s = sample();
-    s.cursor_down();
-    s.cursor_down();
-    s.cursor_down(); // cursor at 3
-    assert_eq!(s.cursor(), 3);
-    s.set_needle("id"); // filtered to one row; cursor must clamp to 0
-    assert_eq!(s.cursor(), 0);
+fn toggle_at_cursor_flips_only_that_index() {
+    let mut s = make_state();
+    s.set_cursor(2);
+    s.toggle_at_cursor();
+    assert_eq!(checked_indices(&s), [2].into_iter().collect());
+    s.toggle_at_cursor();
+    assert!(checked_indices(&s).is_empty());
 }
 
 #[test]
-fn cursor_column_index_maps_through_filter() {
-    let mut s = sample();
-    s.set_needle("am"); // filtered = [1, 2]
-    assert_eq!(s.cursor_column_index(), Some(1));
-    s.cursor_down();
-    assert_eq!(s.cursor_column_index(), Some(2));
+fn toggle_out_of_range_is_noop() {
+    let mut s = make_state();
+    s.toggle(99);
+    assert!(checked_indices(&s).is_empty());
 }
 
-// ── predicates ────────────────────────────────────────────────────────────────────────────────
+// --- bulk ops ---
 
 #[test]
-fn add_and_remove_predicate() {
-    let mut s = sample();
-    s.add_predicate(Predicate::new(
-        "name",
-        ColumnType::Text,
-        PredicateOp::Eq,
-        "Acme",
-    ));
-    s.add_predicate(Predicate::null_test(
-        "amount",
-        ColumnType::Float,
-        PredicateOp::Eq,
-    ));
-    assert_eq!(s.predicates().len(), 2);
-    assert!(s.predicates()[1].is_null());
-    s.remove_predicate(0);
-    assert_eq!(s.predicates().len(), 1);
-    assert!(s.predicates()[0].is_null());
+fn select_all_checks_every_index() {
+    let mut s = make_state();
+    s.select_all();
+    assert_eq!(checked_indices(&s), (0..5).collect::<BTreeSet<_>>());
 }
 
 #[test]
-fn remove_predicate_out_of_range_is_noop() {
-    let mut s = sample();
-    s.add_predicate(Predicate::new("id", ColumnType::Int, PredicateOp::Gt, "5"));
-    s.remove_predicate(9);
-    assert_eq!(s.predicates().len(), 1);
+fn deselect_all_clears_the_set() {
+    let mut s = make_state();
+    s.select_all();
+    s.deselect_all();
+    assert!(checked_indices(&s).is_empty());
 }
 
 #[test]
-fn predicate_constructors_set_value_presence() {
-    let v = Predicate::new("c", ColumnType::Text, PredicateOp::Like, "%a%");
-    assert!(!v.is_null());
-    assert_eq!(v.value.as_deref(), Some("%a%"));
-    let n = Predicate::null_test("c", ColumnType::Text, PredicateOp::Neq);
-    assert!(n.is_null());
-    assert_eq!(n.value, None);
-}
-
-// ── ownership byte-compare (no parsing) ───────────────────────────────────────────────────────
-
-#[test]
-fn owns_is_a_byte_compare_against_last_emitted() {
-    let mut s = sample();
-    // Never emitted: owns nothing.
-    assert!(!s.owns("SELECT * FROM t LIMIT 1000"));
-    s.record_emitted("SELECT * FROM t LIMIT 1000");
-    // Equal -> owned.
-    assert!(s.owns("SELECT * FROM t LIMIT 1000"));
-    // One byte different -> not owned (the user hand-typed).
-    assert!(!s.owns("SELECT * FROM t LIMIT 999"));
-    assert!(!s.owns("SELECT id FROM t LIMIT 1000"));
-    assert_eq!(s.last_emitted(), Some("SELECT * FROM t LIMIT 1000"));
+fn invert_complements_the_set() {
+    let mut s = make_state();
+    s.toggle(0);
+    s.toggle(2);
+    // checked = {0, 2}; invert -> {1, 3, 4}
+    s.invert();
+    assert_eq!(checked_indices(&s), [1, 3, 4].into_iter().collect());
 }
 
 #[test]
-fn column_ref_new_constructs() {
-    let c = ColumnRef::new("x", ColumnType::Bool);
-    assert_eq!(c.name, "x");
-    assert_eq!(c.ty, ColumnType::Bool);
+fn invert_is_self_inverse() {
+    let mut s = make_state();
+    s.toggle(1);
+    s.toggle(3);
+    let before = checked_indices(&s);
+    s.invert();
+    s.invert();
+    assert_eq!(checked_indices(&s), before);
+}
+
+// --- write_to_select ---
+
+#[test]
+fn write_to_select_all_checked_emits_star() {
+    let mut s = make_state();
+    s.select_all();
+    assert_eq!(s.write_to_select(), "*");
+}
+
+#[test]
+fn write_to_select_subset_emits_comma_list_in_schema_order() {
+    let mut s = make_state();
+    // Toggle in a non-schema order; emission must be schema order regardless.
+    s.toggle(3); // amount
+    s.toggle(0); // id
+    s.toggle(1); // name
+    assert_eq!(s.write_to_select(), "id, name, amount");
+}
+
+#[test]
+fn write_to_select_empty_emits_empty_string() {
+    let s = make_state();
+    assert_eq!(s.write_to_select(), "");
+}
+
+#[test]
+fn write_to_select_quotes_keyword_collisions() {
+    let schema = Schema::new(vec![
+        ColumnMeta::new("id", ColumnType::Int),
+        ColumnMeta::new("order", ColumnType::Int),
+    ]);
+    let mut s = PaletteState::from_schema(&schema);
+    s.toggle(1);
+    assert_eq!(s.write_to_select(), "\"order\"");
+}
+
+#[test]
+fn write_to_select_quotes_special_char_names() {
+    let schema = Schema::new(vec![
+        ColumnMeta::new("id", ColumnType::Int),
+        ColumnMeta::new("Total ($)", ColumnType::Float),
+    ]);
+    let mut s = PaletteState::from_schema(&schema);
+    s.toggle(1);
+    assert_eq!(s.write_to_select(), "\"Total ($)\"");
+}
+
+// --- parse_select_list helper ---
+
+#[test]
+fn parse_select_list_splits_top_level_commas() {
+    let names = parse_select_list("id, name, region");
+    assert_eq!(names, vec!["id", "name", "region"]);
+}
+
+#[test]
+fn parse_select_list_strips_outer_quotes() {
+    let names = parse_select_list("\"order\", id");
+    assert_eq!(names, vec!["order", "id"]);
+}
+
+#[test]
+fn parse_select_list_trims_whitespace() {
+    let names = parse_select_list("  id  ,name ,  region");
+    assert_eq!(names, vec!["id", "name", "region"]);
+}
+
+#[test]
+fn parse_select_list_unescapes_doubled_quotes_in_quoted_idents() {
+    let names = parse_select_list("\"we\"\"ird\"");
+    assert_eq!(names, vec!["we\"ird"]);
+}
+
+#[test]
+fn parse_select_list_does_not_split_inside_parens() {
+    // `count(a, b)` is not a known schema column, so the App will silently drop it; this just
+    // pins that the splitter does not split on the inner commas.
+    let names = parse_select_list("id, count(a, b), name");
+    assert_eq!(names.len(), 3);
+    assert_eq!(names[0], "id");
+    assert!(names[1].starts_with("count("));
+    assert_eq!(names[2], "name");
+}
+
+#[test]
+fn parse_select_list_empty_input_is_empty() {
+    assert!(parse_select_list("").is_empty());
+    assert!(parse_select_list("   ").is_empty());
 }

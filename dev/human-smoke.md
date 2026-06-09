@@ -158,35 +158,37 @@ second-to-last row; they do NOT prove real glyphs or color polarity. Confirm by 
    delimiter for your file; a TSV shows `delim \t`). Confirm it is legible in a light and a dark
    terminal (the §4.7 polarity check).
 
-## Phase 4 — column palette (P4.2-P4.5)
+## Phase 4 — SELECT-pane column picker (user-locked redesign 2026-06-09)
 
-The headless suite proves the palette's generated SQL (`emit` goldens for both quoting surfaces),
-the toggle/reorder/filter/ownership state machine, the ownership byte-compare, and the popup's
-*logical* cells (80x24 `TestBackend` snapshot — which checkboxes / column names / right-aligned type
-badges land where). It does NOT prove the drawn popup glyphs, the real `Space`/arrow chords as the
-terminal delivers them, or the Replace-transition feel. Confirm by hand (open a CSV with a few
-typed columns including a reserved-word column if you can, e.g. `order`):
+The picker is anchored to the SELECT pane: `Ctrl+P` only opens the popup when focus is on
+SELECT. Toggling a column inside the popup **rewrites the SELECT-pane text immediately** — the
+popup is the live editor for the projection, not an accept/cancel dialog. The popup uses a
+distinct **magenta** accent so it reads as different from the cyan-default popups (autocomplete,
+history, AI, facet).
 
-1. **Open + checkboxes.** Press `Ctrl+K`. A bordered "columns" popup appears just above the bottom query bar
-   listing every column with a `[ ]` checkbox and a right-aligned type badge (`int`/`txt`/`date`/…).
-   Confirm the badges are legible and the box does not overflow the screen edge.
-2. **Space toggles.** Move the cursor (Up/Down) to a column and press `Space`. Confirm the checkbox
-   flips to `[x]` (accented/bold so the selection set reads at a glance) and `Space` again clears it.
-3. **Typing filters.** Type a few letters. Confirm the list narrows to columns matching (fuzzy), the
-   popup title shows the needle (`columns: <needle>`), and the **query bar stays untouched** (typing
-   filters the palette, it does not edit the bar). `Backspace` widens the list again.
-4. **Left/Right reorder.** Check two columns, move the cursor onto a checked one, and press
-   `Left`/`Right`. Confirm its position in the eventual projection moves earlier/later (verify via
-   step 5's emitted `SELECT`).
-5. **Enter emits.** Press `Enter`. Confirm the popup closes, the bar fills with the generated
-   `SELECT <picked cols> FROM t LIMIT n` (picked columns in your selection order; a reserved-word
-   column appears quoted as `"order"`), and the grid updates to that query within a debounce tick.
-6. **Esc closes, does not quit.** Reopen with `Ctrl+K`, press `Esc` — the popup closes and the app
-   stays running. (Esc only quits when no popup/palette is open.)
-7. **Replace transition (the UX cliff to eyeball).** Hand-type a query with a WHERE, e.g.
-   `SELECT id FROM t WHERE region='EU'`, then open the palette and emit/replace. Confirm accepting
-   Replace **discards the WHERE** and snaps the bar to the palette's generated query (correct-by-
-   construction per §0/D3, but verify it reads as a deliberate replace, not a silent data loss).
+The headless suite proves the state machine + the popup's logical cells (80x24 `TestBackend`
+snapshot). Confirm by hand:
+
+1. **Scope.** With focus on the WHERE pane (the launch default), press `Ctrl+P` — nothing
+   happens (silent no-op; the picker is anchored to SELECT). Move focus up to the SELECT pane
+   (`Alt+Up` or `Alt+K`), press `Ctrl+P` — the popup opens.
+2. **Pre-checked from SELECT.** With SELECT showing `*` (the default), every checkbox is
+   checked on open. Type `id, name` into SELECT first (close the popup, move to SELECT, type)
+   then reopen — only those two are checked.
+3. **Live toggle.** Move the cursor (`↑`/`↓`) and press `Space` (or `Tab`) to toggle. Confirm
+   the SELECT-pane text behind the popup rewrites IMMEDIATELY (no Enter / no apply step) and
+   the grid filters within a debounce tick. A reserved-word column like `order` appears in
+   SELECT quoted as `"order"`.
+4. **Bulk ops.** `Ctrl+A` checks all → SELECT becomes `*`. `Ctrl+X` deselects all → SELECT
+   empties (the composer falls back to `*`, so the grid keeps showing the full table).
+   `Ctrl+I` inverts the current set.
+5. **Close.** `Enter` or `Esc` closes the popup. The SELECT-pane text the toggles shaped stays
+   put; closing is just "done."
+6. **Distinct theme.** The popup's border + title are **magenta** (vs the cyan border every
+   other popup uses). Confirm it reads as visually separate.
+7. **Bottom-border hints.** The popup's own bottom border shows
+   `Space/Tab toggle • ↑↓ nav • Enter/Esc close • Ctrl+A all • Ctrl+X none • Ctrl+I invert`
+   centered (with trailing hints dropped on a narrow popup).
 8. **Color polarity.** Repeat 1-2 in a light and a dark terminal. Confirm the popup border, the
    cursor-row reverse-video highlight, the checked-checkbox accent, and the dimmed type-badge column
    are all legible in both (the §4.7 polarity check).

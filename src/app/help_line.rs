@@ -49,13 +49,16 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
         ];
     }
     if app.is_palette_open() {
+        // The popup carries its own bottom-border hint line; the main bottom-border falls back to
+        // a compact set in case it is ever consulted outside the popup's own chrome.
         return hints![
-            "Up/Down" => "select",
-            "Space" => "toggle",
-            "Left/Right" => "reorder",
-            "Enter" => "apply",
-            "type" => "filter",
-            "Esc" => "close",
+            "Space/Tab" => "toggle",
+            "Up/Down" => "nav",
+            "Enter/Esc" => "close",
+            "Ctrl+A" => "all",
+            "Ctrl+X" => "none",
+            "Ctrl+I" => "invert",
+            "Ctrl+C" => "quit",
         ];
     }
     if app.is_facet_open() {

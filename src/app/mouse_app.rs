@@ -195,7 +195,7 @@ impl App {
                 if let Some(palette) = self.palette.as_mut() {
                     let start = crate::scroll_window::scroll_offset(
                         palette.cursor(),
-                        palette.filtered_indices().len(),
+                        palette.all_columns().len(),
                         visible,
                     );
                     palette.set_cursor(start + row);

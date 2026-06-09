@@ -63,12 +63,6 @@ fn wide_schema_app() -> (
     (app, rx)
 }
 
-/// A needle that fuzzy-matches exactly one column of [`wide_schema_app`] (the digits of `col_00`,
-/// which only `col_00` contains as a subsequence).
-fn first_column_unique_needle(_app: &App) -> &'static str {
-    "00"
-}
-
 // --- scroll over the results pane ---
 
 #[test]
@@ -354,27 +348,6 @@ fn click_on_scrolled_autocomplete_row_selects_the_visible_index_not_the_absolute
     );
 }
 
-#[test]
-fn click_in_blank_band_of_needle_filtered_palette_is_bounded() {
-    // A needle that filters the palette to one column must size the recorded popup region to the
-    // filtered count, so a click below the single drawn row does not resolve into the box as a
-    // phantom row (region-vs-drawn geometry must match). Regression for the all_columns sizing.
-    let (mut app, _rx) = wide_schema_app();
-    app.on_key(KeyEvent::new(Key::Char('p'), crate::app::KeyMods::CTRL), 0);
-    assert!(app.is_palette_open());
-    // Filter to columns containing the subsequence of the first column's distinctive needle.
-    let needle = first_column_unique_needle(&app);
-    for c in needle.chars() {
-        app.on_key(KeyEvent::char(c), 0);
-    }
-    let filtered = app.palette().unwrap().filtered_indices().len();
-    assert_eq!(filtered, 1, "needle should narrow to exactly one column");
-    render_and_record(&app);
-    let (_kind, rect) = app.layout_regions().popup.expect("popup recorded");
-    // The box inner height now equals the filtered count (1), so there is exactly one inner row.
-    assert_eq!(
-        rect.height.saturating_sub(2),
-        1,
-        "the popup region is sized to the filtered count, not the full column count"
-    );
-}
+// (Removed: `click_in_blank_band_of_needle_filtered_palette_is_bounded` covered the obsolete
+// fuzzy-needle filter; the picker no longer filters in-popup. The popup-region-equals-drawn-rows
+// invariant is now trivially true since every column is always drawn.)

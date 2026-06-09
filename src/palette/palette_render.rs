@@ -1,18 +1,16 @@
-//! Palette popup blit — `render_palette(state, frame, area)` over [`PaletteState`] (`dev/PLAN.md`
-//! §6.2, `dev/DECISIONS.md` D3).
+//! Palette popup blit — `render_palette(state, frame, area)` over [`PaletteState`] (the SELECT-pane
+//! column picker; user-locked redesign 2026-06-09).
 //!
-//! Reuses the autocomplete popup chrome (a bordered list, the cursor row reverse-video, a dimmed
-//! right-aligned type badge) retargeted to the palette's column rows. Each visible row is a
-//! checkbox (`[x]` checked / `[ ]` unchecked), the column name, and the column's
-//! [`ColumnType`](crate::schema::ColumnType) badge right-aligned; the fuzzy needle filters which
-//! columns show, the cursor highlights one of them.
+//! Each row is a checkbox (`[x]` checked / `[ ]` unchecked), the column name, and the column's
+//! [`ColumnType`](crate::schema::ColumnType) badge right-aligned. The cursor row is reverse-video
+//! with the popup's distinct accent so the popup reads as visually separate from the cyan-default
+//! popups (autocomplete, history, AI, facet). The popup's BOTTOM border carries its own
+//! context-sensitive shortcut hints (`Space/Tab toggle • ↑↓ nav • Ctrl+A all • Ctrl+X none •
+//! Ctrl+I invert • Enter/Esc close`), centered.
 //!
-//! A **thin blit**: every layout decision (which rows show, each row's text, the checkbox glyph,
-//! the badge) is a pure function tested directly ([`row_text`], [`checkbox`]), and the paint itself
-//! is `TestBackend`-snapshot-tested (NOT shell-exempt — `TestBackend` is an in-memory cell grid an
-//! agent asserts; only true-terminal glyphs / placement / color-polarity / the real `Space`+arrow
-//! chords are the §4.7 human surface). All colors come from [`theme::palette`] — this file never
-//! names a `Color`.
+//! A **thin blit**: every layout decision (row text, checkbox glyph, badge, scrolled window) is a
+//! pure helper testable directly; the paint itself is `TestBackend`-snapshot-tested. All colors come
+//! from [`theme::palette`] — this file never names a `Color`.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -26,26 +24,24 @@ use super::palette_state::{ColumnRef, PaletteState};
 /// Max column rows shown at once (the visible window; a longer list scrolls with the cursor).
 pub const MAX_VISIBLE_ROWS: u16 = 10;
 
-/// Render the palette popup into `area`. No-op when the palette is not open (the caller checks
+/// Render the palette popup into `area`. No-op when the popup is closed (the caller checks
 /// [`App::is_palette_open`](crate::app::App::is_palette_open)) or `area` is degenerate.
-///
-/// The popup draws a bordered box titled with the fuzzy needle (so the user sees what they are
-/// filtering on), and inside it one line per visible (filtered) column — checkbox + name + badge —
-/// the cursor row reverse-video.
 pub fn render_palette(state: &PaletteState, f: &mut Frame, area: Rect) {
     if area.width == 0 || area.height == 0 {
         return;
     }
 
-    let title = if state.needle().is_empty() {
-        " columns ".to_string()
-    } else {
-        format!(" columns: {} ", state.needle())
-    };
+    // Bottom-border hints, centered. Truncate trailing hints if the box is too narrow (drop whole
+    // hints rather than overflowing the border). The `usable` width is the box width minus the two
+    // corner glyphs.
+    let usable = area.width.saturating_sub(2) as usize;
+    let hint_line = Line::from(hint_spans(usable)).centered();
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::palette::border())
-        .title(Span::styled(title, theme::palette::hint()));
+        .title(Span::styled(" columns ", theme::palette::title()))
+        .title_bottom(hint_line);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -57,42 +53,65 @@ pub fn render_palette(state: &PaletteState, f: &mut Frame, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-/// Build the styled column rows for an inner width/height: a window of [`MAX_VISIBLE_ROWS`] (capped
-/// by `height`) filtered columns scrolled so the cursor row is always visible, each `checkbox name
-/// … badge` and styled (cursor row reverse-video, badge dimmed, checked checkbox accented).
+/// The styled hint spans for the popup's bottom border. Drops trailing low-priority hints whole if
+/// they wouldn't fit in `max_width` (the same narrow-width policy the main bottom-border hints use).
+pub(crate) fn hint_spans(max_width: usize) -> Vec<Span<'static>> {
+    let key_style = theme::help_line::key();
+    let desc_style = theme::help_line::description();
+    let sep_style = theme::help_line::separator();
+    // Most-important first so a narrow popup keeps the toggle/nav/close hints over the bulk ops.
+    let hints: &[(&'static str, &'static str)] = &[
+        ("Space/Tab", "toggle"),
+        ("\u{2191}\u{2193}", "nav"),
+        ("Enter/Esc", "close"),
+        ("Ctrl+A", "all"),
+        ("Ctrl+X", "none"),
+        ("Ctrl+I", "invert"),
+    ];
+
+    let mut out: Vec<Span<'static>> = Vec::with_capacity(hints.len() * 4);
+    let mut width = 0usize;
+    for (k, d) in hints {
+        let lead_first = out.is_empty();
+        let sep = if lead_first { " " } else { " \u{2022} " };
+        let chunk = sep.chars().count() + k.chars().count() + 1 + d.chars().count();
+        if width + chunk > max_width {
+            break;
+        }
+        out.push(Span::styled(sep.to_string(), sep_style));
+        out.push(Span::styled(*k, key_style));
+        out.push(Span::raw(" "));
+        out.push(Span::styled(*d, desc_style));
+        width += chunk;
+    }
+    out
+}
+
+/// Build the styled column rows for an inner width/height. Scrolled so the cursor is visible.
 fn popup_lines(state: &PaletteState, width: u16, height: u16) -> Vec<Line<'static>> {
-    let filtered = state.filtered_indices();
-    if filtered.is_empty() {
+    let cols = state.all_columns();
+    if cols.is_empty() {
         return vec![Line::from(Span::styled(
-            pad_or_truncate("(no match)", width as usize),
-            theme::palette::hint(),
+            pad_or_truncate("(no columns)", width as usize),
+            theme::palette::title(),
         ))];
     }
     let visible = (MAX_VISIBLE_ROWS.min(height)) as usize;
-    // Share the window math with the click handler (`scroll_window`) so a click on a scrolled list
-    // maps to the same absolute (filtered) index the renderer drew here.
-    let (start, end) =
-        crate::scroll_window::visible_window(state.cursor(), filtered.len(), visible);
+    let (start, end) = crate::scroll_window::visible_window(state.cursor(), cols.len(), visible);
 
-    filtered[start..end]
+    cols[start..end]
         .iter()
         .enumerate()
-        .map(|(offset, &col_idx)| {
+        .map(|(offset, column)| {
             let row = start + offset;
-            let column = &state.all_columns()[col_idx];
-            row_line(
-                column,
-                state.is_checked(col_idx),
-                width,
-                row == state.cursor(),
-            )
+            row_line(column, state.is_checked(row), width, row == state.cursor())
         })
         .collect()
 }
 
 /// One column row, padded to `width`: `<checkbox> <name>` left-aligned, the type badge
-/// right-aligned, the gap filled with spaces. The cursor row is reverse-video (the whole line);
-/// otherwise the checkbox carries the checked/normal style and the badge the dimmed hint style.
+/// right-aligned, the gap filled with spaces. The cursor row is reverse-video; otherwise the
+/// checkbox carries the checked/normal style and the badge the dimmed hint style.
 fn row_line(column: &ColumnRef, checked: bool, width: u16, is_cursor: bool) -> Line<'static> {
     let width = width as usize;
     let badge = column.ty.badge().to_string();
@@ -126,31 +145,22 @@ fn row_line(column: &ColumnRef, checked: bool, width: u16, is_cursor: bool) -> L
     }
 }
 
-/// The full left-side text of a row (`[x] name` / `[ ] name`), truncated to `max` chars — used for
-/// the reverse-video cursor row (one span) and asserted directly. The unselected row paints the
-/// checkbox and name as separate spans (so the checked checkbox can be accented), but the text is
-/// identical.
+/// The full left-side text of a row (`[x] name` / `[ ] name`), truncated to `max` chars.
 pub fn row_text(column: &ColumnRef, checked: bool, max: usize) -> String {
     let full = format!("{} {}", checkbox(checked), column.name);
     truncate(&full, max)
 }
 
-/// Just the name portion (after the checkbox), truncated to fit the remaining width — the second
-/// span of an unselected row.
 fn name_part(column: &ColumnRef, width: usize) -> String {
-    // 4 chars for "[x] " prefix; leave room for it plus the badge handled by the caller's gap math.
     let avail = width.saturating_sub(4).max(1);
     truncate(&column.name, avail)
 }
 
-/// The checkbox glyph for a row: `[x]` checked, `[ ]` unchecked. ASCII only (no emoji), per the
-/// theme conventions.
+/// The checkbox glyph for a row: `[x]` checked, `[ ]` unchecked.
 pub fn checkbox(checked: bool) -> &'static str {
     if checked { "[x]" } else { "[ ]" }
 }
 
-/// Truncate `s` to at most `max` characters, appending `…` when cut (matching the grid / popup
-/// ellipsis rule). Returns `s` unchanged when it already fits.
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_string();
@@ -160,11 +170,10 @@ fn truncate(s: &str, max: usize) -> String {
     }
     let keep = max.saturating_sub(1);
     let mut out: String = s.chars().take(keep).collect();
-    out.push('…');
+    out.push('\u{2026}');
     out
 }
 
-/// Pad `s` with trailing spaces to exactly `width` chars, or truncate it to `width`.
 fn pad_or_truncate(s: &str, width: usize) -> String {
     let len = s.chars().count();
     if len > width {

@@ -212,16 +212,22 @@ pub mod palette {
     use super::base as p;
     use ratatui::style::{Modifier, Style};
 
+    /// Distinct popup accent (magenta) — the SELECT-pane column picker reads as visually separate
+    /// from the cyan-default popups (autocomplete, history, AI, facet).
     pub fn border() -> Style {
-        Style::default().fg(p::BORDER_FOCUSED)
+        Style::default().fg(p::MAGENTA)
     }
 
     pub fn item() -> Style {
         Style::default().fg(p::TEXT)
     }
 
+    /// Cursor row: reverse-video over the magenta accent so the highlight reads even on a busy
+    /// background.
     pub fn selected() -> Style {
-        Style::default().add_modifier(Modifier::REVERSED)
+        Style::default()
+            .fg(p::MAGENTA)
+            .add_modifier(Modifier::REVERSED)
     }
 
     pub fn checked() -> Style {
@@ -232,10 +238,10 @@ pub mod palette {
         Style::default().fg(p::YELLOW).add_modifier(Modifier::DIM)
     }
 
-    pub fn hint() -> Style {
-        Style::default()
-            .fg(p::TEXT_MUTED)
-            .add_modifier(Modifier::DIM)
+    /// The popup's title text (`" columns "`). Same magenta accent as the border so the title
+    /// reads as part of the popup chrome.
+    pub fn title() -> Style {
+        Style::default().fg(p::MAGENTA).add_modifier(Modifier::BOLD)
     }
 }
 

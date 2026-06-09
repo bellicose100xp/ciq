@@ -178,14 +178,34 @@ fn autocomplete_popup_hints() {
 
 #[test]
 fn palette_popup_hints() {
-    let mut app = loaded_app();
+    // The palette popup is anchored to the SELECT pane in Simple mode; build a Simple-mode App
+    // and focus SELECT so Ctrl+P opens the popup.
+    use crate::app::SimplePane;
+    let (tx, _rx) = channel();
+    let mut app = App::new(tx, InterruptHandle::noop());
+    app.set_schema(test_schema());
+    app.on_loaded("ready");
+    // Close any post-load autocomplete popup so Ctrl+P actually opens the palette.
+    let mut guard = 0;
+    while app.autocomplete().is_open() && guard < 4 {
+        app.on_key(KeyEvent::new(Key::Esc, KeyMods::NONE), 0);
+        guard += 1;
+    }
+    app.query_form_mut().focus(SimplePane::Select);
+    // Refresh-on-focus may re-open autocomplete; close it again before opening the palette.
+    let mut guard2 = 0;
+    while app.autocomplete().is_open() && guard2 < 4 {
+        app.on_key(KeyEvent::new(Key::Esc, KeyMods::NONE), 0);
+        guard2 += 1;
+    }
     app.on_key(KeyEvent::new(Key::Char('p'), KeyMods::CTRL), 0);
     assert!(app.is_palette_open());
     let hints = get_context_hints(&app);
-    assert!(has_key(&hints, "Space"), "toggle chord: {hints:?}");
-    assert!(has_key(&hints, "Left/Right"), "reorder chord: {hints:?}");
-    assert!(has_key(&hints, "Enter"), "apply chord: {hints:?}");
-    assert!(has_key(&hints, "Esc"), "close chord: {hints:?}");
+    assert!(has_key(&hints, "Space/Tab"), "toggle chord: {hints:?}");
+    assert!(has_key(&hints, "Up/Down"), "nav chord: {hints:?}");
+    assert!(has_key(&hints, "Enter/Esc"), "close chord: {hints:?}");
+    assert!(has_key(&hints, "Ctrl+A"), "select-all chord: {hints:?}");
+    assert!(has_key(&hints, "Ctrl+I"), "invert chord: {hints:?}");
 }
 
 #[test]
