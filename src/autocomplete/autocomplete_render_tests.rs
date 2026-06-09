@@ -169,42 +169,41 @@ fn render_does_not_panic_on_degenerate_area() {
 // --- bottom-border hints ---
 
 #[test]
-fn bottom_border_carries_always_on_hints() {
+fn bottom_border_carries_esc_close_always() {
+    // Tab accept and ↑↓ select are universal autocomplete idioms — we no longer spell them out
+    // on the popup's bottom border. Only contextual hints (Esc close always; Ctrl+P multi-select
+    // when SELECT is focused) survive there. See `hint_spans` for the rationale.
     let mut state = AutocompleteState::new();
     state.open_with(vec![Suggestion::new("id", SuggestionType::Field)]);
     let screen = render(&state, 80, 8, Rect::new(0, 0, 80, 6));
     assert!(
-        screen.contains("Tab") && screen.contains("accept"),
-        "bottom border carries Tab accept: {screen}"
-    );
-    assert!(
-        screen.contains("select"),
-        "bottom border carries Up/Down select: {screen}"
-    );
-    assert!(
         screen.contains("Esc") && screen.contains("close"),
         "bottom border carries Esc close: {screen}"
+    );
+    assert!(
+        !screen.contains("Tab") || !screen.contains("accept"),
+        "Tab accept is no longer surfaced (universal idiom): {screen}"
     );
 }
 
 #[test]
-fn bottom_border_shows_columns_hint_when_select_pane_focused() {
+fn bottom_border_shows_multi_select_hint_when_select_pane_focused() {
     let mut state = AutocompleteState::new();
     state.open_with(vec![Suggestion::new("id", SuggestionType::Field)]);
     let screen = render_with(&state, 80, 8, Rect::new(0, 0, 80, 6), true);
     assert!(
-        screen.contains("Ctrl+P") && screen.contains("columns"),
-        "Ctrl+P columns hint surfaces when focus is on the SELECT pane: {screen}"
+        screen.contains("Ctrl+P") && screen.contains("multi-select"),
+        "Ctrl+P multi-select hint surfaces when focus is on the SELECT pane: {screen}"
     );
 }
 
 #[test]
-fn bottom_border_omits_columns_hint_off_select_pane() {
+fn bottom_border_omits_multi_select_hint_off_select_pane() {
     let mut state = AutocompleteState::new();
     state.open_with(vec![Suggestion::new("id", SuggestionType::Field)]);
     let screen = render_with(&state, 80, 8, Rect::new(0, 0, 80, 6), false);
     assert!(
         !screen.contains("Ctrl+P"),
-        "Ctrl+P columns hint must NOT appear off the SELECT pane: {screen}"
+        "Ctrl+P multi-select hint must NOT appear off the SELECT pane: {screen}"
     );
 }

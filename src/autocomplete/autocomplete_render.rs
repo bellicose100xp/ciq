@@ -55,24 +55,25 @@ pub fn render_popup(state: &AutocompleteState, f: &mut Frame, area: Rect, show_c
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-/// The styled hint spans for the popup's bottom border. Always-on hints (`Tab accept`, `Up/Down
-/// select`, `Esc close`, `Ctrl+C quit`); when `show_columns_hint` is true (focus on the SELECT
-/// pane), `Ctrl+P columns` is interleaved between `select` and `close` so the user discovers the
-/// dedicated column-picker palette. Drops trailing low-priority hints whole if `max_width` is
-/// tight (same narrow-width policy as every other hint line).
+/// The styled hint spans for the popup's bottom border. Tab accept and ↑↓ select are universal
+/// autocomplete idioms — we deliberately don't surface them. Only the contextual hints stay:
+/// `Ctrl+P multi-select` when `show_columns_hint` is true (focus on the SELECT pane) — revealing
+/// the dedicated column-picker palette — and `Esc close` (always). Drops trailing hints whole on
+/// narrow widths.
 pub(crate) fn hint_spans(show_columns_hint: bool, max_width: usize) -> Vec<Span<'static>> {
     let key_style = theme::help_line::key();
     let desc_style = theme::help_line::description();
     let sep_style = theme::help_line::separator();
 
-    // Most-important first; trailing hints drop on narrow widths.
-    let mut hints: Vec<(&'static str, &'static str)> =
-        vec![("Tab", "accept"), ("\u{2191}\u{2193}", "select")];
+    // Tab accept and ↑↓ select are universal autocomplete idioms — the user doesn't need them
+    // spelled out. Surface only what's CONTEXTUAL: `Ctrl+P multi-select` reveals the dedicated
+    // column-picker palette when focus is on SELECT (the chord is anchored to that pane), and
+    // `Esc close` is the one universal worth keeping for users who don't yet trust Tab/Esc.
+    let mut hints: Vec<(&'static str, &'static str)> = Vec::new();
     if show_columns_hint {
-        hints.push(("Ctrl+P", "columns"));
+        hints.push(("Ctrl+P", "multi-select"));
     }
     hints.push(("Esc", "close"));
-    hints.push(("Ctrl+C", "quit"));
 
     let mut out: Vec<Span<'static>> = Vec::with_capacity(hints.len() * 4);
     let mut width = 0usize;
