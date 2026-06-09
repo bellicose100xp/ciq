@@ -22,7 +22,8 @@ fn app() -> App {
     let (tx, _rx) = channel();
     let mut app = App::new(tx, InterruptHandle::noop());
     // Help-bar hint tests assert on Power-mode chord set (the bulk surface). Simple-mode hints
-    // (which lead with `Alt+↑↓ panes` and use `Tab \t`) have their own dedicated tests.
+    // (which lead with `Alt+↑↓ panes` and gate `Ctrl+P` to the SELECT pane) have their own
+    // dedicated tests below.
     app.force_power_mode_for_tests("");
     app
 }
@@ -90,15 +91,21 @@ fn query_bar_insert_mode_hints() {
     let app = loaded_app(); // defaults to QueryBar + Insert (Power, since the test helper forces it)
     let hints = get_context_hints(&app);
     assert!(has_key(&hints, "Tab"), "Tab chord: {hints:?}");
+    // Ctrl+P (columns palette) is anchored to the SELECT pane in Simple mode now; in Power mode
+    // it's not a hint at all. So this Power-mode test should NOT find it.
     assert!(
-        has_key(&hints, "Ctrl+P"),
-        "columns palette chord: {hints:?}"
+        !has_key(&hints, "Ctrl+P"),
+        "no Ctrl+P hint in Power mode: {hints:?}"
     );
     assert!(has_key(&hints, "Ctrl+A"), "AI chord: {hints:?}");
     assert!(has_key(&hints, "Ctrl+R"), "history chord: {hints:?}");
     assert!(has_key(&hints, "Ctrl+T"), "focus-toggle chord: {hints:?}");
     assert!(has_key(&hints, "Ctrl+C"), "quit chord: {hints:?}");
-    // The mode badge says INSERT.
+    // The mode badge announces INSERT — the bottom hints no longer carry an `Esc vim` hint.
+    assert!(
+        !has_key(&hints, "Esc"),
+        "no `Esc vim` hint (mode badge announces it): {hints:?}"
+    );
     assert_eq!(mode_label(&app).as_deref(), Some("INSERT"));
 }
 
@@ -108,9 +115,11 @@ fn query_bar_normal_mode_hints() {
     let hints = get_context_hints(&app);
     assert!(has_key(&hints, "hjkl"), "vim motion hint: {hints:?}");
     assert!(has_key(&hints, "i"), "insert-mode hint: {hints:?}");
+    // Ctrl+P (columns palette) is anchored to SELECT-pane focus in Simple mode; it's not in the
+    // generic Normal-mode hint set anymore.
     assert!(
-        has_key(&hints, "Ctrl+P"),
-        "columns reachable in Normal: {hints:?}"
+        !has_key(&hints, "Ctrl+P"),
+        "no Ctrl+P in Normal hints (anchored to SELECT pane): {hints:?}"
     );
     assert!(
         has_key(&hints, "Ctrl+T"),
@@ -322,8 +331,9 @@ fn pair_for<'a>(
 }
 
 #[test]
-fn simple_mode_query_bar_insert_hints_show_pane_nav_and_tab_tab() {
-    // Simple is the production default; build the App without forcing Power.
+fn simple_mode_query_bar_insert_hints_lead_with_pane_nav() {
+    // Simple is the production default; build the App without forcing Power. Default focus is the
+    // WHERE pane (cursor parks there on launch).
     let (tx, _rx) = channel();
     let mut app = App::new(tx, InterruptHandle::noop());
     app.set_schema(test_schema());
@@ -341,19 +351,69 @@ fn simple_mode_query_bar_insert_hints_show_pane_nav_and_tab_tab() {
         "popup must be closed for the bare Insert-mode hints"
     );
     let hints = get_context_hints(&app);
-    // Pane-nav lives on Alt+Up/Down (the leading hint); Tab inserts a literal tab.
+    // Pane-nav lives on Alt+Up/Down (the leading hint).
     assert!(
         has_key(&hints, "Alt+\u{2191}\u{2193}"),
         "Simple-mode pane-nav chord: {hints:?}"
     );
-    let tab = pair_for(&hints, "Tab").expect("Tab present in Simple-mode Insert hints");
-    assert_eq!(
-        tab.1, "\\t",
-        "Simple-mode Tab inserts a literal tab now, not 'next pane': {hints:?}"
+    // The mode badge (TOP border) announces INSERT, so the bottom hints no longer carry
+    // `Tab \t` or `Esc vim`.
+    assert!(
+        !has_key(&hints, "Tab"),
+        "no Tab hint in Simple Insert (mode badge announces literal tab): {hints:?}"
+    );
+    assert!(
+        !has_key(&hints, "Esc"),
+        "no `Esc vim` hint (mode badge announces it): {hints:?}"
+    );
+    // Ctrl+P (columns) is anchored to the SELECT pane; default focus is WHERE, so the hint is absent.
+    assert!(
+        !has_key(&hints, "Ctrl+P"),
+        "Ctrl+P columns hint hidden when focus is not on SELECT pane: {hints:?}"
     );
     assert!(
         has_key(&hints, "Ctrl+Q"),
         "Ctrl+Q (SQL toggle) chord present: {hints:?}"
+    );
+}
+
+#[test]
+fn simple_mode_select_pane_focus_shows_ctrl_p_columns_hint() {
+    // Ctrl+P is anchored to the SELECT pane; the hint should appear only when SELECT has focus.
+    use crate::app::SimplePane;
+    let (tx, _rx) = channel();
+    let mut app = App::new(tx, InterruptHandle::noop());
+    app.set_schema(test_schema());
+    app.on_loaded("ready");
+    // Close any popup so the bare Insert-mode hint set applies.
+    let mut guard = 0;
+    while app.autocomplete().is_open() && guard < 4 {
+        app.on_key(KeyEvent::new(Key::Esc, KeyMods::NONE), 0);
+        guard += 1;
+    }
+    // Move focus from the default WHERE pane to the SELECT pane via Alt+Up.
+    app.on_key(
+        KeyEvent::new(
+            Key::Up,
+            KeyMods {
+                alt: true,
+                ..KeyMods::NONE
+            },
+        ),
+        0,
+    );
+    assert_eq!(app.query_form().focused_pane(), SimplePane::Select);
+    // The post-focus refresh may re-open the autocomplete popup against the SELECT pane's `*`;
+    // close it so the bare Insert-mode hint set applies (popup-open returns its own hints).
+    let mut guard2 = 0;
+    while app.autocomplete().is_open() && guard2 < 4 {
+        app.on_key(KeyEvent::new(Key::Esc, KeyMods::NONE), 0);
+        guard2 += 1;
+    }
+    let hints = get_context_hints(&app);
+    assert!(
+        has_key(&hints, "Ctrl+P"),
+        "Ctrl+P columns hint appears with SELECT focus: {hints:?}"
     );
 }
 

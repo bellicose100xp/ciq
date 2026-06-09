@@ -86,35 +86,40 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
     // autocomplete-complete (or a textarea tab when no popup is up). `Ctrl+T` toggles focus to the
     // results pane.
     if app.editor_mode().is_insert() {
-        match app.query_form().mode() {
-            QueryMode::Simple => vec![
-                ("Alt+\u{2191}\u{2193}", "panes"),
-                ("Tab", "\\t"),
-                ("Ctrl+A", "AI"),
-                ("Ctrl+P", "columns"),
-                ("Ctrl+R", "history"),
-                ("Ctrl+T", "results"),
-                ("Ctrl+Q", "SQL"),
-                ("Esc", "vim"),
-                ("Ctrl+C", "quit"),
-            ],
+        // Mode badge on the TOP border already announces INSERT/NORMAL (jiq's pattern), so the
+        // bottom hints don't repeat `Tab \t` or `Esc vim`. The `Ctrl+P columns` hint only appears
+        // when SELECT pane has focus (Simple mode) — Ctrl+P is anchored to that pane.
+        let mut hints: Vec<(&'static str, &'static str)> = match app.query_form().mode() {
+            QueryMode::Simple => {
+                let mut v = vec![("Alt+\u{2191}\u{2193}", "panes")];
+                if app.query_form().focused_pane() == crate::app::SimplePane::Select {
+                    v.push(("Ctrl+P", "columns"));
+                }
+                v.extend([
+                    ("Ctrl+A", "AI"),
+                    ("Ctrl+R", "history"),
+                    ("Ctrl+T", "results"),
+                    ("Ctrl+Q", "SQL"),
+                    ("Ctrl+C", "quit"),
+                ]);
+                v
+            }
             QueryMode::Power => vec![
                 ("Tab", "complete"),
                 ("Ctrl+A", "AI"),
-                ("Ctrl+P", "columns"),
                 ("Ctrl+R", "history"),
                 ("Ctrl+T", "results"),
                 ("Ctrl+Q", "SQL"),
-                ("Esc", "vim"),
                 ("Ctrl+C", "quit"),
             ],
-        }
+        };
+        hints.shrink_to_fit();
+        hints
     } else {
         hints![
             "hjkl" => "move",
             "i" => "insert",
             "dd/dw" => "delete",
-            "Ctrl+P" => "columns",
             "Ctrl+R" => "history",
             "Ctrl+T" => "results",
             "Ctrl+C" => "quit",
