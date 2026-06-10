@@ -44,6 +44,24 @@ pub mod base {
     pub const BORDER_UNFOCUSED: Color = TEXT_DIM;
     pub const BORDER_ERROR: Color = RED;
     pub const BORDER_WARNING: Color = YELLOW;
+
+    /// Blend `accent` toward [`BG_DARK`] by `accent_pct`/100, yielding a faint accent-tinted
+    /// background (no alpha in a terminal, so we mix RGB toward the base). Used for the focused
+    /// query-pane elevation band — a low percentage reads as "the base, gently tinted by the mode
+    /// color" rather than a loud fill. Falls back to `BG_SURFACE` if either color isn't RGB.
+    pub fn tint_bg(accent: Color, accent_pct: u16) -> Color {
+        fn mix(a: u8, b: u8, pct: u16) -> u8 {
+            ((a as u16 * pct + b as u16 * (100 - pct)) / 100) as u8
+        }
+        match (accent, BG_DARK) {
+            (Color::Rgb(ar, ag, ab), Color::Rgb(br, bg, bb)) => Color::Rgb(
+                mix(ar, br, accent_pct),
+                mix(ag, bg, accent_pct),
+                mix(ab, bb, accent_pct),
+            ),
+            _ => BG_SURFACE,
+        }
+    }
 }
 
 /// App shell colors and styles (query bar, status line, prompts).
@@ -143,11 +161,19 @@ pub mod app {
         Style::default().fg(p::CYAN).add_modifier(Modifier::BOLD)
     }
 
-    /// A subtle background band painted behind the **focused** Simple-mode pane row (label + text)
-    /// so the active query line lifts off the box (jiq's `bg_surface` input-line treatment). One
-    /// notch lighter than the deep-space-blue base — visible but not loud.
-    pub fn active_pane_bg() -> Style {
-        Style::default().bg(p::BG_SURFACE)
+    /// The faint, **mode-tinted** background band behind the focused Simple-mode pane row. Rather
+    /// than a flat neutral fill, it's the mode accent (cyan Insert / yellow Normal / …) blended
+    /// ~18% toward the deep base — gentle elevation that stays cohesive with the box's mode-aware
+    /// border. `accent` is the focused mode color (or the error red when the query failed).
+    pub fn active_pane_bg(accent: ratatui::style::Color) -> Style {
+        Style::default().bg(p::tint_bg(accent, 18))
+    }
+
+    /// The bright left **accent bar** glyph (`▌`) marking the focused Simple-mode pane — drawn in
+    /// the mode accent over the tinted band. A crisp left edge, lazygit/gitui-style, so the active
+    /// line reads instantly without a loud full-width fill.
+    pub fn active_pane_bar(accent: ratatui::style::Color) -> Style {
+        Style::default().fg(accent).bg(p::tint_bg(accent, 18))
     }
 }
 
@@ -202,6 +228,17 @@ pub mod border {
             ResultState::Empty => p::YELLOW,
             ResultState::Error => p::RED,
             ResultState::Pending => p::CYAN,
+        }
+    }
+
+    /// The bare accent color for the query box: the vim-mode color, or error red when the query
+    /// failed. Used for the focused-pane accent bar + tint band (which only render when the box is
+    /// focused, so there's no unfocused branch here). [`query_box`] wraps this into a border Style.
+    pub fn query_box_accent(mode: EditorMode, has_error: bool) -> Color {
+        if has_error {
+            p::BORDER_ERROR
+        } else {
+            mode_color(mode)
         }
     }
 

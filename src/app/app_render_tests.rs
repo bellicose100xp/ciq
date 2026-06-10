@@ -1116,10 +1116,12 @@ fn status_line_is_red_on_a_query_error() {
 }
 
 #[test]
-fn focused_simple_pane_row_has_subtle_background() {
+fn focused_simple_pane_row_has_accent_bar_and_tinted_background() {
     use crate::app::SimplePane;
-    // Simple mode is the default; focus starts on WHERE. The focused pane's row carries the
-    // subtle active-pane background (jiq's bg_surface input-line band); unfocused rows do not.
+    use crate::app::editor::EditorMode;
+    // Simple mode is the default; focus starts on WHERE in Insert mode. The focused pane's row
+    // carries a faint MODE-TINTED background band + a bright left accent bar (`▌`); unfocused rows
+    // carry neither. The tint is the mode accent (cyan in Insert) blended toward the base.
     let (tx, _rx) = channel();
     let mut a = App::new(tx, InterruptHandle::noop());
     a.on_loaded("ready");
@@ -1130,30 +1132,45 @@ fn focused_simple_pane_row_has_subtle_background() {
     t.draw(|f| a.render(f)).unwrap();
     let buf = t.backend().buffer();
 
-    // Scan for any cell carrying the active-pane background. The focused WHERE row must have it.
-    let surface = theme::base::BG_SURFACE;
-    let bg_cells = buf.content().iter().filter(|c| c.bg == surface).count();
+    // Insert-mode accent is cyan; the tint band is cyan blended toward the base.
+    let tint = theme::base::tint_bg(
+        theme::border::query_box_accent(EditorMode::Insert, false),
+        18,
+    );
+    let tint_cells = buf.content().iter().filter(|c| c.bg == tint).count();
     assert!(
-        bg_cells > 0,
-        "the focused pane row must carry the subtle bg_surface background"
+        tint_cells > 0,
+        "the focused pane row must carry the mode-tinted background band"
     );
 
-    // Sanity: Power mode (no per-pane focus band) does NOT paint the active-pane background.
+    // The left accent bar glyph is present, in the cyan accent foreground.
+    let cyan = theme::base::CYAN;
+    let bar_cells = buf
+        .content()
+        .iter()
+        .filter(|c| c.symbol() == "\u{258c}" && c.fg == cyan)
+        .count();
+    assert!(
+        bar_cells > 0,
+        "the focused pane row must carry a left accent bar in the mode color"
+    );
+
+    // Sanity: Power mode (no per-pane focus band) paints neither the tint nor the bar.
     let (tx2, _rx2) = channel();
     let mut p = App::new(tx2, InterruptHandle::noop());
     p.force_power_mode_for_tests("");
     p.on_loaded("ready");
     let mut t2 = Terminal::new(TestBackend::new(w, h)).unwrap();
     t2.draw(|f| p.render(f)).unwrap();
-    let power_bg = t2
+    let power_tint = t2
         .backend()
         .buffer()
         .content()
         .iter()
-        .filter(|c| c.bg == surface)
+        .filter(|c| c.bg == tint || c.symbol() == "\u{258c}")
         .count();
     assert_eq!(
-        power_bg, 0,
-        "Power mode has no per-pane focus band, so no bg_surface cells"
+        power_tint, 0,
+        "Power mode has no per-pane focus band, so no tint or accent bar"
     );
 }

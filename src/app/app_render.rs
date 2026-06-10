@@ -377,20 +377,34 @@ fn render_simple_panes(app: &App, frame: &mut Frame, inner: Rect) {
             height: 1,
         };
         let is_focused = pane == focused;
-        // The focused pane gets a subtle background band across its full row so the active query
-        // line lifts off the box (jiq's `bg_surface` input-line treatment). Paint it first so the
-        // label + text render on top; the bg is also patched into each span style below so the band
-        // reads continuously through the tui-textarea cells (a bare block doesn't tint them).
+        // The focused pane is marked, lazygit-style, with a bright left accent bar (`▌`) over a
+        // faint MODE-TINTED background band (cyan Insert / yellow Normal / … / red on a query
+        // error) — cohesive with the box's mode-aware border, not a flat neutral fill. The bar
+        // sits in column 0 and the label shifts one cell right, so the editor text still starts at
+        // `label_w` and the mouse click→text-col mapping is unchanged.
+        let accent = theme::border::query_box_accent(app.editor_mode(), app.has_query_error());
         let row_bg = if is_focused {
-            theme::app::active_pane_bg()
+            theme::app::active_pane_bg(accent)
         } else {
             Style::default()
         };
         if is_focused {
+            // Tint the whole row first, then overlay the accent bar in column 0.
             frame.render_widget(Block::default().style(row_bg), row);
+            let bar_area = Rect { width: 1, ..row };
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    "\u{258c}",
+                    theme::app::active_pane_bar(accent),
+                )),
+                bar_area,
+            );
         }
+        // The label starts at column 1 when focused (column 0 holds the accent bar), else column 0.
+        let label_x_off = if is_focused { 1 } else { 0 };
         let label_area = Rect {
-            width: label_w,
+            x: row.x.saturating_add(label_x_off),
+            width: label_w.saturating_sub(label_x_off),
             ..row
         };
         let label_style = if is_focused {
