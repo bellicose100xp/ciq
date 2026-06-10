@@ -36,25 +36,20 @@ macro_rules! hints {
 /// surface (results pane vs query bar), with the query bar split by vim mode. Pure: no `Frame`, no
 /// time, no I/O — just `App` state in, hints out (the hard-floor contract).
 pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
+    // Hint sets carry ONLY non-obvious chords. Intuitive keys (Enter, Esc, Tab, arrows, PgUp/PgDn,
+    // Home, Space, type-to-filter) are omitted — the legend teaches what a user can't guess, not
+    // what they already know. `Ctrl+C quit` is the one universal we keep, since "how do I get out"
+    // is not always obvious in a full-screen TUI.
     if app.is_ai_open() {
-        return hints!["Enter" => "generate", "Esc" => "close", "Ctrl+C" => "quit"];
+        return hints!["Ctrl+C" => "quit"];
     }
     if app.is_history_open() {
-        return hints![
-            "Up/Down" => "select",
-            "Enter" => "recall",
-            "type" => "filter",
-            "Esc" => "close",
-            "Ctrl+C" => "quit",
-        ];
+        return hints!["Ctrl+C" => "quit"];
     }
     if app.is_palette_open() {
-        // The popup carries its own bottom-border hint line; the main bottom-border falls back to
-        // a compact set in case it is ever consulted outside the popup's own chrome.
+        // The popup carries its own bottom-border hint line (the Ctrl+A/X/I bulk ops); the main
+        // bottom-border just shows quit in case it is ever consulted outside the popup's chrome.
         return hints![
-            "Space/Tab" => "toggle",
-            "Up/Down" => "nav",
-            "Enter/Esc" => "close",
             "Ctrl+A" => "all",
             "Ctrl+X" => "none",
             "Ctrl+I" => "invert",
@@ -62,22 +57,14 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
         ];
     }
     if app.is_facet_open() {
-        return hints!["Esc" => "close", "Ctrl+C" => "quit"];
+        return hints!["Ctrl+C" => "quit"];
     }
     if app.autocomplete().is_open() {
-        return hints![
-            "Tab" => "accept",
-            "Up/Down" => "select",
-            "Esc" => "close",
-            "Ctrl+C" => "quit",
-        ];
+        return hints!["Ctrl+C" => "quit"];
     }
     if app.focus() == Focus::Results {
+        // Arrow/PgUp/PgDn/Home scrolling is intuitive — only the non-obvious chords show.
         return hints![
-            "Up/Down" => "scroll",
-            "PgUp/PgDn" => "page",
-            "Home" => "top",
-            "Left/Right" => "columns",
             "f" => "facet",
             "Ctrl+T" => "query",
             "Ctrl+C" => "quit",
@@ -108,7 +95,7 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
                 v
             }
             QueryMode::Power => vec![
-                ("Tab", "complete"),
+                // Tab-complete is intuitive in an autocomplete context — omitted.
                 ("Ctrl+A", "AI"),
                 ("Ctrl+R", "history"),
                 ("Ctrl+T", "results"),
@@ -119,12 +106,12 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
         hints.shrink_to_fit();
         hints
     } else {
+        // Vim Normal mode: hjkl/i are obvious to anyone using vim mode; only the feature chords
+        // (and quit) show. The TOP-border badge already announces NORMAL.
         hints![
-            "hjkl" => "move",
-            "i" => "insert",
-            "dd/dw" => "delete",
             "Ctrl+R" => "history",
             "Ctrl+T" => "results",
+            "Ctrl+Q" => "SQL mode",
             "Ctrl+C" => "quit",
         ]
     }

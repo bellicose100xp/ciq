@@ -4,9 +4,9 @@
 //! Each row is a checkbox (`[x]` checked / `[ ]` unchecked), the column name, and the column's
 //! [`ColumnType`](crate::schema::ColumnType) badge right-aligned. The cursor row is reverse-video
 //! with the popup's distinct accent so the popup reads as visually separate from the cyan-default
-//! popups (autocomplete, history, AI, facet). The popup's BOTTOM border carries its own
-//! context-sensitive shortcut hints (`Space/Tab toggle • ↑↓ nav • Ctrl+A all • Ctrl+X none •
-//! Ctrl+I invert • Enter/Esc close`), centered.
+//! popups (autocomplete, history, AI, facet). The popup's BOTTOM border carries only the
+//! non-obvious bulk-op shortcut hints (`Ctrl+A all • Ctrl+X none • Ctrl+I invert`), centered;
+//! the intuitive toggle/nav/close keys are omitted.
 //!
 //! A **thin blit**: every layout decision (row text, checkbox glyph, badge, scrolled window) is a
 //! pure helper testable directly; the paint itself is `TestBackend`-snapshot-tested. All colors come
@@ -62,21 +62,29 @@ pub fn render_palette(state: &PaletteState, f: &mut Frame, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+/// The bottom-border hints for the column-picker popup: ONLY the non-obvious bulk operations.
+/// Space/Tab-toggle, arrow-nav, and Enter/Esc-close are intuitive and deliberately omitted — the
+/// border legend exists to teach the chords a user wouldn't guess. The popup floors its width to
+/// fit this whole line ([`hint_line_width`]) so all three always show.
+const HINTS: &[(&str, &str)] = &[("Ctrl+A", "all"), ("Ctrl+X", "none"), ("Ctrl+I", "invert")];
+
+/// The full rendered width (in cells) of the complete [`HINTS`] line — leading space + each
+/// `key desc` joined by ` • `. The popup width floors to this (+ borders) so the bulk-op hints
+/// (`Ctrl+A`/`Ctrl+X`/`Ctrl+I`) always fit rather than being dropped on a narrow CSV's popup.
+pub(crate) fn hint_line_width() -> usize {
+    HINTS.iter().enumerate().fold(0, |w, (i, (k, d))| {
+        let sep = if i == 0 { 1 } else { 3 }; // " " or " • "
+        w + sep + k.chars().count() + 1 + d.chars().count()
+    })
+}
+
 /// The styled hint spans for the popup's bottom border. Drops trailing low-priority hints whole if
 /// they wouldn't fit in `max_width` (the same narrow-width policy the main bottom-border hints use).
 pub(crate) fn hint_spans(max_width: usize) -> Vec<Span<'static>> {
     let key_style = theme::help_line::key();
     let desc_style = theme::help_line::description();
     let sep_style = theme::help_line::separator();
-    // Most-important first so a narrow popup keeps the toggle/nav/close hints over the bulk ops.
-    let hints: &[(&'static str, &'static str)] = &[
-        ("Space/Tab", "toggle"),
-        ("\u{2191}\u{2193}", "nav"),
-        ("Enter/Esc", "close"),
-        ("Ctrl+A", "all"),
-        ("Ctrl+X", "none"),
-        ("Ctrl+I", "invert"),
-    ];
+    let hints = HINTS;
 
     let mut out: Vec<Span<'static>> = Vec::with_capacity(hints.len() * 4);
     let mut width = 0usize;

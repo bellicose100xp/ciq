@@ -367,11 +367,12 @@ fn keyboard_hints_render_centered_on_the_query_box_bottom_border() {
         .iter()
         .position(|l| l.contains("SELECT 42"))
         .expect("query text line");
-    // A hint description ("complete") sits on the row just below the text line — the box's bottom
-    // border — not on the text row and not on the status row.
+    // A hint description ("AI") sits on the row just below the text line — the box's bottom
+    // border — not on the text row and not on the status row. (Power-Insert hints lead with
+    // `Ctrl+A AI`; the intuitive `Tab complete` was dropped.)
     let hint_line = lines
         .iter()
-        .position(|l| l.contains("complete"))
+        .position(|l| l.contains("Ctrl+A"))
         .expect("help hints on a border row");
     assert_eq!(
         hint_line,
@@ -396,7 +397,7 @@ fn keyboard_hints_render_centered_on_the_query_box_bottom_border() {
     // the left of the hints.
     let bottom = lines[hint_line];
     let first_hint_col = bottom
-        .find("complete")
+        .find("Ctrl+A")
         .expect("hint substring on the bottom border");
     assert!(
         first_hint_col > 4,
@@ -464,12 +465,13 @@ fn keyboard_hints_render_on_focused_box_only_results() {
         "query box bottom border has no `complete` hint when results is focused:\n{screen}"
     );
     // The results pane's bottom border (the row just above the query box's top border) carries
-    // the Results-focused hint set: `Up/Down scroll`, `PgUp/PgDn page`, `f facet`, etc. Any of
-    // those substrings on that row proves the hints moved here.
+    // the Results-focused hint set — now just the non-obvious chords: `f facet`, `Ctrl+T query`,
+    // `Ctrl+C quit` (the intuitive arrow/page scroll hints were dropped). The `facet` description
+    // on that row proves the hints moved here.
     let results_bottom = query_text_line.saturating_sub(2);
     assert!(
-        lines[results_bottom].contains("scroll"),
-        "results pane bottom border carries the `scroll` Results-focused hint:\n{screen}"
+        lines[results_bottom].contains("facet"),
+        "results pane bottom border carries the `facet` Results-focused hint:\n{screen}"
     );
 }
 

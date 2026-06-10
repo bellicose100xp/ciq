@@ -153,21 +153,33 @@ fn popup_rect_for(app: &App, kind: PopupKind, bar: Rect, results: Rect) -> Rect 
         PopupKind::Facet => FACET_POPUP_ROWS,
         PopupKind::Autocomplete => (app.autocomplete().len() as u16).min(MAX_VISIBLE_ROWS),
     };
-    popup_above_bar(bar, results, rows)
+    // The column-picker floors its width to fit its full bottom-border hint line (incl. the
+    // Ctrl+A/Ctrl+X/Ctrl+I bulk ops) — the box is wider than other popups so those hints always
+    // show. Clamped to the pane so a genuinely tiny terminal still can't overflow.
+    let min_width = match kind {
+        PopupKind::Palette => (crate::palette::palette_render::hint_line_width() as u16)
+            .saturating_add(2)
+            .min(results.width),
+        _ => 0,
+    };
+    popup_above_bar(bar, results, rows, min_width)
 }
 
 /// The screen rectangle for a popup of `content_rows` content rows + a border, anchored so its
 /// **bottom** edge sits just above the query `bar` and it grows upward into the `results` pane.
 /// Height is clamped to the available results height; the box never overflows the top of the pane.
-fn popup_above_bar(bar: Rect, results: Rect, content_rows: u16) -> Rect {
+/// `min_width` floors the box width (clamped to the pane by the caller) so a popup whose chrome
+/// needs more room than the default — e.g. the column picker's bulk-op hint line — gets it.
+fn popup_above_bar(bar: Rect, results: Rect, content_rows: u16, min_width: u16) -> Rect {
     let height = (content_rows + 2).min(results.height.max(1)); // +2 for the popup border
     // Anchor the box's bottom edge on the row directly above the bar, growing upward.
     let bottom = bar.y; // exclusive bottom (the bar row itself stays visible)
     let y = bottom.saturating_sub(height).max(results.y);
+    let width = popup_width(results.width).max(min_width);
     Rect {
         x: bar.x,
         y,
-        width: popup_width(results.width),
+        width,
         height,
     }
 }

@@ -65,15 +65,14 @@ pub(crate) fn hint_spans(show_columns_hint: bool, max_width: usize) -> Vec<Span<
     let desc_style = theme::help_line::description();
     let sep_style = theme::help_line::separator();
 
-    // Tab accept and ↑↓ select are universal autocomplete idioms — the user doesn't need them
-    // spelled out. Surface only what's CONTEXTUAL: `Ctrl+P multi-select` reveals the dedicated
-    // column-picker palette when focus is on SELECT (the chord is anchored to that pane), and
-    // `Esc close` is the one universal worth keeping for users who don't yet trust Tab/Esc.
+    // Tab-accept, ↑↓-select, and Esc-close are universal autocomplete idioms — omitted. The only
+    // hint worth surfacing is the CONTEXTUAL `Ctrl+P multi-select`, which reveals the dedicated
+    // column-picker palette when focus is on the SELECT pane (the chord is anchored there). Off the
+    // SELECT pane there's nothing non-obvious to show, so the bottom border stays clean.
     let mut hints: Vec<(&'static str, &'static str)> = Vec::new();
     if show_columns_hint {
         hints.push(("Ctrl+P", "multi-select"));
     }
-    hints.push(("Esc", "close"));
 
     let mut out: Vec<Span<'static>> = Vec::with_capacity(hints.len() * 4);
     let mut width = 0usize;

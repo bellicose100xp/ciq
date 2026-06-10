@@ -90,7 +90,11 @@ fn has_key(hints: &[(&'static str, &'static str)], key: &str) -> bool {
 fn query_bar_insert_mode_hints() {
     let app = loaded_app(); // defaults to QueryBar + Insert (Power, since the test helper forces it)
     let hints = get_context_hints(&app);
-    assert!(has_key(&hints, "Tab"), "Tab chord: {hints:?}");
+    // Tab-complete is an intuitive autocomplete idiom — no longer surfaced.
+    assert!(
+        !has_key(&hints, "Tab"),
+        "no Tab hint (intuitive autocomplete idiom): {hints:?}"
+    );
     // Ctrl+P (columns palette) is anchored to the SELECT pane in Simple mode now; in Power mode
     // it's not a hint at all. So this Power-mode test should NOT find it.
     assert!(
@@ -100,6 +104,7 @@ fn query_bar_insert_mode_hints() {
     assert!(has_key(&hints, "Ctrl+A"), "AI chord: {hints:?}");
     assert!(has_key(&hints, "Ctrl+R"), "history chord: {hints:?}");
     assert!(has_key(&hints, "Ctrl+T"), "focus-toggle chord: {hints:?}");
+    assert!(has_key(&hints, "Ctrl+Q"), "SQL-mode chord: {hints:?}");
     assert!(has_key(&hints, "Ctrl+C"), "quit chord: {hints:?}");
     // The mode badge announces INSERT — the bottom hints no longer carry an `Esc vim` hint.
     assert!(
@@ -113,8 +118,16 @@ fn query_bar_insert_mode_hints() {
 fn query_bar_normal_mode_hints() {
     let app = query_bar_normal_no_popup();
     let hints = get_context_hints(&app);
-    assert!(has_key(&hints, "hjkl"), "vim motion hint: {hints:?}");
-    assert!(has_key(&hints, "i"), "insert-mode hint: {hints:?}");
+    // hjkl/i are obvious to vim users and the TOP-border badge already announces NORMAL — the
+    // Normal-mode hint set now carries only the non-obvious feature chords.
+    assert!(
+        !has_key(&hints, "hjkl"),
+        "no hjkl hint (obvious vim motion): {hints:?}"
+    );
+    assert!(
+        !has_key(&hints, "i"),
+        "no `i` hint (obvious vim insert): {hints:?}"
+    );
     // Ctrl+P (columns palette) is anchored to SELECT-pane focus in Simple mode; it's not in the
     // generic Normal-mode hint set anymore.
     assert!(
@@ -122,9 +135,14 @@ fn query_bar_normal_mode_hints() {
         "no Ctrl+P in Normal hints (anchored to SELECT pane): {hints:?}"
     );
     assert!(
+        has_key(&hints, "Ctrl+R"),
+        "history reachable in Normal: {hints:?}"
+    );
+    assert!(
         has_key(&hints, "Ctrl+T"),
         "focus-toggle reachable in Normal: {hints:?}"
     );
+    assert!(has_key(&hints, "Ctrl+C"), "quit chord: {hints:?}");
     // No live "complete" affordance in Normal mode (the popup is an Insert-mode concern).
     assert!(
         !has_key(&hints, "Tab"),
@@ -147,11 +165,19 @@ fn results_pane_hints() {
     app.on_key(KeyEvent::plain(Key::Down), 0); // hands off to Results
     assert_eq!(app.focus(), crate::app::Focus::Results);
     let hints = get_context_hints(&app);
-    assert!(has_key(&hints, "Up/Down"), "scroll hint: {hints:?}");
-    assert!(has_key(&hints, "PgUp/PgDn"), "page hint: {hints:?}");
+    // Arrow/PgUp-PgDn/Home scrolling is intuitive — those hints were dropped. Only the
+    // non-obvious chords remain.
     assert!(
-        has_key(&hints, "Left/Right"),
-        "column scroll hint: {hints:?}"
+        !has_key(&hints, "Up/Down"),
+        "no scroll hint (intuitive): {hints:?}"
+    );
+    assert!(
+        !has_key(&hints, "PgUp/PgDn"),
+        "no page hint (intuitive): {hints:?}"
+    );
+    assert!(
+        !has_key(&hints, "Left/Right"),
+        "no column-scroll hint (intuitive): {hints:?}"
     );
     assert!(has_key(&hints, "f"), "facet chord: {hints:?}");
     assert!(
@@ -171,9 +197,21 @@ fn autocomplete_popup_hints() {
     }
     assert!(app.autocomplete().is_open());
     let hints = get_context_hints(&app);
-    assert!(has_key(&hints, "Tab"), "complete chord: {hints:?}");
-    assert!(has_key(&hints, "Up/Down"), "select chord: {hints:?}");
-    assert!(has_key(&hints, "Esc"), "dismiss chord: {hints:?}");
+    // Tab-accept, ↑↓-select, Esc-close are intuitive autocomplete idioms — the popup-open
+    // context carries only the universal quit chord.
+    assert!(
+        !has_key(&hints, "Tab"),
+        "no Tab hint (intuitive): {hints:?}"
+    );
+    assert!(
+        !has_key(&hints, "Up/Down"),
+        "no select hint (intuitive): {hints:?}"
+    );
+    assert!(
+        !has_key(&hints, "Esc"),
+        "no close hint (intuitive): {hints:?}"
+    );
+    assert!(has_key(&hints, "Ctrl+C"), "quit chord: {hints:?}");
 }
 
 #[test]
@@ -201,11 +239,24 @@ fn palette_popup_hints() {
     app.on_key(KeyEvent::new(Key::Char('p'), KeyMods::CTRL), 0);
     assert!(app.is_palette_open());
     let hints = get_context_hints(&app);
-    assert!(has_key(&hints, "Space/Tab"), "toggle chord: {hints:?}");
-    assert!(has_key(&hints, "Up/Down"), "nav chord: {hints:?}");
-    assert!(has_key(&hints, "Enter/Esc"), "close chord: {hints:?}");
+    // Space/Tab-toggle, ↑↓-nav, Enter/Esc-close are intuitive — only the non-obvious bulk ops
+    // (plus quit) show.
+    assert!(
+        !has_key(&hints, "Space/Tab"),
+        "no toggle hint (intuitive): {hints:?}"
+    );
+    assert!(
+        !has_key(&hints, "Up/Down"),
+        "no nav hint (intuitive): {hints:?}"
+    );
+    assert!(
+        !has_key(&hints, "Enter/Esc"),
+        "no close hint (intuitive): {hints:?}"
+    );
     assert!(has_key(&hints, "Ctrl+A"), "select-all chord: {hints:?}");
+    assert!(has_key(&hints, "Ctrl+X"), "deselect-all chord: {hints:?}");
     assert!(has_key(&hints, "Ctrl+I"), "invert chord: {hints:?}");
+    assert!(has_key(&hints, "Ctrl+C"), "quit chord: {hints:?}");
 }
 
 #[test]
@@ -214,9 +265,20 @@ fn history_popup_hints() {
     app.on_key(KeyEvent::new(Key::Char('r'), KeyMods::CTRL), 0);
     assert!(app.is_history_open());
     let hints = get_context_hints(&app);
-    assert!(has_key(&hints, "Up/Down"), "select chord: {hints:?}");
-    assert!(has_key(&hints, "Enter"), "recall chord: {hints:?}");
-    assert!(has_key(&hints, "Esc"), "close chord: {hints:?}");
+    // ↑↓-select, Enter-recall, type-to-filter, Esc-close are intuitive — only quit shows.
+    assert!(
+        !has_key(&hints, "Up/Down"),
+        "no select hint (intuitive): {hints:?}"
+    );
+    assert!(
+        !has_key(&hints, "Enter"),
+        "no recall hint (intuitive): {hints:?}"
+    );
+    assert!(
+        !has_key(&hints, "Esc"),
+        "no close hint (intuitive): {hints:?}"
+    );
+    assert!(has_key(&hints, "Ctrl+C"), "quit chord: {hints:?}");
 }
 
 #[test]
@@ -227,8 +289,16 @@ fn ai_popup_hints() {
     app.on_key(KeyEvent::new(Key::Char('a'), KeyMods::CTRL), 0);
     assert!(app.is_ai_open());
     let hints = get_context_hints(&app);
-    assert!(has_key(&hints, "Enter"), "generate chord: {hints:?}");
-    assert!(has_key(&hints, "Esc"), "close chord: {hints:?}");
+    // Enter-generate and Esc-close are intuitive — only quit shows.
+    assert!(
+        !has_key(&hints, "Enter"),
+        "no generate hint (intuitive): {hints:?}"
+    );
+    assert!(
+        !has_key(&hints, "Esc"),
+        "no close hint (intuitive): {hints:?}"
+    );
+    assert!(has_key(&hints, "Ctrl+C"), "quit chord: {hints:?}");
 }
 
 #[test]
@@ -272,11 +342,15 @@ fn facet_popup_hints() {
     assert!(app.is_facet_open(), "the `f` chord opened a facet");
 
     let hints = get_context_hints(&app);
-    // The facet-open context shows Esc/Ctrl+C (and NOT the results-pane or query-bar hints).
-    assert!(has_key(&hints, "Esc"), "facet close chord: {hints:?}");
+    // The facet-open context shows only the universal quit chord (Esc-close is intuitive and was
+    // dropped), and NOT the results-pane or query-bar hints.
+    assert!(
+        !has_key(&hints, "Esc"),
+        "no facet close hint (intuitive): {hints:?}"
+    );
     assert!(has_key(&hints, "Ctrl+C"), "facet quit chord: {hints:?}");
     assert!(
-        !has_key(&hints, "Tab") && !has_key(&hints, "PgUp/PgDn"),
+        !has_key(&hints, "Tab") && !has_key(&hints, "PgUp/PgDn") && !has_key(&hints, "f"),
         "the facet branch fired, not the query-bar or results-pane branch: {hints:?}"
     );
     // No mode badge when a facet popup is open (the query bar is not the focused editing surface).
@@ -296,7 +370,7 @@ fn render_shows_a_hint() {
         "mode badge does NOT live on the help row anymore:\n{row}"
     );
     assert!(
-        row.contains("complete"),
+        row.contains("history"),
         "a hint description renders:\n{row}"
     );
     assert!(
@@ -307,25 +381,27 @@ fn render_shows_a_hint() {
 
 #[test]
 fn render_updates_with_mode_hints() {
-    // Switching vim mode swaps the hint set (Normal-mode `move` replaces Insert-mode `complete`),
-    // even though the badge itself rides the box top border instead of the help row.
+    // Switching vim mode swaps the hint set. Both Insert and Normal now share the feature chords
+    // (the obvious motion/typing keys are dropped), so the assertion is just that the bar renders
+    // a feature hint and not the mode badge (which rides the box top border).
     let app = query_bar_normal_no_popup();
     let row = render_help(&app, 80);
     assert!(
         !row.contains("NORMAL"),
         "mode badge does NOT live on the help row:\n{row}"
     );
-    assert!(row.contains("move"), "a vim hint renders:\n{row}");
+    assert!(row.contains("history"), "a feature hint renders:\n{row}");
 }
 
 #[test]
 fn render_drops_trailing_hints_on_a_narrow_terminal() {
     let app = loaded_app();
     // Wide enough for the first hint or two; the low-priority trailing hints must be dropped,
-    // not clipped mid-word. (The mode badge no longer competes for the row's width.)
+    // not clipped mid-word. (The mode badge no longer competes for the row's width.) The
+    // Power-insert set leads with `Ctrl+A AI` and ends with `Ctrl+C quit`.
     let row = render_help(&app, 22);
     assert!(
-        row.contains("Tab"),
+        row.contains("AI"),
         "the highest-priority hint survives:\n{row}"
     );
     assert!(
@@ -438,17 +514,22 @@ fn simple_mode_select_pane_focus_shows_ctrl_p_columns_hint() {
 }
 
 #[test]
-fn autocomplete_popup_hint_descriptions_say_accept_select_close() {
+fn autocomplete_popup_help_line_carries_only_quit() {
+    // The autocomplete popup's intuitive keys (Tab accept / ↑↓ select / Esc close) are not spelled
+    // out in the main help-line branch — only the universal quit chord remains. (The popup's own
+    // bottom-border renderer surfaces the one CONTEXTUAL `Ctrl+P multi-select` when SELECT-focused;
+    // that's covered in autocomplete_render_tests.)
     let mut app = loaded_app();
     for c in "SELECT st".chars() {
         app.on_key(KeyEvent::char(c), 0);
     }
     assert!(app.autocomplete().is_open());
     let hints = get_context_hints(&app);
-    let tab = pair_for(&hints, "Tab").expect("Tab present in popup-open hints");
-    assert_eq!(tab.1, "accept", "Tab description: {hints:?}");
-    let updown = pair_for(&hints, "Up/Down").expect("Up/Down present");
-    assert_eq!(updown.1, "select", "Up/Down description: {hints:?}");
-    let esc = pair_for(&hints, "Esc").expect("Esc present");
-    assert_eq!(esc.1, "close", "Esc description: {hints:?}");
+    assert!(pair_for(&hints, "Tab").is_none(), "no Tab hint: {hints:?}");
+    assert!(
+        pair_for(&hints, "Up/Down").is_none(),
+        "no Up/Down hint: {hints:?}"
+    );
+    assert!(pair_for(&hints, "Esc").is_none(), "no Esc hint: {hints:?}");
+    assert!(has_key(&hints, "Ctrl+C"), "quit chord: {hints:?}");
 }

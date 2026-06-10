@@ -82,14 +82,27 @@ fn popup_title_reads_columns() {
 
 #[test]
 fn popup_bottom_border_hints_render() {
-    // The popup's bottom border carries its own context-sensitive hints — toggle / nav / close.
+    // The popup's bottom border carries ONLY the non-obvious bulk operations. Space/Tab-toggle,
+    // ↑↓-nav, and Enter/Esc-close are intuitive and deliberately omitted.
     let state = PaletteState::new(cols());
     let screen = render(&state, 80, 8, Rect::new(0, 0, 80, 6));
-    // At 80 cols every hint fits.
-    assert!(screen.contains("toggle"), "screen:\n{screen}");
-    assert!(screen.contains("nav"), "screen:\n{screen}");
-    assert!(screen.contains("close"), "screen:\n{screen}");
-    assert!(screen.contains("Ctrl+A"), "screen:\n{screen}");
+    // At 80 cols every bulk-op hint fits.
+    assert!(screen.contains("Ctrl+A"), "select-all hint:\n{screen}");
+    assert!(screen.contains("Ctrl+X"), "deselect-all hint:\n{screen}");
+    assert!(screen.contains("Ctrl+I"), "invert hint:\n{screen}");
+    assert!(screen.contains("invert"), "invert description:\n{screen}");
+    // The intuitive keys are gone.
+    assert!(!screen.contains("toggle"), "no toggle hint:\n{screen}");
+    assert!(!screen.contains("nav"), "no nav hint:\n{screen}");
+}
+
+#[test]
+fn hint_line_width_sums_the_three_bulk_ops() {
+    // The popup floors its width to this so the bulk-op hints always fit. The exact value is the
+    // rendered width of " Ctrl+A all • Ctrl+X none • Ctrl+I invert".
+    let w = hint_line_width();
+    // 3 hints: " Ctrl+A all" (11) + " • Ctrl+X none" (14) + " • Ctrl+I invert" (16) = 41.
+    assert_eq!(w, 41, "full bulk-op hint line width");
 }
 
 #[test]
@@ -126,12 +139,13 @@ fn render_no_op_on_zero_area() {
 
 #[test]
 fn hint_spans_drops_trailing_hints_on_a_narrow_box() {
-    // A 30-char-wide popup can't fit every hint; the trailing low-priority ones are dropped
-    // whole rather than overflowing the border.
-    let spans = hint_spans(30);
+    // A 16-char-wide popup can't fit every bulk-op hint; the trailing low-priority ones are
+    // dropped whole rather than overflowing the border. (The popup normally floors its width to
+    // `hint_line_width` so all three fit — this exercises the truncation path directly.)
+    let spans = hint_spans(16);
     let rendered: String = spans.iter().map(|s| s.content.as_ref()).collect();
-    // The most-important hints survive (Space/Tab toggle).
-    assert!(rendered.contains("toggle"), "got: {rendered:?}");
+    // The most-important hint survives (Ctrl+A all).
+    assert!(rendered.contains("all"), "got: {rendered:?}");
     // A low-priority hint is dropped.
     assert!(
         !rendered.contains("invert"),

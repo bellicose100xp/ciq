@@ -169,20 +169,17 @@ fn render_does_not_panic_on_degenerate_area() {
 // --- bottom-border hints ---
 
 #[test]
-fn bottom_border_carries_esc_close_always() {
-    // Tab accept and ↑↓ select are universal autocomplete idioms — we no longer spell them out
-    // on the popup's bottom border. Only contextual hints (Esc close always; Ctrl+P multi-select
-    // when SELECT is focused) survive there. See `hint_spans` for the rationale.
+fn bottom_border_is_clean_off_select_pane() {
+    // Tab-accept, ↑↓-select, and Esc-close are universal autocomplete idioms — none are spelled
+    // out on the popup's bottom border. The ONLY hint is the contextual `Ctrl+P multi-select`,
+    // shown only when the SELECT pane is focused. Off SELECT (the default render), the bottom
+    // border carries no hint text at all. See `hint_spans` for the rationale.
     let mut state = AutocompleteState::new();
     state.open_with(vec![Suggestion::new("id", SuggestionType::Field)]);
     let screen = render(&state, 80, 8, Rect::new(0, 0, 80, 6));
     assert!(
-        screen.contains("Esc") && screen.contains("close"),
-        "bottom border carries Esc close: {screen}"
-    );
-    assert!(
-        !screen.contains("Tab") || !screen.contains("accept"),
-        "Tab accept is no longer surfaced (universal idiom): {screen}"
+        !screen.contains("accept") && !screen.contains("close") && !screen.contains("Ctrl+P"),
+        "off-SELECT popup border carries no hint text: {screen}"
     );
 }
 
