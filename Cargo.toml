@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "CSV Interactive Query — type DuckDB SQL, watch an aligned grid update live (jiq for CSV)"
 license = "MIT"
-repository = "https://github.com/chahcha/ciq"
+repository = "https://github.com/bellicose100xp/ciq"
 default-run = "ciq"
 
 [dependencies]
@@ -58,3 +58,7 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# Profile used by cargo-dist for release builds (see dist-workspace.toml).
+[profile.dist]
+inherits = "release"
