@@ -11,13 +11,27 @@ column scroll, RFC-4180 quoting (embedded comma / doubled-quote / embedded newli
 multibyte/wide-glyph truncation safety, low-cardinality facets + value completion, and
 identifier quoting for awkward column names.
 
-Run:  python3 dev/gen_showcase.py   (writes tests/fixtures/showcase.csv)
+Two output modes:
+  python3 dev/gen_showcase.py            -> ./showcase.csv (repo root, gitignored):
+                                            1,000,000 rows x 100 columns — the big manual-test /
+                                            benchmark file. ~700 MB; never commit it (the root
+                                            /*.csv gitignore entry covers it).
+  python3 dev/gen_showcase.py --fixture  -> tests/fixtures/showcase.csv (tracked):
+                                            5,000 rows x 14 columns — the small edge-case fixture
+                                            documented in dev/human-smoke.md.
+
+The big file keeps the same first 14 edge-case columns, then appends deterministic filler
+columns c015..c100 cycling through int / float / short-text / bool / date so type sniffing,
+alignment, and horizontal scroll all have real work at 100-column width.
 """
 
 import csv
 import os
+import sys
 
-ROWS = 5000  # > VIEWPORT_ROW_LIMIT (1000) so `SELECT * FROM t` triggers the truncation banner.
+FIXTURE_ROWS = 5000  # > VIEWPORT_ROW_LIMIT (1000) so `SELECT * FROM t` triggers the banner.
+BIG_ROWS = 1_000_000
+BIG_COLS = 100  # total, including the 14 edge-case columns below
 
 # Column names chosen to exercise identifier quoting on emit:
 #   "Total ($)" -> space + special chars   |   "order" -> reserved word   |   "CreatedBy" -> CamelCase
@@ -136,18 +150,53 @@ def row(n: int):
     ]
 
 
+def filler_header():
+    """Names for the deterministic filler columns c015..c<BIG_COLS>."""
+    return [f"c{i:03d}" for i in range(len(HEADER) + 1, BIG_COLS + 1)]
+
+
+def filler_cells(n: int):
+    """Filler values for row n: cycle int / float / short-text / bool / date by column index so
+    the wide file exercises sniffing + alignment across all 100 columns. Pure f(n, i)."""
+    cells = []
+    for i in range(len(HEADER) + 1, BIG_COLS + 1):
+        k = (n * 31 + i * 17) % 100000
+        kind = i % 5
+        if kind == 0:
+            cells.append(str(k))
+        elif kind == 1:
+            cells.append(f"{k / 100:.2f}")
+        elif kind == 2:
+            cells.append(NAMES[k % len(NAMES)])
+        elif kind == 3:
+            cells.append("true" if k % 2 == 0 else "false")
+        else:
+            cells.append(f"{2019 + k % 6:04d}-{k % 12 + 1:02d}-{k % 28 + 1:02d}")
+    return cells
+
+
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
-    out = os.path.join(here, "..", "tests", "fixtures", "showcase.csv")
-    out = os.path.normpath(out)
+    fixture = "--fixture" in sys.argv
+    if fixture:
+        out = os.path.normpath(os.path.join(here, "..", "tests", "fixtures", "showcase.csv"))
+        rows, header = FIXTURE_ROWS, HEADER
+    else:
+        out = os.path.normpath(os.path.join(here, "..", "showcase.csv"))
+        rows, header = BIG_ROWS, HEADER + filler_header()
     # newline="" + the default (RFC-4180) dialect: embedded newlines/commas/quotes are quoted,
     # and the row terminator is CRLF per the spec — DuckDB's sniffer reads both fine.
     with open(out, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f, quoting=csv.QUOTE_MINIMAL)
-        w.writerow(HEADER)
-        for n in range(1, ROWS + 1):
-            w.writerow(row(n))
-    print(f"wrote {out} ({ROWS} data rows, {len(HEADER)} columns)")
+        w.writerow(header)
+        for n in range(1, rows + 1):
+            r = row(n)
+            if not fixture:
+                r += filler_cells(n)
+            w.writerow(r)
+            if not fixture and n % 100_000 == 0:
+                print(f"  {n:,} rows...", flush=True)
+    print(f"wrote {out} ({rows:,} data rows, {len(header)} columns)")
 
 
 if __name__ == "__main__":
