@@ -53,7 +53,7 @@ After all green:
 - **Sync with remote first:** `git fetch origin`; if you have local commits on `main`, `git rebase origin/main` (resolve conflicts locally, not in the PR); else `git pull --ff-only origin main`.
 - Stage specific files by name (never `git add -A` / `git add .`).
 - Commit with a **single-line** lowercase Conventional Commit message (no body, no issue refs).
-- **Do not push.** Pushing/tagging/publishing is deferred until the user explicitly asks to release.
+- **Do not push, tag, or release on your own.** Pushing/tagging is deferred until the user explicitly asks to release — then invoke the **`ciq-release`** skill (see Versioning & Releasing).
 
 ## CI gates (4 jobs — see `dev/PLAN.md` §0/D5)
 
@@ -73,7 +73,9 @@ After all green:
 
 **No `1.0.0` / major bumps** until the user explicitly decides ciq is 1.0-ready.
 
-**Releasing is deferred.** There is no release skill yet — a real release flow (CI, crates.io publish, Homebrew tap, GitHub Pages docs site) needs comprehensive infrastructure setup first, which doesn't exist at this stage. When that infra is built and the user asks to ship, author the release flow then. Until then: commit locally per the Pre-Commit Requirements above; do not push, tag, or publish.
+**Releasing — invoke the `ciq-release` skill.** When the user asks to release / ship / publish / tag, invoke the **`ciq-release`** skill (`.claude/skills/ciq-release/SKILL.md`). Pass `patch` / `minor` if specified; otherwise it infers. Never reinvent the flow inline.
+
+The flow is **cargo-dist, shell installer only** (curl-based, config in `dist-workspace.toml`, workflow in `.github/workflows/release.yml`): bump `version` in `Cargo.toml`, update `CHANGELOG.md`, commit `release vX.Y.Z`, push `main`, then push a `vX.Y.Z` tag — the **tag** (not the branch push) triggers the `Release` workflow, which builds every target and attaches the tarballs + `ciq-installer.sh` to a GitHub Release. Deliberately **no crates.io publish and no Homebrew tap** (unlike jiq). Because DuckDB is bundled per-target, the less-common legs (musl, Windows) can fail where macOS/Linux-gnu pass; cargo-dist blocks publishing until all legs are green, so a broken target means dropping it from `dist-workspace.toml` (re-run `dist generate`) and cutting a new patch tag rather than deleting the pushed tag.
 
 ## Documentation Site
 
