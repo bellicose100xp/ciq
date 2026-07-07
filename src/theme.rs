@@ -22,6 +22,9 @@ pub mod base {
     pub const BG_SURFACE: Color = Color::Rgb(35, 35, 58);
     pub const BG_HOVER: Color = Color::Rgb(45, 45, 72);
     pub const BG_HIGHLIGHT: Color = Color::Rgb(55, 55, 85);
+    /// Search-match band background — brighter than [`BG_HIGHLIGHT`] so a (non-current) match run
+    /// reads clearly against the grid (verbatim from jiq's galaxy `match_highlight_bg`).
+    pub const BG_MATCH: Color = Color::Rgb(85, 85, 115);
 
     // --- accents ---
     pub const CYAN: Color = Color::Rgb(0, 217, 255);
@@ -569,13 +572,14 @@ pub mod grid {
             .add_modifier(Modifier::BOLD)
     }
 
-    /// A `Ctrl+F` search-match run within a body line — jiq's match-highlight band (light slate
-    /// over the normal text) so matches read in place without drowning the row. This is the
-    /// **non-current** match style; the actively-selected match uses [`current_match`].
+    /// A `Ctrl+F` search-match run within a body line — jiq's match-highlight band ([`BG_MATCH`],
+    /// brighter than the hover band) with bright text so a match reads clearly in place without
+    /// drowning the row. This is the **non-current** match style; the actively-selected match uses
+    /// [`current_match`].
     pub fn search_match() -> Style {
         Style::default()
             .fg(p::TEXT)
-            .bg(p::BG_HIGHLIGHT)
+            .bg(p::BG_MATCH)
             .add_modifier(Modifier::BOLD)
     }
 

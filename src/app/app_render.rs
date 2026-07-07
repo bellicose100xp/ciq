@@ -612,10 +612,10 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
         };
         let filtering = app.search().is_filtering();
         let needle = if filtering { app.search().needle() } else { "" };
-        // The current match is only meaningful (and only painted distinctly) once the search is
-        // confirmed — while editing, every match is equal and there is no "selected" one yet.
-        let current_match_row =
-            (filtering && app.search().is_confirmed()).then(|| app.search().current_row());
+        // The current match is highlighted distinctly whenever a filter is active — including
+        // while still editing the needle (jiq auto-selects + scrolls to the first match live). It
+        // defaults to the first matching row and is what `n`/`N` step through once confirmed.
+        let current_match_row = filtering.then(|| app.search().current_row());
         grid_render::render_grid(
             frame,
             inner,

@@ -14,7 +14,9 @@ changes alike, patch `0.minor.Y` for fixes, refactors, polish, and docs.
   modifier-free `f` (it previously also fired on `Ctrl+F`). Once confirmed, `n` / `N` (or Enter)
   step between matching rows: the current match gets a distinct highlight color and is scrolled
   into view with a scrolloff margin (vim-style, both axes), and highlights persist while
-  scrolling. Matches are scoped per cell so a needle never spans the column gutter.
+  scrolling. The first match is auto-highlighted and scrolled to live while you type (before
+  confirming), matching jiq. Matches are scoped per cell so a needle never spans the column
+  gutter, and the match-highlight band is brighter for legibility.
 
 ### Changed
 - **No row cap by default** — interactive queries now show every row they return; the previous

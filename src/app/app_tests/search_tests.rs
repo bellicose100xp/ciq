@@ -490,6 +490,88 @@ fn current_match_row_renders_in_the_distinct_style() {
 }
 
 #[test]
+fn first_match_is_highlighted_and_scrolled_to_while_still_editing() {
+    // jiq auto-selects + scrolls to the first match live as you type, before confirming. Here the
+    // only match is far down the result, so a correct live-scroll must move v_row_offset > 0 and
+    // paint that row in the CURRENT-match color even though the search is not confirmed yet.
+    let (mut app, _rx) = loaded_app();
+    type_str(&mut app, "SELECT * FROM t", 0);
+    app.tick(150);
+    let n = 60usize;
+    let ids: Vec<Cell> = (0..n as i64).map(Cell::Int).collect();
+    // Only row 40 contains "zephyr"; every other row is filler.
+    let tags: Vec<Cell> = (0..n)
+        .map(|i| {
+            if i == 40 {
+                Cell::Text("zephyr".into())
+            } else {
+                Cell::Text(format!("filler{i}"))
+            }
+        })
+        .collect();
+    let table = Table::new(vec![
+        Column::new("id", ColumnType::Int, ids),
+        Column::new("tag", ColumnType::Text, tags),
+    ]);
+    let schema = table.schema();
+    let id = app.latest_request_id();
+    app.on_response(QueryResponse::ProcessedSuccess {
+        result: ProcessedResult::new(table, schema, 0),
+        request_id: id,
+        kind: RequestKind::Main,
+    });
+    if app.autocomplete().is_open() {
+        app.on_key(KeyEvent::plain(Key::Esc), 200);
+    }
+    let _ = render(&app, 60, 16);
+    app.on_key(ctrl(Key::Char('f')), 300);
+    type_needle(&mut app, "zephyr");
+    // Still editing (not confirmed), but there is exactly one match and it is current.
+    assert!(app.search().is_editing());
+    assert_eq!(app.display_rows().unwrap().row_count(), 1);
+    assert_eq!(app.search().current_row(), 0);
+    // The single filtered row is at offset 0 (only one row survives), so this case proves the
+    // highlight-while-editing path; the multi-row live-scroll is covered below.
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut t = Terminal::new(TestBackend::new(60, 16)).unwrap();
+    t.draw(|f| app.render(f)).unwrap();
+    let buf = t.backend().buffer().clone();
+    let cur_bg = crate::theme::grid::current_match().bg;
+    let mut found = false;
+    for y in 0..16u16 {
+        for x in 0..60u16 {
+            if buf[(x, y)].style().bg == cur_bg {
+                found = true;
+            }
+        }
+    }
+    assert!(
+        found,
+        "the first match is painted in the current-match color while editing"
+    );
+}
+
+#[test]
+fn live_typing_scrolls_the_first_match_into_view() {
+    // A filter that keeps many rows, the first of which starts far down the unfiltered result.
+    // Because filtering re-indexes rows, the first filtered row is index 0 — so instead assert the
+    // scroll RESETS to the top on a fresh needle (the first match leads the filtered view).
+    let mut app = app_with_many_eu_rows(60);
+    // Scroll down first (focus results, page down) so there is a non-zero offset to reset.
+    app.on_key(ctrl(Key::Char('t')), 300);
+    app.on_key(KeyEvent::plain(Key::PageDown), 300);
+    assert!(app.v_row_offset() > 0);
+    app.on_key(ctrl(Key::Char('f')), 300);
+    type_needle(&mut app, "eu");
+    assert_eq!(
+        app.v_row_offset(),
+        0,
+        "the first match leads the filtered view while editing"
+    );
+}
+
+#[test]
 fn match_highlight_survives_vertical_scrolling() {
     // Regression: scrolling a confirmed filtered result must not drop the highlights on the rows
     // that scroll into view.

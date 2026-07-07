@@ -107,11 +107,14 @@ impl App {
 
     fn on_search_needle_changed(&mut self) {
         self.refresh_search_filter();
-        // The old offset indexes a different row set; snap back to the top of the new one, and the
-        // current match resets to the first row (SearchState::push/pop already reset it).
+        // The old offset indexes a different row set; reset scroll to the origin, then scroll to
+        // the (reset-to-first) current match — jiq highlights AND scrolls to the first match live
+        // as you type, not only after confirming. `current_row` is already 0 (push/pop reset it),
+        // so this brings the first match into view with the scrolloff margin.
         self.v_row_offset = 0;
         self.h_col_offset = 0;
         self.h_char_offset = 0;
+        self.scroll_current_match_into_view();
     }
 
     /// Step to the next matching row (`n`, or Enter on a confirmed search) and scroll it into

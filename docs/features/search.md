@@ -19,7 +19,8 @@ untouched, and closing the search restores the full grid instantly. For a durabl
 ## How to use it
 
 - With a result on screen, press **Ctrl+F**. The search bar opens between the grid and the query
-  box, and the grid filters live as you type.
+  box, and the grid filters live as you type. The first match is highlighted (in the current-match
+  color) and scrolled into view as you type, before you confirm.
 - The badge on the bar shows `shown/total` rows; it turns red when nothing matches.
 - **Enter** (or **Tab**) confirms: the needle freezes, the bar dims, and the keyboard goes back to
   normal grid navigation (scrolling, `f` facets, `Ctrl+T`) over the filtered rows. The first
