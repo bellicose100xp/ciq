@@ -19,7 +19,15 @@ fn render_to_string(table: &Table, view: GridView, w: u16, h: u16, v_row_offset:
     terminal
         .draw(|f| {
             let area = Rect::new(0, 0, w, h);
-            render_grid(f, area, &frame, v_row_offset, false);
+            render_grid(
+                f,
+                area,
+                &frame,
+                v_row_offset,
+                false,
+                None,
+                theme::base::CYAN,
+            );
         })
         .expect("draw to TestBackend");
     terminal.backend().to_string()
@@ -63,7 +71,17 @@ fn render_does_not_panic_on_zero_height() {
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
-        .draw(|f| render_grid(f, Rect::new(0, 0, 80, 0), &frame, 0, false))
+        .draw(|f| {
+            render_grid(
+                f,
+                Rect::new(0, 0, 80, 0),
+                &frame,
+                0,
+                false,
+                None,
+                theme::base::CYAN,
+            )
+        })
         .unwrap();
     // No panic; nothing asserted beyond that.
 }
@@ -217,4 +235,86 @@ fn no_null_row_is_a_single_normal_span() {
     assert_eq!(line.spans.len(), 1);
     assert_eq!(line.spans[0].style, theme::grid::cell());
     assert!(!is_null_styled(line.spans[0].style));
+}
+
+#[test]
+fn hovered_row_carries_the_hover_background() {
+    let t = typed_table();
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            render_grid(
+                f,
+                Rect::new(0, 0, 80, 10),
+                &frame,
+                0,
+                false,
+                Some(1),
+                theme::base::CYAN,
+            )
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer();
+    // Body row 1 sits on screen row 2 (header on row 0, body rows from row 1).
+    // Column 0 of the hovered row carries the bright left accent bar; a later column carries the
+    // background band.
+    let bar_cell = &buf[(0, 2)];
+    let band_cell = &buf[(3, 2)];
+    let normal_cell = &buf[(3, 1)];
+    assert_eq!(
+        bar_cell.symbol(),
+        "\u{258c}",
+        "the hovered row gets the left bar"
+    );
+    assert_eq!(
+        bar_cell.style().fg,
+        theme::grid::hover_bar(theme::base::CYAN).fg,
+        "the bar takes the pane accent color"
+    );
+    assert_eq!(
+        band_cell.style().bg,
+        theme::grid::hovered_bg().bg,
+        "the hovered body row is painted with the hover band"
+    );
+    assert_ne!(
+        normal_cell.style().bg,
+        theme::grid::hovered_bg().bg,
+        "non-hovered rows keep the plain background"
+    );
+}
+
+#[test]
+fn hovered_row_respects_the_scroll_offset() {
+    let t = typed_table();
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    // Scrolled down by 1: absolute row 2 is the second visible body row (screen row 2).
+    terminal
+        .draw(|f| {
+            render_grid(
+                f,
+                Rect::new(0, 0, 80, 10),
+                &frame,
+                1,
+                false,
+                Some(2),
+                theme::base::CYAN,
+            )
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer();
+    assert_eq!(
+        buf[(0, 2)].symbol(),
+        "\u{258c}",
+        "the bar follows the hovered row to its scrolled screen position"
+    );
+    assert_eq!(
+        buf[(3, 2)].style().bg,
+        theme::grid::hovered_bg().bg,
+        "hover matches the absolute row index against the scrolled window"
+    );
+    assert_ne!(buf[(3, 1)].style().bg, theme::grid::hovered_bg().bg);
 }

@@ -53,4 +53,10 @@ result. A query with your own `LIMIT` is never re-capped beyond your intent.
 | Results | Home | jump to the first row |
 | Anywhere | Esc or Ctrl+C | quit |
 
+## Mouse
+
+Wheel over the grid scrolls it; a trackpad swipe scrolls horizontally. Hovering a row highlights it
+with a background band and a bright left accent bar (in the pane's border color) that follows the
+pointer.
+
 See the [Quick Reference](../quick-reference.md) for the complete set.

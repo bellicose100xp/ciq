@@ -42,6 +42,17 @@ pub enum PopupKind {
     Ai,
 }
 
+/// The row the pointer is resting on (set by `Move` events, read by the render layer to paint the
+/// hover highlight). Plain data next to [`MouseTarget`] — only surfaces with a row-shaped hover
+/// visual are modeled (the grid body and a list popup's rows).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoverTarget {
+    /// A grid body row, as an absolute index into the full result (scroll folded in).
+    GridRow(usize),
+    /// A row inside the open popup's inner area (0-based, visible-window-relative).
+    PopupRow(PopupKind, usize),
+}
+
 /// The surface a screen cell resolves to, plus the local coordinate the handler needs. Overlays win
 /// over the base layout (a click on an open popup hits the popup, not the pane behind it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,8 +83,9 @@ impl LayoutRegions {
     /// Resolve a screen cell to the surface under it, in render order (overlays topmost). Returns
     /// `None` when the cell is outside every tracked surface.
     ///
-    /// - `prompt_width` is the fixed `> ` column count reserved at the left of the query bar (so a
-    ///   click maps onto the editable text, not the prompt).
+    /// - `prompt_width` is the column count reserved at the left of the query bar before the
+    ///   editable text — the `> ` prompt in Power mode, the pane label column in Simple mode — so
+    ///   a click on that chrome clamps to text column 0.
     /// - `v_row_offset` is the grid's vertical scroll, added to the in-pane row so the resolved
     ///   `body_row` indexes the full result, not just the visible window.
     /// - `banner_rows` is the number of inner rows the truncation banner reserves above the grid (0

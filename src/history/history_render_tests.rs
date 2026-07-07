@@ -24,7 +24,8 @@ fn state() -> HistoryState {
 
 fn render(state: &HistoryState, w: u16, h: u16, area: Rect) -> String {
     let mut t = Terminal::new(TestBackend::new(w, h)).expect("TestBackend");
-    t.draw(|f| render_history(state, f, area)).expect("draw");
+    t.draw(|f| render_history(state, f, area, None))
+        .expect("draw");
     t.backend().to_string()
 }
 
@@ -48,7 +49,7 @@ fn title_shows_needle_and_filtered_count() {
 #[test]
 fn popup_lines_pads_to_width() {
     let h = state();
-    let lines = popup_lines(&h, 30, 10);
+    let lines = popup_lines(&h, 30, 10, None);
     assert_eq!(lines.len(), 3);
     for line in &lines {
         assert_eq!(line.width(), 30);
@@ -59,7 +60,7 @@ fn popup_lines_pads_to_width() {
 fn popup_lines_no_matches_hint() {
     let mut h = state();
     h.set_needle("zzz");
-    let lines = popup_lines(&h, 30, 10);
+    let lines = popup_lines(&h, 30, 10, None);
     assert_eq!(lines.len(), 1);
     assert!(
         lines[0]
@@ -76,7 +77,7 @@ fn popup_lines_capped_by_height() {
     let mut h = HistoryState::with_entries(entries);
     h.open(None);
     // Height caps the window even below MAX_VISIBLE_HISTORY.
-    let lines = popup_lines(&h, 30, 5);
+    let lines = popup_lines(&h, 30, 5, None);
     assert_eq!(lines.len(), 5);
 }
 
@@ -132,4 +133,24 @@ fn render_does_not_panic_on_degenerate_area() {
     for (w, h2) in [(1u16, 1u16), (2, 2), (3, 1), (1, 3)] {
         let _ = render(&h, w.max(1), h2.max(1), Rect::new(0, 0, w, h2));
     }
+}
+
+#[test]
+fn hovered_row_carries_the_hover_band() {
+    let h = state(); // cursor on display index 0
+    let area = Rect::new(0, 0, 40, 6);
+    let mut t = Terminal::new(TestBackend::new(50, 10)).expect("TestBackend");
+    t.draw(|f| render_history(&h, f, area, Some(1)))
+        .expect("draw");
+    let buf = t.backend().buffer();
+    assert_eq!(
+        buf[(1, 2)].style().bg,
+        crate::theme::history::hovered_bg().bg,
+        "hovered (non-cursor) row carries the hover band"
+    );
+    assert_ne!(
+        buf[(1, 3)].style().bg,
+        crate::theme::history::hovered_bg().bg,
+        "other rows keep the plain background"
+    );
 }

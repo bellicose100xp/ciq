@@ -52,4 +52,10 @@ Selecting a candidate inserts it with the right SQL quoting:
 | Tab or Enter | accept the selected candidate and dismiss |
 | Esc | dismiss the popup (does not quit) |
 
+## Mouse
+
+Wheel over the popup moves the selection; a click selects the row under the pointer (Tab / Enter
+then accepts); a double-click accepts it immediately. Hovering highlights the row under the
+pointer.
+
 See the [Quick Reference](../quick-reference.md) for the complete set.

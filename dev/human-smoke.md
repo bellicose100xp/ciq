@@ -397,10 +397,22 @@ CSV large enough that the result scrolls, with several columns):
    way.
 5. **Popup scroll + click (autocomplete).** Type `SELECT ` so the column popup opens. Roll the wheel
    with the pointer over the popup — confirm the selection moves up/down. Click a popup row — confirm
-   that row becomes selected and a subsequent `Tab` accepts it. (The column palette `Ctrl+K` popup
-   behaves the same for wheel + row click; history/facet/AI popups stay keyboard-driven for now.)
-6. **No regression elsewhere.** Confirm clicking/scrolling does not interfere with typing, and that
-   the mouse never quits the app or fires a query on its own (queries still run only on debounce).
+   that row becomes selected and a subsequent `Tab` accepts it. **Double-click** a row — confirm it
+   accepts immediately (inserted into the query, popup closes). Two slow clicks (>0.4s apart) must
+   NOT accept.
+6. **Palette / history mouse.** Open the palette (`Ctrl+P` on SELECT): click a row to move the
+   cursor; double-click to toggle its checkbox (SELECT pane rewrites live). Open history (`Ctrl+R`):
+   click an entry — it recalls into the bar and runs. Click *outside* the history popup — it closes
+   without recalling. With a facet open, click anywhere — it dismisses.
+7. **Hover highlight.** With no button held, glide the pointer over grid rows and popup rows —
+   confirm a background band follows the row under the pointer (not on the header/borders, and
+   never on the blank area below a short result), and disappears when the pointer leaves. On grid
+   rows a bright left accent bar (`▌`, in the pane's border color) should ride column 0 of the
+   hovered row and follow the pointer up/down — including after scrolling, where it tracks the
+   row's new screen position.
+8. **No regression elsewhere.** Confirm clicking/scrolling does not interfere with typing, and that
+   the mouse never quits the app or fires a query on its own (queries still run only on debounce;
+   the history-recall click is the deliberate exception).
 
 ## Post-5 UX — error keeps last result dimmed (jiq-port)
 

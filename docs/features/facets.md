@@ -31,4 +31,8 @@ The facet adapts to the column's type:
 The facet query rides the same worker channel as your grid query (no second connection) and never
 touches the grid — opening a facet does not disturb your live result.
 
+## Mouse
+
+Any click while a facet is open dismisses it (the mouse analog of the any-key dismissal).
+
 See the [Quick Reference](../quick-reference.md) for the complete set.

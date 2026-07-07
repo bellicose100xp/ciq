@@ -50,6 +50,12 @@ src/app/editor/text_objects.rs
 # seam + state assertions), so they stay off the floor like the other routing/render seams.
 src/app/layout_regions.rs
 
+# Post-5 input UX: deterministic double-click pairing (ported from jiq, with ciq's
+# time-as-parameter divergence). Pure data-in/data-out — a wrong pair silently double-fires or
+# swallows an accept, and every branch (threshold, granularity, surface, clear-on-double, reset)
+# is a real behavior case, so it earns the hard floor.
+src/app/double_click.rs
+
 # Post-5 UX: the context-sensitive bottom keyboard-shortcut help bar (§4.1, ported from jiq). The
 # pure `get_context_hints` / `mode_label` map `App` state -> the ordered hint set + the mode badge
 # for the current focus / vim mode / open popup — a wrong context shows the wrong shortcuts, and

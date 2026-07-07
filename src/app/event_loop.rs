@@ -250,7 +250,8 @@ fn event_loop(
                 }
                 Event::Mouse(me) => {
                     if let Some(ev) = translate_mouse(me) {
-                        app.on_mouse(ev);
+                        let now_ms = start.elapsed().as_millis() as u64;
+                        app.on_mouse(ev, now_ms);
                     }
                 }
                 Event::Resize(_, _) => { /* next draw reflows from retained rows */ }
@@ -294,7 +295,8 @@ fn translate_key(ke: event::KeyEvent) -> Option<KeyEvent> {
 
 /// Translate a crossterm mouse event into the neutral [`MouseEvent`] the core understands. Returns
 /// `None` for kinds ciq doesn't model (button-up, right/middle buttons, non-left drags) so the loop
-/// ignores them. Ported from jiq's `app/mouse_events.rs` kind match.
+/// ignores them. Ported from jiq's `app/mouse_events.rs` kind match (`Moved` drives the hover
+/// highlight, like jiq's `mouse_hover`).
 fn translate_mouse(me: event::MouseEvent) -> Option<MouseEvent> {
     let (col, row) = (me.column, me.row);
     let ev = match me.kind {
@@ -304,6 +306,7 @@ fn translate_mouse(me: event::MouseEvent) -> Option<MouseEvent> {
         MouseEventKind::ScrollRight => MouseEvent::ScrollRight { col, row },
         MouseEventKind::Down(MouseButton::Left) => MouseEvent::Click { col, row },
         MouseEventKind::Drag(MouseButton::Left) => MouseEvent::Drag { col, row },
+        MouseEventKind::Moved => MouseEvent::Move { col, row },
         _ => return None,
     };
     Some(ev)

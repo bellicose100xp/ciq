@@ -49,6 +49,7 @@ use std::sync::mpsc::Sender;
 
 pub mod app_render;
 pub mod autocomplete_app;
+pub mod double_click;
 pub mod editor;
 pub mod event_loop;
 pub mod help_line;
@@ -63,7 +64,7 @@ pub mod query_form_app;
 
 pub use editor::Editor;
 pub use key::{Key, KeyEvent, KeyMods};
-pub use layout_regions::{LayoutRegions, MouseTarget, PopupKind};
+pub use layout_regions::{HoverTarget, LayoutRegions, MouseTarget, PopupKind};
 pub use mouse::MouseEvent;
 pub use query_form::{QueryForm, QueryMode, SimplePane};
 
@@ -228,6 +229,13 @@ pub struct App {
     /// a click/scroll to the surface under the pointer. A [`std::cell::Cell`] so the `&self` render
     /// path can update it without a `&mut` borrow (it is plain `Copy` geometry, not logic).
     layout_regions: std::cell::Cell<LayoutRegions>,
+    /// The row the pointer is resting on (a grid body row or a popup row), set by `Move` events
+    /// and read by the render layer to paint the hover highlight. `None` when the pointer is off
+    /// every hoverable row (jiq's exactly-one-hover-at-a-time invariant).
+    pub(crate) hover: Option<HoverTarget>,
+    /// Pairs two fast left clicks into a double (double-click recall/accept/toggle). Time enters
+    /// as `now_ms` (the debouncer's time-as-parameter seam), never a wall clock.
+    pub(crate) double_click: double_click::DoubleClickTracker,
 }
 
 impl App {
@@ -266,6 +274,8 @@ impl App {
             ai_seq: 0,
             viewport_row_limit: VIEWPORT_ROW_LIMIT,
             layout_regions: std::cell::Cell::new(LayoutRegions::default()),
+            hover: None,
+            double_click: double_click::DoubleClickTracker::new(),
         }
     }
 
@@ -377,6 +387,11 @@ impl App {
 
     pub fn v_row_offset(&self) -> usize {
         self.v_row_offset
+    }
+
+    /// The row the pointer is hovering (grid body row / popup row), if any.
+    pub fn hover(&self) -> Option<HoverTarget> {
+        self.hover
     }
 
     pub fn h_col_offset(&self) -> usize {
@@ -650,7 +665,7 @@ impl App {
     }
 
     /// Close the facet popup.
-    fn close_facet(&mut self) {
+    pub(crate) fn close_facet(&mut self) {
         self.facet = None;
     }
 

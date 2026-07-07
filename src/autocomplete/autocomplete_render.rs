@@ -32,7 +32,13 @@ pub const MAX_VISIBLE_ROWS: u16 = 8;
 /// one line per visible candidate, the selected one reverse-video. The bottom border carries
 /// context-sensitive hints (centered, with `\u{2022}` separators); when `show_columns_hint` is true
 /// the SELECT-pane-only `Ctrl+P columns` hint is added (the dedicated column-picker palette).
-pub fn render_popup(state: &AutocompleteState, f: &mut Frame, area: Rect, show_columns_hint: bool) {
+pub fn render_popup(
+    state: &AutocompleteState,
+    f: &mut Frame,
+    area: Rect,
+    show_columns_hint: bool,
+    hovered: Option<usize>,
+) {
     if !state.is_open() || area.width == 0 || area.height == 0 {
         return;
     }
@@ -51,7 +57,7 @@ pub fn render_popup(state: &AutocompleteState, f: &mut Frame, area: Rect, show_c
         return;
     }
 
-    let lines = popup_lines(state, inner.width, inner.height);
+    let lines = popup_lines(state, inner.width, inner.height, hovered);
     f.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -95,7 +101,12 @@ pub(crate) fn hint_spans(show_columns_hint: bool, max_width: usize) -> Vec<Span<
 /// Build the styled candidate lines for an inner width/height: a window of [`MAX_VISIBLE_ROWS`]
 /// (capped by `height`) rows scrolled so the selected row is always visible, each laid out as
 /// `<text>…<right-aligned hint>` and styled (selected reverse-video, hint dimmed).
-fn popup_lines(state: &AutocompleteState, width: u16, height: u16) -> Vec<Line<'static>> {
+fn popup_lines(
+    state: &AutocompleteState,
+    width: u16,
+    height: u16,
+    hovered: Option<usize>,
+) -> Vec<Line<'static>> {
     let visible = (MAX_VISIBLE_ROWS.min(height)) as usize;
     let suggestions = state.suggestions();
     // Share the window math with the click handler (`scroll_window`) so a click on a scrolled list
@@ -108,15 +119,16 @@ fn popup_lines(state: &AutocompleteState, width: u16, height: u16) -> Vec<Line<'
         .enumerate()
         .map(|(offset, s)| {
             let idx = start + offset;
-            row_line(s, width, idx == state.selected())
+            row_line(s, width, idx == state.selected(), hovered == Some(idx))
         })
         .collect()
 }
 
 /// One candidate row, padded to `width`: the candidate text left-aligned, the type-hint label
 /// right-aligned, the gap filled with spaces. Selected rows are reverse-video (the whole line);
-/// otherwise the text uses the item style and the hint the dimmed type-hint style.
-fn row_line(s: &Suggestion, width: u16, selected: bool) -> Line<'static> {
+/// a hovered (non-selected) row carries the faint hover band; otherwise the text uses the item
+/// style and the hint the dimmed type-hint style.
+fn row_line(s: &Suggestion, width: u16, selected: bool, hovered: bool) -> Line<'static> {
     let width = width as usize;
     let label = type_hint_label(s);
     let text = truncate(&s.text, width.saturating_sub(label.len() + 1).max(1));
@@ -129,11 +141,16 @@ fn row_line(s: &Suggestion, width: u16, selected: bool) -> Line<'static> {
         let content = pad_or_truncate(&content, width);
         Line::from(Span::styled(content, theme::autocomplete::selected()))
     } else {
-        Line::from(vec![
+        let line = Line::from(vec![
             Span::styled(text, theme::autocomplete::item()),
             Span::styled(" ".repeat(gap), theme::autocomplete::item()),
             Span::styled(label, theme::autocomplete::type_hint()),
-        ])
+        ]);
+        if hovered {
+            line.style(theme::autocomplete::hovered_bg())
+        } else {
+            line
+        }
     }
 }
 

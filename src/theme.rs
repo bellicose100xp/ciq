@@ -335,6 +335,12 @@ pub mod autocomplete {
         Style::default().add_modifier(Modifier::REVERSED)
     }
 
+    /// The row under the mouse pointer — a faint background band (below the reverse-video
+    /// selection in the emphasis ramp, so hover never fights the selected row).
+    pub fn hovered_bg() -> Style {
+        Style::default().bg(p::BG_HOVER)
+    }
+
     pub fn type_hint() -> Style {
         // TEXT_DIM color, not Modifier::DIM — same reasoning as palette::type_hint.
         Style::default().fg(p::TEXT_DIM)
@@ -367,6 +373,11 @@ pub mod palette {
 
     pub fn checked() -> Style {
         Style::default().fg(p::GREEN).add_modifier(Modifier::BOLD)
+    }
+
+    /// The row under the mouse pointer — same faint band as the other list popups.
+    pub fn hovered_bg() -> Style {
+        Style::default().bg(p::BG_HOVER)
     }
 
     pub fn type_hint() -> Style {
@@ -430,6 +441,11 @@ pub mod history {
         Style::default().add_modifier(Modifier::REVERSED)
     }
 
+    /// The row under the mouse pointer — same faint band as the other list popups.
+    pub fn hovered_bg() -> Style {
+        Style::default().bg(p::BG_HOVER)
+    }
+
     pub fn hint() -> Style {
         Style::default()
             .fg(p::TEXT_MUTED)
@@ -474,7 +490,7 @@ pub mod ai {
 /// Grid (results table) colors and styles.
 pub mod grid {
     use super::base as p;
-    use ratatui::style::{Modifier, Style};
+    use ratatui::style::{Color, Modifier, Style};
 
     /// Sticky header row — bright cyan + bold.
     pub fn header() -> Style {
@@ -494,6 +510,23 @@ pub mod grid {
 
     pub fn stale_modifier() -> Modifier {
         Modifier::DIM
+    }
+
+    /// Background band for the grid body row under the mouse pointer. Brighter than jiq's hover
+    /// (which sits just above the base) — ciq wants the hovered row to read clearly, so this uses
+    /// the top of the background ramp ([`BG_HIGHLIGHT`](p::BG_HIGHLIGHT)).
+    pub fn hovered_bg() -> Style {
+        Style::default().bg(p::BG_HIGHLIGHT)
+    }
+
+    /// The bright left accent bar (`▌`) that rides column 0 of the hovered row and follows the
+    /// pointer (lazygit-style, matching ciq's focused-pane bar). Painted in the pane's state
+    /// accent so it harmonizes with the border and row counter.
+    pub fn hover_bar(accent: Color) -> Style {
+        Style::default()
+            .fg(accent)
+            .bg(p::BG_HIGHLIGHT)
+            .add_modifier(Modifier::BOLD)
     }
 }
 

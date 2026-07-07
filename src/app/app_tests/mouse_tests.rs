@@ -70,12 +70,12 @@ fn scroll_down_over_results_scrolls_the_grid_body() {
     let mut app = app_with_result_on_bar(50);
     let (_w, _h) = render_and_record(&app);
     // A wheel-down over the pane body (row 5 is inside the grid body) scrolls by the wheel step.
-    app.on_mouse(MouseEvent::ScrollDown { col: 5, row: 5 });
+    app.on_mouse(MouseEvent::ScrollDown { col: 5, row: 5 }, 0);
     assert_eq!(app.v_row_offset(), 3, "one wheel notch = 3 rows");
-    app.on_mouse(MouseEvent::ScrollDown { col: 5, row: 5 });
+    app.on_mouse(MouseEvent::ScrollDown { col: 5, row: 5 }, 0);
     assert_eq!(app.v_row_offset(), 6);
     // Wheel-up backs it off.
-    app.on_mouse(MouseEvent::ScrollUp { col: 5, row: 5 });
+    app.on_mouse(MouseEvent::ScrollUp { col: 5, row: 5 }, 0);
     assert_eq!(app.v_row_offset(), 3);
 }
 
@@ -83,7 +83,7 @@ fn scroll_down_over_results_scrolls_the_grid_body() {
 fn scroll_up_clamps_at_top() {
     let mut app = app_with_result_on_bar(50);
     render_and_record(&app);
-    app.on_mouse(MouseEvent::ScrollUp { col: 5, row: 5 });
+    app.on_mouse(MouseEvent::ScrollUp { col: 5, row: 5 }, 0);
     assert_eq!(app.v_row_offset(), 0, "clamps at the top");
 }
 
@@ -91,8 +91,8 @@ fn scroll_up_clamps_at_top() {
 fn scroll_down_clamps_at_last_row() {
     let mut app = app_with_result_on_bar(2); // body_len-1 == 1
     render_and_record(&app);
-    app.on_mouse(MouseEvent::ScrollDown { col: 5, row: 5 });
-    app.on_mouse(MouseEvent::ScrollDown { col: 5, row: 5 });
+    app.on_mouse(MouseEvent::ScrollDown { col: 5, row: 5 }, 0);
+    app.on_mouse(MouseEvent::ScrollDown { col: 5, row: 5 }, 0);
     assert_eq!(app.v_row_offset(), 1, "clamps at last row");
 }
 
@@ -103,10 +103,10 @@ fn horizontal_swipe_over_a_narrow_grid_clamps_to_zero() {
     // there is nothing to scroll. The trackpad cannot drag the user into empty space.
     let mut app = app_with_result_on_bar(5);
     render_and_record(&app);
-    app.on_mouse(MouseEvent::ScrollRight { col: 5, row: 5 });
+    app.on_mouse(MouseEvent::ScrollRight { col: 5, row: 5 }, 0);
     assert_eq!(app.h_char_offset(), 0, "right-cap pins narrow grid at 0");
     assert_eq!(app.h_col_offset(), 0);
-    app.on_mouse(MouseEvent::ScrollLeft { col: 5, row: 5 });
+    app.on_mouse(MouseEvent::ScrollLeft { col: 5, row: 5 }, 0);
     assert_eq!(app.h_char_offset(), 0, "clamps at 0 going left");
     assert_eq!(app.h_col_offset(), 0);
 }
@@ -146,7 +146,7 @@ fn trackpad_swipe_right_advances_h_char_offset_smoothly() {
     render_and_record(&app);
     let before_chars = app.h_char_offset();
     let before_col = app.h_col_offset();
-    app.on_mouse(MouseEvent::ScrollRight { col: 5, row: 5 });
+    app.on_mouse(MouseEvent::ScrollRight { col: 5, row: 5 }, 0);
     let after_chars = app.h_char_offset();
     // One notch = CHAR_SCROLL_STEP (3) chars of slide; the first column is wider than 3, so
     // h_col_offset stays put — the trackpad slid INSIDE the leftmost visible column.
@@ -170,7 +170,7 @@ fn trackpad_swipe_eventually_drops_a_column() {
     // h_col_offset bumps from 0 to 1. Each notch slides 3 chars; after enough notches the
     // first column (≈13 + 2 = 15 char left-edge for col 1) is fully off-screen.
     for _ in 0..6 {
-        app.on_mouse(MouseEvent::ScrollRight { col: 5, row: 5 });
+        app.on_mouse(MouseEvent::ScrollRight { col: 5, row: 5 }, 0);
     }
     assert!(
         app.h_col_offset() >= 1,
@@ -185,7 +185,7 @@ fn trackpad_swipe_eventually_drops_a_column() {
 fn trackpad_swipe_left_clamps_at_zero() {
     let mut app = app_with_wide_result_on_bar();
     render_and_record(&app);
-    app.on_mouse(MouseEvent::ScrollLeft { col: 5, row: 5 });
+    app.on_mouse(MouseEvent::ScrollLeft { col: 5, row: 5 }, 0);
     assert_eq!(app.h_char_offset(), 0);
     assert_eq!(app.h_col_offset(), 0);
 }
@@ -195,7 +195,7 @@ fn keyboard_left_after_partial_trackpad_slide_snaps_to_a_column_boundary() {
     let mut app = app_with_wide_result_on_bar();
     render_and_record(&app);
     // Slide partially into col 0 (3 chars).
-    app.on_mouse(MouseEvent::ScrollRight { col: 5, row: 5 });
+    app.on_mouse(MouseEvent::ScrollRight { col: 5, row: 5 }, 0);
     assert_eq!(app.h_char_offset(), 3);
     assert_eq!(app.h_col_offset(), 0);
     // Move focus into the results pane so the keyboard ←/→ handler fires.
@@ -233,7 +233,7 @@ fn click_in_results_pane_focuses_results() {
     let mut app = app_with_result_on_bar(20);
     render_and_record(&app);
     assert_eq!(app.focus(), Focus::QueryBar);
-    app.on_mouse(MouseEvent::Click { col: 5, row: 5 }); // inside the grid body
+    app.on_mouse(MouseEvent::Click { col: 5, row: 5 }, 0); // inside the grid body
     assert_eq!(app.focus(), Focus::Results);
 }
 
@@ -243,17 +243,20 @@ fn click_in_query_bar_focuses_bar_and_positions_cursor() {
     // Put a known query in the bar and move focus to results first.
     // The bar already holds "SELECT * FROM t" (15 chars). Render to record regions.
     let (_w, h) = render_and_record(&app);
-    app.on_mouse(MouseEvent::Click { col: 5, row: 5 }); // focus results
+    app.on_mouse(MouseEvent::Click { col: 5, row: 5 }, 0); // focus results
     assert_eq!(app.focus(), Focus::Results);
     // The query box is bordered; its inner text row is h - 3 (below it: the box bottom border with
     // the help hints at h-2, then the status row at h-1). Click on that text row inside the text.
     let bar_row = h - 3;
     // The box left border (col 0) + the `> ` prompt (cols 1-2) precede the text, so text col = x-3.
     // Click at screen col 8 -> text col 5, landing the cursor at char 5 ("T").
-    app.on_mouse(MouseEvent::Click {
-        col: 8,
-        row: bar_row,
-    });
+    app.on_mouse(
+        MouseEvent::Click {
+            col: 8,
+            row: bar_row,
+        },
+        0,
+    );
     assert_eq!(app.focus(), Focus::QueryBar);
     assert_eq!(
         app.editor().cursor(),
@@ -273,10 +276,13 @@ fn click_past_end_of_text_clamps_to_line_end() {
     let (_w, h) = render_and_record(&app);
     let bar_row = h - 3;
     // Click far to the right, past the 15-char query -> cursor clamps to the line end (15).
-    app.on_mouse(MouseEvent::Click {
-        col: 70,
-        row: bar_row,
-    });
+    app.on_mouse(
+        MouseEvent::Click {
+            col: 70,
+            row: bar_row,
+        },
+        0,
+    );
     assert_eq!(app.focus(), Focus::QueryBar);
     assert_eq!(app.editor().cursor(), 15, "clamped to the text end");
 }
@@ -300,10 +306,13 @@ fn click_on_second_line_of_multiline_bar_positions_cursor_on_that_line() {
     let bar_line2 = h - 3; // the second visual line ("WHERE id > 0")
     // Box left border (col 0) + `> ` prompt (cols 1-2): text col = x-3. Click screen col 5 ->
     // text col 2 on the second line ("WHERE id > 0").
-    app.on_mouse(MouseEvent::Click {
-        col: 5,
-        row: bar_line2,
-    });
+    app.on_mouse(
+        MouseEvent::Click {
+            col: 5,
+            row: bar_line2,
+        },
+        0,
+    );
     assert_eq!(app.focus(), Focus::QueryBar);
     assert_eq!(
         app.editor().row_col(),
@@ -317,10 +326,13 @@ fn drag_in_query_bar_positions_cursor_like_a_click() {
     let mut app = app_with_result_on_bar(20);
     let (_w, h) = render_and_record(&app);
     let bar_row = h - 3;
-    app.on_mouse(MouseEvent::Drag {
-        col: 5,
-        row: bar_row,
-    }); // box border (0) + prompt (1-2): screen col 5 -> text col 2
+    app.on_mouse(
+        MouseEvent::Drag {
+            col: 5,
+            row: bar_row,
+        },
+        0,
+    ); // box border (0) + prompt (1-2): screen col 5 -> text col 2
     assert_eq!(app.focus(), Focus::QueryBar);
     assert_eq!(app.editor().cursor(), 2);
 }
@@ -339,10 +351,13 @@ fn click_in_query_bar_during_load_error_is_frozen() {
     let (_w, h) = render_and_record(&app);
     let bar_row = h - 3;
     // A click on the frozen bar must not move focus into editing or position a cursor.
-    app.on_mouse(MouseEvent::Click {
-        col: 5,
-        row: bar_row,
-    });
+    app.on_mouse(
+        MouseEvent::Click {
+            col: 5,
+            row: bar_row,
+        },
+        0,
+    );
     assert_eq!(app.query(), "", "frozen bar takes no cursor change");
 }
 
@@ -359,7 +374,7 @@ fn click_in_results_with_no_result_does_not_focus() {
     app.set_schema(test_schema());
     app.on_loaded("ready");
     render_and_record(&app);
-    app.on_mouse(MouseEvent::Click { col: 5, row: 5 });
+    app.on_mouse(MouseEvent::Click { col: 5, row: 5 }, 0);
     assert_eq!(
         app.focus(),
         Focus::QueryBar,
@@ -374,7 +389,7 @@ fn scroll_outside_all_surfaces_falls_back_to_grid() {
     let mut app = app_with_result_on_bar(50);
     render_and_record(&app);
     // Row 100 is past every surface; a wheel there still pages the grid (jiq's fallback).
-    app.on_mouse(MouseEvent::ScrollDown { col: 5, row: 100 });
+    app.on_mouse(MouseEvent::ScrollDown { col: 5, row: 100 }, 0);
     assert_eq!(app.v_row_offset(), 3);
 }
 
@@ -394,19 +409,25 @@ fn scroll_over_autocomplete_popup_moves_selection_by_wheel_rows() {
     // One wheel notch advances the selection by `WHEEL_ROWS` (3), matching the grid's per-tick
     // grain so the felt rate is consistent. The popup's auto-scroll then keeps the cursor inside
     // the visible window with the SCROLLOFF margin.
-    app.on_mouse(MouseEvent::ScrollDown {
-        col: rect.x + 1,
-        row: inner_row,
-    });
+    app.on_mouse(
+        MouseEvent::ScrollDown {
+            col: rect.x + 1,
+            row: inner_row,
+        },
+        0,
+    );
     assert_eq!(
         app.autocomplete().selected(),
         3,
         "wheel-down advances selection by WHEEL_ROWS"
     );
-    app.on_mouse(MouseEvent::ScrollUp {
-        col: rect.x + 1,
-        row: inner_row,
-    });
+    app.on_mouse(
+        MouseEvent::ScrollUp {
+            col: rect.x + 1,
+            row: inner_row,
+        },
+        0,
+    );
     assert_eq!(
         app.autocomplete().selected(),
         0,
@@ -422,10 +443,13 @@ fn wheel_up_at_top_of_autocomplete_popup_clamps_at_zero() {
     render_and_record(&app);
     assert_eq!(app.autocomplete().selected(), 0);
     let (_, rect) = app.layout_regions().popup.expect("popup recorded");
-    app.on_mouse(MouseEvent::ScrollUp {
-        col: rect.x + 1,
-        row: rect.y + 1,
-    });
+    app.on_mouse(
+        MouseEvent::ScrollUp {
+            col: rect.x + 1,
+            row: rect.y + 1,
+        },
+        0,
+    );
     assert_eq!(
         app.autocomplete().selected(),
         0,
@@ -444,10 +468,13 @@ fn wheel_down_past_end_of_autocomplete_popup_clamps_at_last() {
     // Spam wheel-down past the end of the list. Each tick advances by WHEEL_ROWS but the
     // bounded per-step select_next clamps at `last`, so no wrap.
     for _ in 0..(last + 5) {
-        app.on_mouse(MouseEvent::ScrollDown {
-            col: rect.x + 1,
-            row: rect.y + 1,
-        });
+        app.on_mouse(
+            MouseEvent::ScrollDown {
+                col: rect.x + 1,
+                row: rect.y + 1,
+            },
+            0,
+        );
     }
     assert_eq!(
         app.autocomplete().selected(),
@@ -465,10 +492,13 @@ fn click_on_autocomplete_row_selects_it() {
     let (_kind, rect) = app.layout_regions().popup.expect("popup recorded");
     // Click the third inner row (index 2) -> selection moves there.
     let third_row = rect.y + 1 + 2;
-    app.on_mouse(MouseEvent::Click {
-        col: rect.x + 1,
-        row: third_row,
-    });
+    app.on_mouse(
+        MouseEvent::Click {
+            col: rect.x + 1,
+            row: third_row,
+        },
+        0,
+    );
     assert_eq!(app.autocomplete().selected(), 2);
     // A subsequent Tab accepts the clicked candidate.
     app.on_key(KeyEvent::plain(Key::Tab), 0);
@@ -502,10 +532,13 @@ fn click_on_scrolled_autocomplete_row_selects_the_visible_index_not_the_absolute
     let start = crate::scroll_window::scroll_offset(9, app.autocomplete().len(), visible);
     assert!(start > 0, "the list must have scrolled (start={start})");
     // Click the first visible row (inner row 0).
-    app.on_mouse(MouseEvent::Click {
-        col: rect.x + 1,
-        row: rect.y + 1,
-    });
+    app.on_mouse(
+        MouseEvent::Click {
+            col: rect.x + 1,
+            row: rect.y + 1,
+        },
+        0,
+    );
     assert_eq!(
         app.autocomplete().selected(),
         start,
@@ -516,3 +549,439 @@ fn click_on_scrolled_autocomplete_row_selects_the_visible_index_not_the_absolute
 // (Removed: `click_in_blank_band_of_needle_filtered_palette_is_bounded` covered the obsolete
 // fuzzy-needle filter; the picker no longer filters in-popup. The popup-region-equals-drawn-rows
 // invariant is now trivially true since every column is always drawn.)
+
+// --- hover (Move events) ---
+
+#[test]
+fn move_over_a_grid_row_sets_the_hover_and_moving_off_clears_it() {
+    let mut app = app_with_result_on_bar(10);
+    render_and_record(&app);
+    let rect = app.layout_regions().results_pane.expect("pane recorded");
+    // Body row 0 sits below the top border (1) + sticky header (1).
+    let body_top = rect.y + 2;
+    app.on_mouse(
+        MouseEvent::Move {
+            col: 5,
+            row: body_top + 2,
+        },
+        0,
+    );
+    assert_eq!(
+        app.hover(),
+        Some(crate::app::HoverTarget::GridRow(2)),
+        "hover lands on the absolute body row"
+    );
+    // Moving onto the sticky header (no body row there) clears it.
+    app.on_mouse(
+        MouseEvent::Move {
+            col: 5,
+            row: rect.y + 1,
+        },
+        0,
+    );
+    assert_eq!(app.hover(), None);
+}
+
+#[test]
+fn grid_hover_folds_in_the_vertical_scroll() {
+    let mut app = app_with_result_on_bar(50);
+    render_and_record(&app);
+    app.on_mouse(MouseEvent::ScrollDown { col: 5, row: 5 }, 0); // v_row_offset = 3
+    let rect = app.layout_regions().results_pane.expect("pane recorded");
+    app.on_mouse(
+        MouseEvent::Move {
+            col: 5,
+            row: rect.y + 2,
+        },
+        0,
+    );
+    assert_eq!(
+        app.hover(),
+        Some(crate::app::HoverTarget::GridRow(3)),
+        "hover on the first visible row is offset by the scroll"
+    );
+}
+
+#[test]
+fn hover_below_a_short_result_highlights_nothing() {
+    let mut app = app_with_result_on_bar(2);
+    render_and_record(&app);
+    let rect = app.layout_regions().results_pane.expect("pane recorded");
+    // Row index 5 is inside the pane but past the 2-row result.
+    app.on_mouse(
+        MouseEvent::Move {
+            col: 5,
+            row: rect.y + 2 + 5,
+        },
+        0,
+    );
+    assert_eq!(app.hover(), None, "no data row under the pointer");
+}
+
+#[test]
+fn move_over_an_autocomplete_row_sets_popup_hover() {
+    let (mut app, _rx) = loaded_app();
+    type_query(&mut app, "SELECT ");
+    assert!(app.autocomplete().is_open());
+    render_and_record(&app);
+    let (kind, rect) = app.layout_regions().popup.expect("popup recorded");
+    app.on_mouse(
+        MouseEvent::Move {
+            col: rect.x + 1,
+            row: rect.y + 1 + 1,
+        },
+        0,
+    );
+    assert_eq!(
+        app.hover(),
+        Some(crate::app::HoverTarget::PopupRow(kind, 1)),
+        "hover lands on the popup row under the pointer"
+    );
+    // The popup border row carries no hover.
+    app.on_mouse(
+        MouseEvent::Move {
+            col: rect.x + 1,
+            row: rect.y,
+        },
+        0,
+    );
+    assert_eq!(app.hover(), None);
+}
+
+#[test]
+fn hover_past_the_popup_list_end_highlights_nothing() {
+    let (mut app, _rx) = loaded_app();
+    type_query(&mut app, "SELECT id"); // narrow list (usually 1 candidate)
+    if !app.autocomplete().is_open() {
+        return; // nothing to hover; scenario not reachable with this schema
+    }
+    render_and_record(&app);
+    let (_kind, rect) = app.layout_regions().popup.expect("popup recorded");
+    let len = app.autocomplete().len();
+    let inner_rows = rect.height.saturating_sub(2) as usize;
+    if len >= inner_rows {
+        return; // no blank band to test
+    }
+    app.on_mouse(
+        MouseEvent::Move {
+            col: rect.x + 1,
+            row: rect.y + 1 + len as u16,
+        },
+        0,
+    );
+    assert_eq!(app.hover(), None, "a blank popup row hovers nothing");
+}
+
+// --- double-click ---
+
+#[test]
+fn double_click_on_autocomplete_row_accepts_the_suggestion() {
+    let (mut app, _rx) = loaded_app();
+    type_query(&mut app, "SELECT ");
+    assert!(app.autocomplete().is_open());
+    render_and_record(&app);
+    let (_kind, rect) = app.layout_regions().popup.expect("popup recorded");
+    let cell = (rect.x + 1, rect.y + 1 + 1); // second row
+    app.on_mouse(
+        MouseEvent::Click {
+            col: cell.0,
+            row: cell.1,
+        },
+        100,
+    );
+    assert!(app.autocomplete().is_open(), "first click only selects");
+    assert_eq!(app.autocomplete().selected(), 1);
+    let before = app.query().to_string();
+    app.on_mouse(
+        MouseEvent::Click {
+            col: cell.0,
+            row: cell.1,
+        },
+        300,
+    );
+    assert!(
+        !app.autocomplete().is_open(),
+        "second fast click accepts and closes the popup"
+    );
+    assert_ne!(app.query(), before, "the suggestion was inserted");
+}
+
+#[test]
+fn slow_second_click_on_autocomplete_row_does_not_accept() {
+    let (mut app, _rx) = loaded_app();
+    type_query(&mut app, "SELECT ");
+    assert!(app.autocomplete().is_open());
+    render_and_record(&app);
+    let (_kind, rect) = app.layout_regions().popup.expect("popup recorded");
+    let cell = (rect.x + 1, rect.y + 1);
+    app.on_mouse(
+        MouseEvent::Click {
+            col: cell.0,
+            row: cell.1,
+        },
+        0,
+    );
+    app.on_mouse(
+        MouseEvent::Click {
+            col: cell.0,
+            row: cell.1,
+        },
+        401,
+    );
+    assert!(
+        app.autocomplete().is_open(),
+        "past the 400ms threshold the pair never forms"
+    );
+}
+
+#[test]
+fn scroll_between_two_clicks_invalidates_the_double() {
+    let (mut app, _rx) = loaded_app();
+    type_query(&mut app, "SELECT ");
+    assert!(app.autocomplete().is_open());
+    render_and_record(&app);
+    let (_kind, rect) = app.layout_regions().popup.expect("popup recorded");
+    let cell = (rect.x + 1, rect.y + 1);
+    app.on_mouse(
+        MouseEvent::Click {
+            col: cell.0,
+            row: cell.1,
+        },
+        0,
+    );
+    app.on_mouse(MouseEvent::ScrollDown { col: 2, row: 2 }, 50);
+    app.on_mouse(
+        MouseEvent::Click {
+            col: cell.0,
+            row: cell.1,
+        },
+        100,
+    );
+    assert!(
+        app.autocomplete().is_open(),
+        "a scroll between the clicks resets the pair"
+    );
+}
+
+// --- history popup mouse ---
+
+/// A loaded app with one history entry and the history popup open (via the real Ctrl+R chord).
+fn app_with_history_open() -> (
+    App,
+    std::sync::mpsc::Receiver<crate::query::worker::types::QueryRequest>,
+) {
+    let (mut app, rx) = loaded_app();
+    type_query(&mut app, "SELECT * FROM t");
+    app.tick(150); // dispatch records the query in history
+    // Clear the bar so the recall observable is a bar-text change (and the needle seed is empty —
+    // an unfiltered list).
+    for _ in 0..40 {
+        app.on_key(KeyEvent::plain(Key::Backspace), 200);
+    }
+    app.on_key(
+        KeyEvent::new(Key::Char('r'), crate::app::KeyMods::CTRL),
+        300,
+    );
+    assert!(app.is_history_open());
+    (app, rx)
+}
+
+#[test]
+fn click_on_history_row_recalls_the_entry() {
+    let (mut app, _rx) = app_with_history_open();
+    render_and_record(&app);
+    let (kind, rect) = app.layout_regions().popup.expect("popup recorded");
+    assert_eq!(kind, crate::app::PopupKind::History);
+    app.on_mouse(
+        MouseEvent::Click {
+            col: rect.x + 1,
+            row: rect.y + 1,
+        },
+        400,
+    );
+    assert!(!app.is_history_open(), "recall closes the popup");
+    assert_eq!(
+        app.query(),
+        "SELECT * FROM t",
+        "the clicked entry landed in the bar"
+    );
+}
+
+#[test]
+fn click_outside_the_history_popup_dismisses_without_recall() {
+    let (mut app, _rx) = app_with_history_open();
+    render_and_record(&app);
+    let bar = app.query().to_string();
+    // Click far away (the results pane area, row 2).
+    app.on_mouse(MouseEvent::Click { col: 2, row: 2 }, 400);
+    assert!(!app.is_history_open(), "click-outside dismisses");
+    assert_eq!(app.query(), bar, "no recall on dismiss");
+    assert_eq!(
+        app.focus(),
+        Focus::QueryBar,
+        "the dismissing click is swallowed (does not also focus the grid)"
+    );
+}
+
+// --- palette popup mouse ---
+
+/// A loaded app still in the production default Simple mode (the shared `loaded_app` forces Power
+/// for the legacy tests, so this builds its own), autocomplete dismissed.
+fn simple_mode_app() -> (
+    App,
+    std::sync::mpsc::Receiver<crate::query::worker::types::QueryRequest>,
+) {
+    use crate::engine::InterruptHandle;
+    use std::sync::mpsc::channel;
+    let (tx, rx) = channel();
+    let mut app = App::new(tx, InterruptHandle::noop());
+    app.set_schema(test_schema());
+    app.on_loaded("ready");
+    let mut guard = 0;
+    while app.autocomplete().is_open() && guard < 4 {
+        app.on_key(KeyEvent::plain(Key::Esc), 0);
+        guard += 1;
+    }
+    (app, rx)
+}
+
+/// A loaded app in Simple mode with the palette open on the SELECT pane (the real Ctrl+P chord).
+fn app_with_palette_open() -> (
+    App,
+    std::sync::mpsc::Receiver<crate::query::worker::types::QueryRequest>,
+) {
+    let (mut app, rx) = simple_mode_app();
+    app.query_form_mut().focus(crate::app::SimplePane::Select);
+    let mut guard = 0;
+    while app.autocomplete().is_open() && guard < 4 {
+        app.on_key(KeyEvent::plain(Key::Esc), 0);
+        guard += 1;
+    }
+    app.on_key(KeyEvent::new(Key::Char('p'), crate::app::KeyMods::CTRL), 0);
+    assert!(app.is_palette_open());
+    (app, rx)
+}
+
+#[test]
+fn double_click_on_palette_row_toggles_the_column() {
+    let (mut app, _rx) = app_with_palette_open();
+    render_and_record(&app);
+    let (kind, rect) = app.layout_regions().popup.expect("popup recorded");
+    assert_eq!(kind, crate::app::PopupKind::Palette);
+    let checked_before = app.palette().unwrap().is_checked(0);
+    let cell = (rect.x + 1, rect.y + 1);
+    app.on_mouse(
+        MouseEvent::Click {
+            col: cell.0,
+            row: cell.1,
+        },
+        100,
+    );
+    assert_eq!(
+        app.palette().unwrap().is_checked(0),
+        checked_before,
+        "a single click only moves the cursor"
+    );
+    assert_eq!(app.palette().unwrap().cursor(), 0);
+    app.on_mouse(
+        MouseEvent::Click {
+            col: cell.0 + 3,
+            row: cell.1,
+        },
+        300,
+    );
+    assert_eq!(
+        app.palette().unwrap().is_checked(0),
+        !checked_before,
+        "a fast second click on the same row toggles (SameRow granularity tolerates column jitter)"
+    );
+}
+
+// --- facet click-dismiss ---
+
+#[test]
+fn click_anywhere_dismisses_an_open_facet() {
+    let (mut app, rx) = loaded_app();
+    type_query(&mut app, "SELECT * FROM t");
+    app.tick(150);
+    let id = app.latest_request_id();
+    app.on_response(QueryResponse::ProcessedSuccess {
+        result: wide_result(3),
+        request_id: id,
+        kind: RequestKind::Main,
+    });
+    if app.autocomplete().is_open() {
+        app.on_key(KeyEvent::plain(Key::Esc), 200);
+    }
+    app.on_key(KeyEvent::plain(Key::Down), 200); // focus results
+    assert_eq!(app.focus(), Focus::Results);
+    app.on_key(KeyEvent::char('f'), 250); // open the facet (pending)
+    let _ = rx; // the facet fetch request is not asserted here
+    assert!(app.is_facet_open());
+    render_and_record(&app);
+    app.on_mouse(MouseEvent::Click { col: 2, row: 2 }, 300);
+    assert!(!app.is_facet_open(), "any click dismisses the facet");
+}
+
+// --- drag never activates ---
+
+#[test]
+fn drag_over_a_history_row_selects_but_does_not_recall() {
+    let (mut app, _rx) = app_with_history_open();
+    render_and_record(&app);
+    let (_kind, rect) = app.layout_regions().popup.expect("popup recorded");
+    app.on_mouse(
+        MouseEvent::Drag {
+            col: rect.x + 1,
+            row: rect.y + 1,
+        },
+        400,
+    );
+    assert!(
+        app.is_history_open(),
+        "a drag over a history row must not recall/close"
+    );
+}
+
+// --- Simple-mode click column mapping ---
+
+#[test]
+fn simple_mode_pane_click_maps_columns_past_the_label_gutter() {
+    // Simple mode reserves a 9-char label column (SIMPLE_LABEL_WIDTH) left of the editor text —
+    // the click→text-col mapping must subtract it (not the Power-mode 2-char prompt).
+    let (mut app, _rx) = simple_mode_app();
+    // The WHERE pane is the default focus; type into it so there is text to land in.
+    type_query(&mut app, "id > 5");
+    if app.autocomplete().is_open() {
+        app.on_key(KeyEvent::plain(Key::Esc), 0);
+    }
+    render_and_record(&app);
+    let bar = app.layout_regions().query_bar.expect("bar recorded");
+    // Click the WHERE pane (row index 1) at text column 2: screen x = bar.x + label(9) + 2.
+    app.on_mouse(
+        MouseEvent::Click {
+            col: bar.x + 9 + 2,
+            row: bar.y + 1,
+        },
+        0,
+    );
+    assert_eq!(app.focus(), Focus::QueryBar);
+    assert_eq!(
+        app.query_form().focused_pane(),
+        crate::app::SimplePane::Where
+    );
+    assert_eq!(
+        app.editor().cursor(),
+        2,
+        "text col = screen col - label width (9), not - prompt width (2)"
+    );
+    // A click on the label gutter clamps to column 0.
+    app.on_mouse(
+        MouseEvent::Click {
+            col: bar.x + 3,
+            row: bar.y + 1,
+        },
+        0,
+    );
+    assert_eq!(app.editor().cursor(), 0, "label-gutter click clamps to 0");
+}

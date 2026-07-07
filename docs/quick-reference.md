@@ -107,3 +107,23 @@ The table is always named `t`. Inside the session:
 | `Backspace` | Delete the character before the cursor. |
 | `Enter` | Submit the prompt to the model. |
 | `Esc` | Close the popup. |
+
+## Mouse
+
+Mouse capture is on for the whole session (native terminal text-selection is replaced by ciq's own
+interactions; use the output modes to copy data out).
+
+| Gesture | Where | Action |
+|---|---|---|
+| Wheel up / down | results grid (or anywhere outside a popup) | Scroll the grid three rows per notch. |
+| Wheel up / down | open list popup (autocomplete / palette / history) | Move that popup's selection. |
+| Trackpad swipe left / right | results grid | Smooth character-granular horizontal scroll. |
+| Click | results grid | Focus the grid. |
+| Click | a query pane / the query bar | Focus it and place the cursor at the clicked character (Insert mode). |
+| Click | autocomplete row | Select that candidate (Tab / Enter accepts). |
+| Double-click | autocomplete row | Accept that candidate. |
+| Click | palette row | Move the cursor onto that column. |
+| Double-click | palette row | Toggle that column (like Space). |
+| Click | history row | Recall that query into the bar and run it. |
+| Click | outside an open facet / history / AI popup | Dismiss the popup. |
+| Hover | grid row or popup row | Highlight the row under the pointer (grid rows also get a bright left accent bar that follows the pointer). |

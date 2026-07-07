@@ -202,7 +202,12 @@ fn render_history_popup(app: &App, frame: &mut Frame, bar: Rect, results: Rect) 
         return;
     }
     let area = popup_rect_for(app, PopupKind::History, bar, results);
-    render_history(app.history(), frame, area);
+    render_history(
+        app.history(),
+        frame,
+        area,
+        hovered_popup_row(app, PopupKind::History),
+    );
 }
 
 /// Overlay the facet popup just above the query bar, over the results pane, when one is open
@@ -227,7 +232,12 @@ fn render_palette_popup(app: &App, frame: &mut Frame, bar: Rect, results: Rect) 
         return;
     };
     let area = popup_rect_for(app, PopupKind::Palette, bar, results);
-    render_palette(palette, frame, area);
+    render_palette(
+        palette,
+        frame,
+        area,
+        hovered_popup_row(app, PopupKind::Palette),
+    );
 }
 
 /// Overlay the autocomplete popup just above the query bar, over the results pane. Sized to the
@@ -244,7 +254,22 @@ fn render_autocomplete(app: &App, frame: &mut Frame, bar: Rect, results: Rect) {
     // the discoverable jump to the dedicated column-picker palette.
     let show_columns_hint = matches!(app.query_form().mode(), crate::app::QueryMode::Simple)
         && app.query_form().focused_pane() == crate::app::SimplePane::Select;
-    render_popup(state, frame, area, show_columns_hint);
+    render_popup(
+        state,
+        frame,
+        area,
+        show_columns_hint,
+        hovered_popup_row(app, PopupKind::Autocomplete),
+    );
+}
+
+/// The absolute list index the pointer is hovering inside popup `kind`, if any — feeds each list
+/// popup's hover band. `None` when the hover is on another surface (or nothing).
+fn hovered_popup_row(app: &App, kind: PopupKind) -> Option<usize> {
+    match app.hover() {
+        Some(crate::app::HoverTarget::PopupRow(k, row)) if k == kind => Some(row),
+        _ => None,
+    }
 }
 
 /// The popup width: a readable fraction of the pane width, clamped so it neither overflows nor
@@ -557,12 +582,20 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
             v_row_offset: app.v_row_offset(),
         };
         let grid = layout_grid(&result.rows, &view);
+        // The hover band only paints while the pointer is on a grid row (popup hover paints in
+        // the popup renderers instead).
+        let hovered_row = match app.hover() {
+            Some(crate::app::HoverTarget::GridRow(row)) => Some(row),
+            _ => None,
+        };
         grid_render::render_grid(
             frame,
             inner,
             &grid,
             app.v_row_offset(),
             app.result_is_stale(),
+            hovered_row,
+            accent,
         );
     }
 }

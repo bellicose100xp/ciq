@@ -25,7 +25,8 @@ fn cols() -> Vec<ColumnRef> {
 
 fn render(state: &PaletteState, w: u16, h: u16, area: Rect) -> String {
     let mut t = Terminal::new(TestBackend::new(w, h)).expect("TestBackend");
-    t.draw(|f| render_palette(state, f, area)).expect("draw");
+    t.draw(|f| render_palette(state, f, area, None))
+        .expect("draw");
     t.backend().to_string()
 }
 
@@ -187,7 +188,7 @@ fn popup_overwrites_underlying_dim_cells() {
             .style(Style::default().add_modifier(Modifier::DIM));
         f.render_widget(dim_bg, area);
         // Now render the popup on top of it.
-        render_palette(&state, f, area);
+        render_palette(&state, f, area, None);
     })
     .expect("draw");
     let painted = t.backend().buffer();
@@ -208,5 +209,25 @@ fn popup_overwrites_underlying_dim_cells() {
         "popup left {} inner cells with DIM bleeding from underneath: {:?}",
         dim_cells.len(),
         dim_cells
+    );
+}
+
+#[test]
+fn hovered_row_carries_the_hover_band() {
+    let state = PaletteState::new(cols()); // cursor on row 0
+    let area = Rect::new(0, 0, 40, 6);
+    let mut t = Terminal::new(TestBackend::new(50, 10)).expect("TestBackend");
+    t.draw(|f| render_palette(&state, f, area, Some(1)))
+        .expect("draw");
+    let buf = t.backend().buffer();
+    assert_eq!(
+        buf[(1, 2)].style().bg,
+        crate::theme::palette::hovered_bg().bg,
+        "hovered (non-cursor) row carries the hover band"
+    );
+    assert_ne!(
+        buf[(1, 3)].style().bg,
+        crate::theme::palette::hovered_bg().bg,
+        "other rows keep the plain background"
     );
 }

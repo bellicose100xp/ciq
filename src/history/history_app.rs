@@ -31,7 +31,7 @@ impl App {
     }
 
     /// Close the history popup without recalling.
-    fn close_history(&mut self) {
+    pub(crate) fn close_history(&mut self) {
         self.history.close();
         self.history_open = false;
     }
@@ -62,7 +62,7 @@ impl App {
     /// validate + dispatch path a typed query uses (§7.6) — so it goes through the read-only
     /// single-statement guard like any other query, never a privileged path. No-op (just closes)
     /// when nothing is selected.
-    fn recall_selected_history(&mut self, now_ms: u64) {
+    pub(crate) fn recall_selected_history(&mut self, now_ms: u64) {
         let recalled = self.history.selected_entry().map(str::to_string);
         if let Some(sql) = recalled {
             // Recalled SQL is a full string. In Simple mode try to parse it back into the five

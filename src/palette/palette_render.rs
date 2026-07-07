@@ -26,7 +26,7 @@ pub const MAX_VISIBLE_ROWS: u16 = 10;
 
 /// Render the palette popup into `area`. No-op when the popup is closed (the caller checks
 /// [`App::is_palette_open`](crate::app::App::is_palette_open)) or `area` is degenerate.
-pub fn render_palette(state: &PaletteState, f: &mut Frame, area: Rect) {
+pub fn render_palette(state: &PaletteState, f: &mut Frame, area: Rect, hovered: Option<usize>) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -58,7 +58,7 @@ pub fn render_palette(state: &PaletteState, f: &mut Frame, area: Rect) {
         return;
     }
 
-    let lines = popup_lines(state, inner.width, inner.height);
+    let lines = popup_lines(state, inner.width, inner.height, hovered);
     f.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -105,7 +105,12 @@ pub(crate) fn hint_spans(max_width: usize) -> Vec<Span<'static>> {
 }
 
 /// Build the styled column rows for an inner width/height. Scrolled so the cursor is visible.
-fn popup_lines(state: &PaletteState, width: u16, height: u16) -> Vec<Line<'static>> {
+fn popup_lines(
+    state: &PaletteState,
+    width: u16,
+    height: u16,
+    hovered: Option<usize>,
+) -> Vec<Line<'static>> {
     let cols = state.all_columns();
     if cols.is_empty() {
         return vec![Line::from(Span::styled(
@@ -121,15 +126,28 @@ fn popup_lines(state: &PaletteState, width: u16, height: u16) -> Vec<Line<'stati
         .enumerate()
         .map(|(offset, column)| {
             let row = start + offset;
-            row_line(column, state.is_checked(row), width, row == state.cursor())
+            row_line(
+                column,
+                state.is_checked(row),
+                width,
+                row == state.cursor(),
+                hovered == Some(row),
+            )
         })
         .collect()
 }
 
 /// One column row, padded to `width`: `<checkbox> <name>` left-aligned, the type badge
-/// right-aligned, the gap filled with spaces. The cursor row is reverse-video; otherwise the
-/// checkbox carries the checked/normal style and the badge the dimmed hint style.
-fn row_line(column: &ColumnRef, checked: bool, width: u16, is_cursor: bool) -> Line<'static> {
+/// right-aligned, the gap filled with spaces. The cursor row is reverse-video; a hovered
+/// (non-cursor) row carries the faint hover band; otherwise the checkbox carries the
+/// checked/normal style and the badge the dimmed hint style.
+fn row_line(
+    column: &ColumnRef,
+    checked: bool,
+    width: u16,
+    is_cursor: bool,
+    hovered: bool,
+) -> Line<'static> {
     let width = width as usize;
     let badge = column.ty.badge().to_string();
     let body = row_text(
@@ -150,7 +168,7 @@ fn row_line(column: &ColumnRef, checked: bool, width: u16, is_cursor: bool) -> L
         } else {
             theme::palette::item()
         };
-        Line::from(vec![
+        let line = Line::from(vec![
             Span::styled(checkbox(checked).to_string(), box_style),
             Span::styled(
                 format!(" {body}", body = name_part(column, width)),
@@ -158,7 +176,12 @@ fn row_line(column: &ColumnRef, checked: bool, width: u16, is_cursor: bool) -> L
             ),
             Span::styled(" ".repeat(gap), theme::palette::item()),
             Span::styled(badge, theme::palette::type_hint()),
-        ])
+        ]);
+        if hovered {
+            line.style(theme::palette::hovered_bg())
+        } else {
+            line
+        }
     }
 }
 

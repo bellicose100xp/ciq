@@ -12,7 +12,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
+use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -32,8 +32,19 @@ pub fn body_viewport_height(inner_height: u16) -> u16 {
 /// the body is rendered in the rows below it, sliced to the visible window. When `stale` is
 /// `true`, the header + body cells carry [`theme::grid::stale_modifier`] (dim) so the user sees
 /// the last-good grid kept under the error message in the status line (jiq's
-/// error-keeps-last-result-dimmed behavior).
-pub fn render_grid(f: &mut Frame, area: Rect, grid: &GridFrame, v_row_offset: usize, stale: bool) {
+/// error-keeps-last-result-dimmed behavior). `hovered_row` is the absolute body-row index under
+/// the mouse pointer, if any — painted with the [`theme::grid::hovered_bg`] band plus a bright
+/// left accent bar (`▌`) in `accent` (the pane's state color) that rides column 0 of that row and
+/// follows the pointer.
+pub fn render_grid(
+    f: &mut Frame,
+    area: Rect,
+    grid: &GridFrame,
+    v_row_offset: usize,
+    stale: bool,
+    hovered_row: Option<usize>,
+    accent: Color,
+) {
     if area.height == 0 {
         return;
     }
@@ -72,11 +83,38 @@ pub fn render_grid(f: &mut Frame, area: Rect, grid: &GridFrame, v_row_offset: us
     } else {
         &[]
     };
+    let hovered_offset = hovered_row
+        .and_then(|abs| abs.checked_sub(v_row_offset))
+        .filter(|&off| off < visible.len());
     let lines: Vec<Line> = visible
         .iter()
-        .map(|row| style_body_line(row, extra))
+        .enumerate()
+        .map(|(offset, row)| {
+            let line = style_body_line(row, extra);
+            if Some(offset) == hovered_offset {
+                line.style(theme::grid::hovered_bg())
+            } else {
+                line
+            }
+        })
         .collect();
     f.render_widget(Paragraph::new(lines).scroll((0, h)), body_area);
+
+    // The bright left accent bar rides column 0 of the hovered row, painted AFTER the body so it
+    // overlays the first cell (not scrolled with the body — it always marks the pane's left edge,
+    // lazygit-style). The band already tints the whole row; this just adds the following bar.
+    if let Some(offset) = hovered_offset {
+        let bar_area = Rect {
+            x: body_area.x,
+            y: body_area.y.saturating_add(offset as u16),
+            width: 1,
+            height: 1,
+        };
+        f.render_widget(
+            Paragraph::new(Span::styled("\u{258c}", theme::grid::hover_bar(accent))),
+            bar_area,
+        );
+    }
 }
 
 /// Style one body line: dim the byte ranges `layout_grid` flagged as genuine SQL nulls so a

@@ -42,4 +42,10 @@ max_entries = 1000        # caps both the in-session ring and the on-disk file
 With `enabled = false`, history is session-only — the in-memory ring still works, but nothing is
 read from or written to disk.
 
+## Mouse
+
+Wheel over the popup moves the selection; a click on an entry recalls it into the bar and runs it;
+a click outside the popup closes it without recalling. Hovering highlights the row under the
+pointer.
+
 See the [Quick Reference](../quick-reference.md) for the complete set.

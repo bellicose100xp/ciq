@@ -26,7 +26,7 @@ use super::history_state::{HistoryState, MAX_VISIBLE_HISTORY};
 ///
 /// The popup draws a bordered box titled with the filtered/total count + the search needle, and
 /// inside it one line per visible (filtered) prior query, the cursor row reverse-video.
-pub fn render_history(state: &HistoryState, f: &mut Frame, area: Rect) {
+pub fn render_history(state: &HistoryState, f: &mut Frame, area: Rect, hovered: Option<usize>) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -42,7 +42,7 @@ pub fn render_history(state: &HistoryState, f: &mut Frame, area: Rect) {
         return;
     }
 
-    let lines = popup_lines(state, inner.width, inner.height);
+    let lines = popup_lines(state, inner.width, inner.height, hovered);
     f.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -65,7 +65,12 @@ pub fn title(state: &HistoryState) -> String {
 /// height-capped) window of filtered entries the state exposes via
 /// [`visible_entries`](HistoryState::visible_entries), each padded to `width`, the cursor row
 /// reverse-video. An empty filtered list shows a dimmed "(no matches)" line.
-pub fn popup_lines(state: &HistoryState, width: u16, height: u16) -> Vec<Line<'static>> {
+pub fn popup_lines(
+    state: &HistoryState,
+    width: u16,
+    height: u16,
+    hovered: Option<usize>,
+) -> Vec<Line<'static>> {
     if state.filtered_count() == 0 {
         return vec![Line::from(Span::styled(
             pad_or_truncate("(no matches)", width as usize),
@@ -77,16 +82,25 @@ pub fn popup_lines(state: &HistoryState, width: u16, height: u16) -> Vec<Line<'s
         .visible_entries()
         .into_iter()
         .take(visible)
-        .map(|(display_idx, entry)| row_line(entry, width, display_idx == state.selected_index()))
+        .map(|(display_idx, entry)| {
+            row_line(
+                entry,
+                width,
+                display_idx == state.selected_index(),
+                hovered == Some(display_idx),
+            )
+        })
         .collect()
 }
 
 /// One history row padded to `width`: the query text (truncated to fit), the cursor row
-/// reverse-video, others normal.
-fn row_line(entry: &str, width: u16, is_cursor: bool) -> Line<'static> {
+/// reverse-video, a hovered (non-cursor) row on the faint hover band, others normal.
+fn row_line(entry: &str, width: u16, is_cursor: bool, hovered: bool) -> Line<'static> {
     let text = pad_or_truncate(entry, width as usize);
     let style = if is_cursor {
         theme::history::selected()
+    } else if hovered {
+        theme::history::item().patch(theme::history::hovered_bg())
     } else {
         theme::history::item()
     };

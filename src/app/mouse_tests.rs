@@ -13,4 +13,5 @@ fn position_reads_back_each_kind() {
     );
     assert_eq!(MouseEvent::Click { col: 9, row: 10 }.position(), (9, 10));
     assert_eq!(MouseEvent::Drag { col: 11, row: 12 }.position(), (11, 12));
+    assert_eq!(MouseEvent::Move { col: 13, row: 14 }.position(), (13, 14));
 }

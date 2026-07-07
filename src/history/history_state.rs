@@ -277,6 +277,16 @@ impl HistoryState {
         self.adjust_scroll_to_selection();
     }
 
+    /// Move the popup cursor to filtered display index `i`, clamped to the last entry (the mouse
+    /// click-to-select path). Empty list is a no-op.
+    pub fn set_selected_index(&mut self, i: usize) {
+        if self.filtered_indices.is_empty() {
+            return;
+        }
+        self.selected_index = i.min(self.filtered_indices.len() - 1);
+        self.adjust_scroll_to_selection();
+    }
+
     /// Append a char to the needle, re-filter, and reset the cursor/scroll to the top of the new
     /// filtered list (jiq resets selection on every search change).
     pub fn push_needle(&mut self, c: char) {

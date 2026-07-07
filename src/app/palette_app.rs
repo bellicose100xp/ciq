@@ -122,7 +122,7 @@ impl App {
     /// Write the palette's current checked set into the SELECT pane and schedule a debounced
     /// dispatch. The single seam every toggle/Ctrl+A/Ctrl+X/Ctrl+I goes through, so the
     /// SELECT-pane semantics (and the composer's empty-fallback to `*`) live in one place.
-    fn write_palette_to_select_and_schedule(&mut self, now_ms: u64) {
+    pub(crate) fn write_palette_to_select_and_schedule(&mut self, now_ms: u64) {
         let new_select = match self.palette.as_ref() {
             Some(p) => p.write_to_select(),
             None => return,

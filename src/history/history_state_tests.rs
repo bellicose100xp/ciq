@@ -331,3 +331,21 @@ fn add_resets_cycling() {
     h.add("b");
     assert_eq!(h.cycling_index(), None);
 }
+
+#[test]
+fn set_selected_index_moves_and_clamps() {
+    let mut h = HistoryState::with_entries(vec!["a".into(), "b".into(), "c".into()]);
+    h.open(None);
+    h.set_selected_index(2);
+    assert_eq!(h.selected_index(), 2);
+    h.set_selected_index(99);
+    assert_eq!(h.selected_index(), 2, "clamps to the last filtered entry");
+}
+
+#[test]
+fn set_selected_index_on_empty_list_is_a_noop() {
+    let mut h = HistoryState::new();
+    h.open(None);
+    h.set_selected_index(3);
+    assert_eq!(h.selected_index(), 0);
+}

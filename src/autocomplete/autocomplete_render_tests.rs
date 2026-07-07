@@ -25,7 +25,7 @@ fn render_with(
     show_columns_hint: bool,
 ) -> String {
     let mut t = Terminal::new(TestBackend::new(w, h)).expect("TestBackend");
-    t.draw(|f| render_popup(state, f, area, show_columns_hint))
+    t.draw(|f| render_popup(state, f, area, show_columns_hint, None))
         .expect("draw");
     t.backend().to_string()
 }
@@ -202,5 +202,38 @@ fn bottom_border_omits_multi_select_hint_off_select_pane() {
     assert!(
         !screen.contains("Ctrl+P"),
         "Ctrl+P multi-select hint must NOT appear off the SELECT pane: {screen}"
+    );
+}
+
+#[test]
+fn hovered_row_carries_the_hover_band_and_selected_stays_reversed() {
+    let mut state = AutocompleteState::new();
+    state.open_with(vec![
+        Suggestion::new("alpha", SuggestionType::Keyword),
+        Suggestion::new("beta", SuggestionType::Keyword),
+        Suggestion::new("gamma", SuggestionType::Keyword),
+    ]);
+    let area = Rect::new(0, 0, 30, 6);
+    let mut t = Terminal::new(TestBackend::new(40, 10)).expect("TestBackend");
+    t.draw(|f| render_popup(&state, f, area, false, Some(1)))
+        .expect("draw");
+    let buf = t.backend().buffer();
+    // Inner rows start at y=1 (border): row 0 = selected (reverse video), row 1 = hovered.
+    assert!(
+        buf[(1, 1)]
+            .style()
+            .add_modifier
+            .contains(ratatui::style::Modifier::REVERSED),
+        "selected row keeps reverse video"
+    );
+    assert_eq!(
+        buf[(1, 2)].style().bg,
+        crate::theme::autocomplete::hovered_bg().bg,
+        "hovered row carries the hover band"
+    );
+    assert_ne!(
+        buf[(1, 3)].style().bg,
+        crate::theme::autocomplete::hovered_bg().bg,
+        "other rows keep the plain background"
     );
 }

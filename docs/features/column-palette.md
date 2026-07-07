@@ -43,4 +43,10 @@ no longer owns it and will not silently clobber your edits; instead it offers to
 with a freshly generated query. The common path (an empty bar at startup) begins palette-owned, so
 the palette works out of the box without ever parsing your SQL.
 
+## Mouse
+
+Wheel over the popup moves the cursor; a click moves the cursor onto the clicked row; a
+double-click toggles that column (like Space), rewriting the SELECT pane live. Hovering highlights
+the row under the pointer.
+
 See the [Quick Reference](../quick-reference.md) for the complete set.

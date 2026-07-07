@@ -30,6 +30,9 @@ pub enum MouseEvent {
     Click { col: u16, row: u16 },
     /// Left button held and moved — a drag (treated like a click for cursor positioning).
     Drag { col: u16, row: u16 },
+    /// Pointer moved with no button held — drives the transient hover highlight (grid row /
+    /// popup row under the pointer). Any motion also invalidates a pending double-click pair.
+    Move { col: u16, row: u16 },
 }
 
 impl MouseEvent {
@@ -41,7 +44,8 @@ impl MouseEvent {
             | MouseEvent::ScrollLeft { col, row }
             | MouseEvent::ScrollRight { col, row }
             | MouseEvent::Click { col, row }
-            | MouseEvent::Drag { col, row } => (col, row),
+            | MouseEvent::Drag { col, row }
+            | MouseEvent::Move { col, row } => (col, row),
         }
     }
 }
