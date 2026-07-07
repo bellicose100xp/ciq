@@ -179,24 +179,26 @@ impl App {
     }
 
     /// Slide `h_col_offset` (and its char twin) so column `col` sits inside the viewport with a
-    /// one-column scrolloff margin, clamped at the true first/last column.
+    /// one-column scrolloff margin from whichever edge it was off — left OR right. Width-aware via
+    /// [`h_col_offset_to_reveal`](crate::grid::grid_layout::h_col_offset_to_reveal), so an
+    /// off-screen-right column genuinely scrolls the grid rightward.
     fn scroll_column_into_view(&mut self, col: usize) {
         let Some(rows) = self.display_rows() else {
             return;
         };
-        let col_count = rows.col_count();
-        if col_count == 0 {
+        if rows.col_count() == 0 {
             return;
         }
         const H_MARGIN: usize = 1;
-        // A cheap column-count estimate of how many columns fit; the exact fit is width-dependent
-        // and re-derived by the renderer, so we only need to guarantee `col` is not the leftmost
-        // visible column (which would put it flush to the border).
-        if col < self.h_col_offset.saturating_add(H_MARGIN) {
-            self.h_col_offset = col.saturating_sub(H_MARGIN);
-        }
-        // Never over-scroll past the last column.
-        self.h_col_offset = self.h_col_offset.min(col_count.saturating_sub(1));
+        let inner_w = self.results_inner_width();
+        let widths = crate::grid::col_width::compute_widths(rows, inner_w);
+        self.h_col_offset = crate::grid::grid_layout::h_col_offset_to_reveal(
+            &widths,
+            inner_w,
+            col,
+            self.h_col_offset,
+            H_MARGIN,
+        );
         self.snap_h_char_to_col();
     }
 }

@@ -400,6 +400,55 @@ fn navigating_down_scrolls_the_match_into_view_with_scrolloff() {
 }
 
 #[test]
+fn navigating_to_a_right_edge_match_scrolls_the_grid_horizontally() {
+    // A result whose ONLY matching cell is in a far-right column: navigating to that match must
+    // scroll the grid right (h_col_offset advances) so the column comes into view.
+    let (mut app, _rx) = loaded_app();
+    type_str(&mut app, "SELECT * FROM t", 0);
+    app.tick(150);
+    // 8 wide text columns; the needle "zephyr" appears only in the last column of one row.
+    let mut cols = Vec::new();
+    for c in 0..8usize {
+        let cells: Vec<Cell> = (0..3)
+            .map(|r| {
+                if c == 7 && r == 1 {
+                    Cell::Text("zephyr-value".into())
+                } else {
+                    Cell::Text(format!("col{c}row{r}filler"))
+                }
+            })
+            .collect();
+        cols.push(Column::new(
+            format!("column_{c:02}"),
+            ColumnType::Text,
+            cells,
+        ));
+    }
+    let table = Table::new(cols);
+    let schema = table.schema();
+    let id = app.latest_request_id();
+    app.on_response(QueryResponse::ProcessedSuccess {
+        result: ProcessedResult::new(table, schema, 0),
+        request_id: id,
+        kind: RequestKind::Main,
+    });
+    if app.autocomplete().is_open() {
+        app.on_key(KeyEvent::plain(Key::Esc), 200);
+    }
+    // Narrow viewport so the last column is definitely off the right edge at offset 0.
+    let _ = render(&app, 40, 16);
+    assert_eq!(app.h_col_offset(), 0, "starts scrolled fully left");
+    app.on_key(ctrl(Key::Char('f')), 300);
+    type_needle(&mut app, "zephyr");
+    app.on_key(KeyEvent::plain(Key::Enter), 300); // confirm; current match = the matching row
+    assert!(
+        app.h_col_offset() > 0,
+        "navigating to the right-edge match scrolled the grid right (h_col_offset={})",
+        app.h_col_offset()
+    );
+}
+
+#[test]
 fn last_match_may_reach_the_bottom_edge() {
     let mut app = app_with_many_eu_rows(60);
     app.on_key(ctrl(Key::Char('f')), 300);

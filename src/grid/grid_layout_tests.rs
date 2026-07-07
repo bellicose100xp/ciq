@@ -5,7 +5,7 @@ use proptest::prelude::*;
 
 use crate::engine::{Cell, Column, Table};
 use crate::grid::grid_layout::{
-    Align, GridView, columns_dropped_at, layout_grid, prefix_left_edge,
+    Align, GridView, columns_dropped_at, h_col_offset_to_reveal, layout_grid, prefix_left_edge,
 };
 use crate::schema::ColumnType;
 
@@ -226,6 +226,45 @@ fn columns_dropped_at_returns_largest_fully_off_column_count() {
     assert_eq!(columns_dropped_at(&widths, 14), 2);
     // Past the end: all dropped.
     assert_eq!(columns_dropped_at(&widths, 999), 3);
+}
+
+#[test]
+fn h_col_offset_to_reveal_scrolls_left_with_margin() {
+    let widths = [10u16, 10, 10, 10, 10];
+    // Currently showing from col 2; reveal col 2 with margin 1 -> slide so col 1 leads.
+    assert_eq!(h_col_offset_to_reveal(&widths, 30, 2, 2, 1), 1);
+    // Reveal col 0: clamps to 0 (data start, can sit flush).
+    assert_eq!(h_col_offset_to_reveal(&widths, 30, 0, 3, 1), 0);
+    // Reveal col 1 with margin 1 -> col 0 leads.
+    assert_eq!(h_col_offset_to_reveal(&widths, 30, 1, 3, 1), 0);
+}
+
+#[test]
+fn h_col_offset_to_reveal_scrolls_right_with_margin() {
+    // Five 10-wide columns, viewport fits 3 (10+2+10+2+10 = 34 > 30, so 2 full + gap). Reveal a
+    // column off the right edge and confirm the offset advances so it (plus a right margin) shows.
+    let widths = [10u16, 10, 10, 10, 10];
+    // Start at offset 0; reveal col 4 (last) with margin 1: margin clamps to the last column, so
+    // col 4 must be visible as the last column. With viewport 30, ~2 columns fit -> offset 3.
+    let off = h_col_offset_to_reveal(&widths, 30, 4, 0, 1);
+    assert!(off >= 3, "scrolled right to reveal col 4, got {off}");
+    assert!(off <= 4, "never past the last column, got {off}");
+}
+
+#[test]
+fn h_col_offset_to_reveal_leaves_offset_when_target_already_inside() {
+    let widths = [10u16, 10, 10, 10, 10];
+    // Offset 1 shows cols 1,2(,3 partial); target col 2 with margin 0 is already inside -> no move.
+    assert_eq!(h_col_offset_to_reveal(&widths, 30, 2, 1, 0), 1);
+}
+
+#[test]
+fn h_col_offset_to_reveal_clamps_and_handles_empty() {
+    assert_eq!(h_col_offset_to_reveal(&[], 30, 0, 0, 1), 0);
+    let widths = [5u16, 5, 5];
+    // Target past the end clamps to the last column.
+    let off = h_col_offset_to_reveal(&widths, 20, 99, 0, 1);
+    assert!(off <= 2);
 }
 
 #[test]

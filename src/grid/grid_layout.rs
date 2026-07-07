@@ -286,6 +286,68 @@ pub fn columns_dropped_at(widths: &[u16], chars: u16) -> usize {
     widths.len()
 }
 
+/// The new `h_col_offset` that brings column `target` into the viewport with a `margin`-column
+/// gap from whichever edge it was off — vim's `scrolloff`, on the horizontal/column axis. Pure so
+/// the search "scroll match into view" logic is unit-testable without a terminal.
+///
+/// `all_widths` are every column's rendered width (from [`compute_widths`]); `viewport` is the
+/// inner pane width in cells; `current` is the present `h_col_offset`. The result is clamped to
+/// `[0, all_widths.len() - 1]`, and at the data's own left/right end the target is allowed to sit
+/// flush against that edge (there is nothing beyond to keep a margin against).
+///
+/// - Target left of the window (`target < current + margin`): slide left so `margin` columns
+///   remain to its left (or to column 0 if the data start is closer).
+/// - Target right of the window: slide right so `margin` columns remain to its right — computed by
+///   finding the smallest offset that keeps `target + margin` (clamped) visible as the last column,
+///   honoring the variable per-column widths.
+/// - Target already comfortably inside: `current` unchanged.
+pub fn h_col_offset_to_reveal(
+    all_widths: &[u16],
+    viewport: u16,
+    target: usize,
+    current: usize,
+    margin: usize,
+) -> usize {
+    let col_count = all_widths.len();
+    if col_count == 0 {
+        return 0;
+    }
+    let last = col_count - 1;
+    let target = target.min(last);
+
+    // Left edge: the target sits within `margin` columns of the window's left — slide left.
+    if target < current.saturating_add(margin) {
+        return target.saturating_sub(margin);
+    }
+
+    // Right edge: the column we must keep visible is `target + margin` (clamped to the last
+    // column). `min_start_showing_last` is the smallest offset at which that column is the last one
+    // still fitting; if we're scrolled left of that, slide right to it. Otherwise the target is
+    // already inside the window with room to spare, so leave the offset alone.
+    let reveal = (target + margin).min(last);
+    let need = min_start_showing_last(all_widths, viewport, reveal);
+    current.max(need).min(last)
+}
+
+/// The smallest `h_col_offset` at which column `target` is still fully visible as (at worst) the
+/// last column in the viewport. Accumulates widths leftward from `target` until the next column
+/// would overflow `viewport`. Pure helper for [`h_col_offset_to_reveal`].
+fn min_start_showing_last(all_widths: &[u16], viewport: u16, target: usize) -> usize {
+    let mut start = target;
+    let mut used = all_widths.get(target).copied().unwrap_or(0);
+    while start > 0 {
+        let next = used
+            .saturating_add(COL_GAP_WIDTH)
+            .saturating_add(all_widths[start - 1]);
+        if next > viewport {
+            break;
+        }
+        used = next;
+        start -= 1;
+    }
+    start
+}
+
 /// Truncate a plain header string to `width` chars with the same ellipsis rule as cells.
 fn render_str(text: &str, width: u16) -> String {
     super::col_width::truncate_to_width(text, width as usize)
