@@ -447,8 +447,9 @@ Confirm by hand (light + dark terminal):
 ## Showcase fixture — edge-case tour (tests/fixtures/showcase.csv)
 
 A meatier fixture for driving every TUI edge case by hand. **5000 rows, 14 columns**, generated
-deterministically by `dev/gen_showcase.py` (re-run it to regenerate; bump `ROWS` to extend). Columns
-and the edge each exercises:
+deterministically by `python3 dev/gen_showcase.py --fixture`. For scale testing there are also two
+gitignored manual-test tiers (`showcase-m.csv` / `showcase-xl.csv`) — see "Manual-test CSVs" in the
+project `CLAUDE.md` for how to regenerate them. Columns and the edge each exercises:
 
 | Column | Type | Edge case it drives |
 |---|---|---|
