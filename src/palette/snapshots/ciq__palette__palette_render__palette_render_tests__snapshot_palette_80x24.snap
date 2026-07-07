@@ -1,14 +1,14 @@
 ---
 source: src/palette/palette_render_tests.rs
-assertion_line: 117
+assertion_line: 118
 expression: screen
 ---
 "                                                                                "
 "┌ columns ─────────────────────────────────────────────────┐                    "
-"│[ ] id                                                 int│                    "
-"│[x] status                                             txt│                    "
-"│[ ] amount                                             num│                    "
-"│[x] created_at                                        date│                    "
+"│ [ ] id                                                int│                    "
+"│▌[x] status                                            txt│                    "
+"│ [ ] amount                                            num│                    "
+"│ [x] created_at                                       date│                    "
 "│                                                          │                    "
 "│                                                          │                    "
 "└──────── Ctrl+A all • Ctrl+X none • Ctrl+I invert─────────┘                    "

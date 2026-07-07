@@ -323,30 +323,36 @@ pub mod help_line {
 /// Autocomplete popup colors and styles.
 pub mod autocomplete {
     use super::base as p;
-    use ratatui::style::{Modifier, Style};
+    use ratatui::style::{Color, Style};
+
+    /// The popup's accent (cyan) — border, selection band, and left bar all key off it.
+    pub const ACCENT: Color = p::CYAN;
 
     /// Popup border — bright cyan (popup is focused while open).
     pub fn border() -> Style {
-        Style::default().fg(p::BORDER_FOCUSED)
+        Style::default().fg(ACCENT).bg(p::BG_DARK)
     }
 
+    /// Non-selected row: normal text on the opaque popup surface.
     pub fn item() -> Style {
-        Style::default().fg(p::TEXT)
+        super::popup::item()
     }
 
+    /// Selected row band (accent text on an elevated background + bold) — the modern replacement
+    /// for reverse-video, paired with the left accent bar.
     pub fn selected() -> Style {
-        Style::default().add_modifier(Modifier::REVERSED)
+        super::popup::selected_band(ACCENT)
     }
 
-    /// The row under the mouse pointer — a faint background band (below the reverse-video
-    /// selection in the emphasis ramp, so hover never fights the selected row).
+    /// The row under the mouse pointer — a faint elevation band (below the selection band so hover
+    /// never fights the selected row), on the opaque surface.
     pub fn hovered_bg() -> Style {
-        Style::default().bg(p::BG_HOVER)
+        super::popup::hovered(p::TEXT)
     }
 
     pub fn type_hint() -> Style {
-        // TEXT_DIM color, not Modifier::DIM — same reasoning as palette::type_hint.
-        Style::default().fg(p::TEXT_DIM)
+        // TEXT_DIM color on the opaque surface (not Modifier::DIM, which bleeds through).
+        Style::default().fg(p::TEXT_DIM).bg(p::BG_DARK)
     }
 }
 
@@ -354,46 +360,111 @@ pub mod autocomplete {
 /// constants live in [`base`] above to keep this name free for the popup.
 pub mod palette {
     use super::base as p;
-    use ratatui::style::{Modifier, Style};
+    use ratatui::style::{Color, Modifier, Style};
 
     /// Distinct popup accent (magenta) — the SELECT-pane column picker reads as visually separate
     /// from the cyan-default popups (autocomplete, history, AI, facet).
+    pub const ACCENT: Color = p::MAGENTA;
+
     pub fn border() -> Style {
-        Style::default().fg(p::MAGENTA)
+        Style::default().fg(ACCENT).bg(p::BG_DARK)
     }
 
     pub fn item() -> Style {
-        Style::default().fg(p::TEXT)
+        super::popup::item()
     }
 
-    /// Cursor row: reverse-video over the magenta accent so the highlight reads even on a busy
-    /// background.
+    /// Cursor row: the modern accent band + bold (with the left bar), on the opaque surface.
     pub fn selected() -> Style {
-        Style::default()
-            .fg(p::MAGENTA)
-            .add_modifier(Modifier::REVERSED)
+        super::popup::selected_band(ACCENT)
     }
 
     pub fn checked() -> Style {
-        Style::default().fg(p::GREEN).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(p::GREEN)
+            .bg(p::BG_DARK)
+            .add_modifier(Modifier::BOLD)
     }
 
     /// The row under the mouse pointer — same faint band as the other list popups.
     pub fn hovered_bg() -> Style {
-        Style::default().bg(p::BG_HOVER)
+        super::popup::hovered(p::TEXT)
     }
 
     pub fn type_hint() -> Style {
-        // Use TEXT_DIM color rather than Modifier::DIM — DIM modifier bleeds through popup renders
-        // via ratatui's style-OR semantics (pre-Clear'd cells still OR the modifier into content
-        // cells). Muting via color is visually equivalent and modifier-free.
-        Style::default().fg(p::TEXT_DIM)
+        // TEXT_DIM color on the opaque surface rather than Modifier::DIM (which bleeds through
+        // popup renders via ratatui's style-OR semantics).
+        Style::default().fg(p::TEXT_DIM).bg(p::BG_DARK)
     }
 
     /// The popup's title text (`" columns "`). Same magenta accent as the border so the title
     /// reads as part of the popup chrome.
     pub fn title() -> Style {
-        Style::default().fg(p::MAGENTA).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(ACCENT)
+            .bg(p::BG_DARK)
+            .add_modifier(Modifier::BOLD)
+    }
+}
+
+/// Shared popup chrome — the one place the "modern popup" look is defined so every popup
+/// (autocomplete, palette, history, facet, AI) reads as one system: an **opaque** surface (so the
+/// grid never leaks through), a selected-row band elevated off that surface, and a bright left
+/// accent bar (`▌`) on the current row (the grid's lazygit-style bar, brought to the popups).
+pub mod popup {
+    use super::base as p;
+    use ratatui::style::{Color, Modifier, Style};
+
+    /// The glyph for the current-row left accent bar.
+    pub const BAR: &str = "\u{258c}";
+
+    /// Opaque popup fill — set as the `Block`'s `.style()` so the whole box (border-inner
+    /// included) paints over the grid behind it. Paired with a `Clear` first so no stale
+    /// modifier (a dimmed/NULL grid cell) bleeds into the popup.
+    pub fn surface() -> Style {
+        Style::default().bg(p::BG_DARK)
+    }
+
+    /// A non-selected popup row's base style: normal text on the opaque surface (the explicit bg
+    /// keeps a row from inheriting anything underneath).
+    pub fn item() -> Style {
+        Style::default().fg(p::TEXT).bg(p::BG_DARK)
+    }
+
+    /// A dimmed/hint popup row (badges, "(no matches)"): muted text on the opaque surface.
+    pub fn item_dim() -> Style {
+        Style::default().fg(p::TEXT_MUTED).bg(p::BG_DARK)
+    }
+
+    /// The row under the mouse pointer — a faint elevation band (below the selection band so hover
+    /// never fights the current row), on the opaque surface.
+    pub fn hovered(fg: Color) -> Style {
+        Style::default().fg(fg).bg(p::BG_HOVER)
+    }
+
+    /// The hover band's background color, for renderers that fold it into each span's `bg` (a
+    /// row whose spans set their own opaque bg can't take a line-level hover style).
+    pub fn hover_bg() -> Color {
+        p::BG_HOVER
+    }
+
+    /// The **selected / cursor** row band: the popup's accent as the text color over an elevated
+    /// background, bold — a solid, legible band rather than reverse-video (which inverts whatever
+    /// leaked through). Distinct from hover so the two never look alike.
+    pub fn selected_band(accent: Color) -> Style {
+        Style::default()
+            .fg(accent)
+            .bg(p::BG_HIGHLIGHT)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// The bright left accent bar (`▌`) on the selected row, in the popup's accent over the same
+    /// elevated band so it reads as the leading edge of the selection.
+    pub fn selected_bar(accent: Color) -> Style {
+        Style::default()
+            .fg(accent)
+            .bg(p::BG_HIGHLIGHT)
+            .add_modifier(Modifier::BOLD)
     }
 }
 
@@ -403,56 +474,59 @@ pub mod facets {
     use ratatui::style::{Modifier, Style};
 
     pub fn border() -> Style {
-        Style::default().fg(p::BORDER_FOCUSED)
+        Style::default().fg(p::BORDER_FOCUSED).bg(p::BG_DARK)
     }
 
     pub fn label() -> Style {
-        Style::default()
-            .fg(p::TEXT_MUTED)
-            .add_modifier(Modifier::DIM)
+        // Muted text on the opaque surface (color, not Modifier::DIM which bleeds through).
+        Style::default().fg(p::TEXT_MUTED).bg(p::BG_DARK)
     }
 
     pub fn value() -> Style {
-        Style::default().fg(p::CYAN).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(p::CYAN)
+            .bg(p::BG_DARK)
+            .add_modifier(Modifier::BOLD)
     }
 
     pub fn bar() -> Style {
-        Style::default().fg(p::CYAN)
+        Style::default().fg(p::CYAN).bg(p::BG_DARK)
     }
 
     pub fn hint() -> Style {
-        Style::default()
-            .fg(p::TEXT_MUTED)
-            .add_modifier(Modifier::DIM)
+        Style::default().fg(p::TEXT_MUTED).bg(p::BG_DARK)
     }
 }
 
 /// Query-history popup colors and styles.
 pub mod history {
     use super::base as p;
-    use ratatui::style::{Modifier, Style};
+    use ratatui::style::{Color, Style};
+
+    /// The popup's accent (cyan) — border, selection band, and left bar all key off it.
+    pub const ACCENT: Color = p::BORDER_FOCUSED;
 
     pub fn border() -> Style {
-        Style::default().fg(p::BORDER_FOCUSED)
+        Style::default().fg(ACCENT).bg(p::BG_DARK)
     }
 
     pub fn item() -> Style {
-        Style::default().fg(p::TEXT)
+        super::popup::item()
     }
 
+    /// Cursor row: the modern accent band + bold (with the left bar), on the opaque surface.
     pub fn selected() -> Style {
-        Style::default().add_modifier(Modifier::REVERSED)
+        super::popup::selected_band(ACCENT)
     }
 
     /// The row under the mouse pointer — same faint band as the other list popups.
     pub fn hovered_bg() -> Style {
-        Style::default().bg(p::BG_HOVER)
+        super::popup::hovered(p::TEXT)
     }
 
     pub fn hint() -> Style {
-        Style::default()
-            .fg(p::TEXT_MUTED)
-            .add_modifier(Modifier::DIM)
+        // Muted text on the opaque surface (color-based, not Modifier::DIM which bleeds through).
+        Style::default().fg(p::TEXT_MUTED).bg(p::BG_DARK)
     }
 }
 
@@ -464,29 +538,34 @@ pub mod ai {
     /// AI popup border — purple to mark it as the AI surface (still bright, distinct from the
     /// other focused popups).
     pub fn border() -> Style {
-        Style::default().fg(p::PURPLE)
+        Style::default().fg(p::PURPLE).bg(p::BG_DARK)
     }
 
     pub fn input() -> Style {
-        Style::default().fg(p::TEXT)
+        Style::default().fg(p::TEXT).bg(p::BG_DARK)
     }
 
     pub fn pending() -> Style {
-        Style::default().fg(p::YELLOW).add_modifier(Modifier::DIM)
+        // Color-muted on the opaque surface (Modifier::DIM bleeds through popup renders).
+        Style::default().fg(p::TEXT_MUTED).bg(p::BG_DARK)
     }
 
     pub fn success() -> Style {
-        Style::default().fg(p::GREEN).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(p::GREEN)
+            .bg(p::BG_DARK)
+            .add_modifier(Modifier::BOLD)
     }
 
     pub fn error() -> Style {
-        Style::default().fg(p::ERROR).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(p::ERROR)
+            .bg(p::BG_DARK)
+            .add_modifier(Modifier::BOLD)
     }
 
     pub fn hint() -> Style {
-        Style::default()
-            .fg(p::TEXT_MUTED)
-            .add_modifier(Modifier::DIM)
+        Style::default().fg(p::TEXT_MUTED).bg(p::BG_DARK)
     }
 }
 

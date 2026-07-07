@@ -13,7 +13,7 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::theme;
 
@@ -39,9 +39,11 @@ pub fn render_facet(state: &FacetState, f: &mut Frame, area: Rect) {
         state.column(),
         state.column_type().badge()
     );
+    f.render_widget(Clear, area);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::facets::border())
+        .style(theme::popup::surface())
         .title(Span::styled(title, theme::facets::hint()));
     let inner = block.inner(area);
     f.render_widget(block, area);

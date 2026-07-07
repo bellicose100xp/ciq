@@ -15,7 +15,7 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::theme;
 
@@ -46,9 +46,13 @@ pub fn render_popup(
     let usable = area.width.saturating_sub(2) as usize;
     let hint_line = Line::from(hint_spans(show_columns_hint, usable)).centered();
 
+    // Clear + an opaque surface fill so the grid never leaks through the popup (ratatui ORs
+    // spans into the cells behind them; without this the highlighted/dim grid shows through).
+    f.render_widget(Clear, area);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::autocomplete::border())
+        .style(theme::popup::surface())
         .title_bottom(hint_line);
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -124,33 +128,39 @@ fn popup_lines(
         .collect()
 }
 
-/// One candidate row, padded to `width`: the candidate text left-aligned, the type-hint label
-/// right-aligned, the gap filled with spaces. Selected rows are reverse-video (the whole line);
-/// a hovered (non-selected) row carries the faint hover band; otherwise the text uses the item
-/// style and the hint the dimmed type-hint style.
+/// One candidate row, padded to `width`. Every row reserves a **1-column left gutter** so all rows
+/// align: on the selected row that gutter holds the bright accent bar (`▌`) and the content sits on
+/// the elevated selection band; on other rows it's a blank space and the content uses the item /
+/// type-hint styles (a hovered row folds the hover background into every span, since each span sets
+/// its own opaque bg). Content (text + right-aligned label) is laid out in the remaining `width-1`.
 fn row_line(s: &Suggestion, width: u16, selected: bool, hovered: bool) -> Line<'static> {
-    let width = width as usize;
+    let content_w = (width as usize).saturating_sub(1); // column 0 is the gutter/bar
     let label = type_hint_label(s);
-    let text = truncate(&s.text, width.saturating_sub(label.len() + 1).max(1));
+    let text = truncate(&s.text, content_w.saturating_sub(label.len() + 1).max(1));
     let used = text.chars().count() + label.chars().count();
-    let gap = width.saturating_sub(used);
+    let gap = content_w.saturating_sub(used);
 
     if selected {
-        // The whole row in reverse video reads as one highlighted band.
-        let content = format!("{text}{}{label}", " ".repeat(gap));
-        let content = pad_or_truncate(&content, width);
-        Line::from(Span::styled(content, theme::autocomplete::selected()))
+        let content = pad_or_truncate(&format!("{text}{}{label}", " ".repeat(gap)), content_w);
+        Line::from(vec![
+            Span::styled(
+                theme::popup::BAR,
+                theme::popup::selected_bar(theme::autocomplete::ACCENT),
+            ),
+            Span::styled(content, theme::autocomplete::selected()),
+        ])
     } else {
-        let line = Line::from(vec![
-            Span::styled(text, theme::autocomplete::item()),
-            Span::styled(" ".repeat(gap), theme::autocomplete::item()),
-            Span::styled(label, theme::autocomplete::type_hint()),
-        ]);
-        if hovered {
-            line.style(theme::autocomplete::hovered_bg())
-        } else {
-            line
-        }
+        let row_bg = hovered.then(theme::popup::hover_bg);
+        let patch = |style: ratatui::style::Style| match row_bg {
+            Some(bg) => style.bg(bg),
+            None => style,
+        };
+        Line::from(vec![
+            Span::styled(" ", patch(theme::autocomplete::item())), // gutter aligns with the bar
+            Span::styled(text, patch(theme::autocomplete::item())),
+            Span::styled(" ".repeat(gap), patch(theme::autocomplete::item())),
+            Span::styled(label, patch(theme::autocomplete::type_hint())),
+        ])
     }
 }
 

@@ -49,6 +49,7 @@ pub fn render_palette(state: &PaletteState, f: &mut Frame, area: Rect, hovered: 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::palette::border())
+        .style(theme::popup::surface())
         .title(Span::styled(" columns ", theme::palette::title()))
         .title_bottom(hint_line);
     let inner = block.inner(area);
@@ -148,40 +149,50 @@ fn row_line(
     is_cursor: bool,
     hovered: bool,
 ) -> Line<'static> {
-    let width = width as usize;
+    // Every row reserves a 1-column left gutter (the accent bar on the cursor row, a blank space
+    // otherwise) so checkboxes stay column-aligned; content lays out in the remaining `width-1`.
+    let content_w = (width as usize).saturating_sub(1);
     let badge = column.ty.badge().to_string();
     let body = row_text(
         column,
         checked,
-        width.saturating_sub(badge.len() + 1).max(1),
+        content_w.saturating_sub(badge.len() + 1).max(1),
     );
     let used = body.chars().count() + badge.chars().count();
-    let gap = width.saturating_sub(used);
+    let gap = content_w.saturating_sub(used);
 
     if is_cursor {
-        let content = format!("{body}{}{badge}", " ".repeat(gap));
-        let content = pad_or_truncate(&content, width);
-        Line::from(Span::styled(content, theme::palette::selected()))
+        let content = pad_or_truncate(&format!("{body}{}{badge}", " ".repeat(gap)), content_w);
+        Line::from(vec![
+            Span::styled(
+                theme::popup::BAR,
+                theme::popup::selected_bar(theme::palette::ACCENT),
+            ),
+            Span::styled(content, theme::palette::selected()),
+        ])
     } else {
+        // Spans set their own opaque bg (so the grid can't leak through), so a hovered row folds
+        // the hover background into every span rather than rely on a line-level style.
+        let row_bg = hovered.then(theme::popup::hover_bg);
+        let patch = |style: ratatui::style::Style| match row_bg {
+            Some(bg) => style.bg(bg),
+            None => style,
+        };
         let box_style = if checked {
             theme::palette::checked()
         } else {
             theme::palette::item()
         };
-        let line = Line::from(vec![
-            Span::styled(checkbox(checked).to_string(), box_style),
+        Line::from(vec![
+            Span::styled(" ", patch(theme::palette::item())), // gutter aligns with the bar
+            Span::styled(checkbox(checked).to_string(), patch(box_style)),
             Span::styled(
-                format!(" {body}", body = name_part(column, width)),
-                theme::palette::item(),
+                format!(" {body}", body = name_part(column, content_w)),
+                patch(theme::palette::item()),
             ),
-            Span::styled(" ".repeat(gap), theme::palette::item()),
-            Span::styled(badge, theme::palette::type_hint()),
-        ]);
-        if hovered {
-            line.style(theme::palette::hovered_bg())
-        } else {
-            line
-        }
+            Span::styled(" ".repeat(gap), patch(theme::palette::item())),
+            Span::styled(badge, patch(theme::palette::type_hint())),
+        ])
     }
 }
 

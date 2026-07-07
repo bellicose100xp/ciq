@@ -15,7 +15,7 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::theme;
 
@@ -31,9 +31,11 @@ pub fn render_history(state: &HistoryState, f: &mut Frame, area: Rect, hovered: 
         return;
     }
 
+    f.render_widget(Clear, area);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::history::border())
+        .style(theme::popup::surface())
         .title(Span::styled(title(state), theme::history::hint()));
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -96,15 +98,25 @@ pub fn popup_lines(
 /// One history row padded to `width`: the query text (truncated to fit), the cursor row
 /// reverse-video, a hovered (non-cursor) row on the faint hover band, others normal.
 fn row_line(entry: &str, width: u16, is_cursor: bool, hovered: bool) -> Line<'static> {
-    let text = pad_or_truncate(entry, width as usize);
-    let style = if is_cursor {
-        theme::history::selected()
-    } else if hovered {
-        theme::history::item().patch(theme::history::hovered_bg())
+    if is_cursor {
+        // Left accent bar (▌) + the row on the elevated selection band (bar takes column 0).
+        let text = pad_or_truncate(entry, (width as usize).saturating_sub(1));
+        return Line::from(vec![
+            Span::styled(
+                theme::popup::BAR,
+                theme::popup::selected_bar(theme::history::ACCENT),
+            ),
+            Span::styled(text, theme::history::selected()),
+        ]);
+    }
+    // A blank left gutter aligns the text with the cursor row's accent bar; content in `width-1`.
+    let text = pad_or_truncate(entry, (width as usize).saturating_sub(1));
+    let style = if hovered {
+        theme::history::hovered_bg()
     } else {
         theme::history::item()
     };
-    Line::from(Span::styled(text, style))
+    Line::from(vec![Span::styled(" ", style), Span::styled(text, style)])
 }
 
 /// Pad `s` with trailing spaces to exactly `width` chars, or truncate it to `width` (with a

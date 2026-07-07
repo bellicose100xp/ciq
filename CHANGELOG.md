@@ -7,6 +7,12 @@ changes alike, patch `0.minor.Y` for fixes, refactors, polish, and docs.
 
 ## [Unreleased]
 
+### Changed
+- **Modern popup styling** — every popup (autocomplete, column palette, history, facet, AI) now
+  paints an opaque background so the grid no longer shows through it. The selected row uses a
+  solid accent band with a bright left accent bar (`▌`) instead of reverse-video, and every row
+  reserves a matching left gutter so contents stay column-aligned.
+
 ### Added
 - **Row search** (`Ctrl+F`) — filter the grid to rows where any column contains the typed text
   (case-insensitive), with every match highlighted in place. Enter confirms the filter and

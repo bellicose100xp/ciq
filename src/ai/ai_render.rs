@@ -13,7 +13,7 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::theme;
 
@@ -29,9 +29,11 @@ pub fn render_ai(state: &AiState, f: &mut Frame, area: Rect) {
         return;
     }
 
+    f.render_widget(Clear, area);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::ai::border())
+        .style(theme::popup::surface())
         .title(Span::styled(title(), theme::ai::hint()));
     let inner = block.inner(area);
     f.render_widget(block, area);
