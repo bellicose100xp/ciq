@@ -2,7 +2,7 @@
 //! no filesystem. Drives [`load_config_str`]; never [`load_config`] (which would read the env).
 
 use super::ai_config::{DEFAULT_API_KEY_ENV, DEFAULT_MODEL};
-use super::general::{DEFAULT_ROW_LIMIT, GeneralConfig};
+use super::general::GeneralConfig;
 use super::history_config::DEFAULT_MAX_ENTRIES;
 use super::{AiProviderType, Config, ThemeMode, load_config_str};
 
@@ -24,7 +24,7 @@ fn empty_string_is_all_defaults() {
 #[test]
 fn default_accessors_fold_in_built_ins() {
     let c = Config::default();
-    assert_eq!(c.general().row_limit(), DEFAULT_ROW_LIMIT);
+    assert_eq!(c.general().row_limit(), None, "uncapped by default");
     assert_eq!(c.general().threads(), None);
     assert_eq!(c.general().memory_limit(), None);
     assert_eq!(c.theme().mode(), ThemeMode::Auto);
@@ -46,18 +46,18 @@ fn general_parses_all_keys() {
         threads = 4
         memory_limit = "4GB"
     "#);
-    assert_eq!(c.general().row_limit(), 250);
+    assert_eq!(c.general().row_limit(), Some(250));
     assert_eq!(c.general().threads(), Some(4));
     assert_eq!(c.general().memory_limit(), Some("4GB"));
 }
 
 #[test]
-fn general_zero_row_limit_clamps_to_one() {
+fn general_zero_row_limit_means_uncapped() {
     let g = GeneralConfig {
         row_limit: Some(0),
         ..GeneralConfig::default()
     };
-    assert_eq!(g.row_limit(), 1);
+    assert_eq!(g.row_limit(), None, "0 = explicitly uncapped");
 }
 
 // --- [theme] ---
@@ -154,7 +154,7 @@ fn unknown_top_level_table_is_tolerated() {
     // A future [export] block won't break an older binary.
     let r = load_config_str("[export]\nformat = \"csv\"\n[general]\nrow_limit = 7\n");
     assert!(r.warning.is_none());
-    assert_eq!(r.config.general().row_limit(), 7);
+    assert_eq!(r.config.general().row_limit(), Some(7));
 }
 
 #[test]
@@ -235,7 +235,7 @@ fn all_sections_together() {
         [csv]
         delimiter = "\t"
     "#);
-    assert_eq!(c.general().row_limit(), 100);
+    assert_eq!(c.general().row_limit(), Some(100));
     assert_eq!(c.theme().mode(), ThemeMode::Light);
     assert!(c.ai().is_active());
     assert_eq!(c.history().max_entries(), 200);

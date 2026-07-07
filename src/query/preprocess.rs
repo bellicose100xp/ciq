@@ -5,9 +5,10 @@
 //!  - rejects multi-statement input and non-SELECT/DML (`INSERT`/`UPDATE`/`COPY`/`PRAGMA`/…),
 //!    so the resident table `t` is never mutated and every keystroke is idempotent;
 //!  - strips a single trailing `;`;
-//!  - wraps the query to cap rows at the viewport budget, but **only when the user supplied no
-//!    top-level `LIMIT`** — an existing `LIMIT k` (incl. `ORDER BY … LIMIT k`) is respected and
-//!    never doubled.
+//!  - when a viewport cap is configured (`Some(n)`), wraps the query to cap rows at it, but
+//!    **only when the user supplied no top-level `LIMIT`** — an existing `LIMIT k` (incl.
+//!    `ORDER BY … LIMIT k`) is respected and never doubled. With no cap configured (`None`,
+//!    the default) the query is sent uncapped — how many rows come back is the user's choice.
 //!
 //! All three checks are built on **one shared scan** — `crate::sql_lexer::tokenize` (`dev/PLAN.md`
 //! §5.3, `dev/DECISIONS.md` D6) — that correctly handles single-quoted strings (`'...'`, `''`
@@ -40,11 +41,13 @@ impl PreprocessError {
     }
 }
 
-/// Validate the interactive grammar and wrap to the viewport `limit`.
+/// Validate the interactive grammar and, when a viewport cap is configured, wrap to it.
 ///
-/// On success returns the exact SQL to send the engine. On rejection returns a
-/// `PreprocessError` (surfaced in the status line; no engine call is issued).
-pub fn prepare_interactive(input: &str, limit: usize) -> Result<String, PreprocessError> {
+/// `limit: None` (the default — no cap is a user choice, see `[general] row_limit`) sends the
+/// query uncapped; `Some(n)` wraps a query that has no top-level `LIMIT` of its own. On success
+/// returns the exact SQL to send the engine. On rejection returns a `PreprocessError` (surfaced
+/// in the status line; no engine call is issued).
+pub fn prepare_interactive(input: &str, limit: Option<usize>) -> Result<String, PreprocessError> {
     let tokens = tokenize(input);
 
     // Reject a top-level `;` that has any real token after it (multiple statements). A single
@@ -81,30 +84,35 @@ pub fn prepare_interactive(input: &str, limit: usize) -> Result<String, Preproce
     // excluding) any trailing top-level `;`, so a trailing comment can't swallow our wrapper.
     let normalized = normalized_sql(input, &tokens);
 
-    if has_top_level_limit(input, &tokens) {
-        // Respect the user's own LIMIT — do not wrap or double it.
-        Ok(normalized)
-    } else {
-        // Wrap so a bare `SELECT *` returns a screenful, not the whole table. The subquery
-        // preserves the user's own ORDER BY ordering; the outer LIMIT caps to the viewport.
-        // Newlines around the subquery guard against a trailing `--` line comment swallowing
-        // the `) AS _ciq LIMIT n` we append.
-        Ok(format!(
-            "SELECT * FROM (\n{normalized}\n) AS _ciq LIMIT {limit}"
-        ))
+    match limit {
+        // Respect the user's own LIMIT — do not wrap or double it. And with no cap configured
+        // (the default), the query goes to the engine exactly as written.
+        None => Ok(normalized),
+        Some(_) if has_top_level_limit(input, &tokens) => Ok(normalized),
+        Some(limit) => {
+            // Wrap so a bare `SELECT *` returns the configured cap, not the whole table. The
+            // subquery preserves the user's own ORDER BY ordering; the outer LIMIT caps to the
+            // viewport. Newlines around the subquery guard against a trailing `--` line comment
+            // swallowing the `) AS _ciq LIMIT n` we append.
+            Ok(format!(
+                "SELECT * FROM (\n{normalized}\n) AS _ciq LIMIT {limit}"
+            ))
+        }
     }
 }
 
-/// Whether [`prepare_interactive`] would apply ciq's viewport LIMIT wrap to `input` — i.e. the
-/// input is a runnable read-only query with **no top-level `LIMIT`** of its own, so the displayed
-/// result is capped by ciq (and a truncation banner is warranted when the row count hits the cap).
+/// Whether [`prepare_interactive`] with a configured cap would apply ciq's viewport LIMIT wrap to
+/// `input` — i.e. the input is a runnable read-only query with **no top-level `LIMIT`** of its
+/// own, so the displayed result is capped by ciq (and a truncation banner is warranted when the
+/// row count hits the cap). Always irrelevant when no cap is configured (the caller gates on
+/// that).
 ///
 /// Returns `false` for rejected input (empty, multi-statement, non-read-only) and for a query that
 /// supplied its own `LIMIT` (its row count is the user's intent, not a ciq cap). Pure; shares the
 /// same lexer scan as `prepare_interactive`, so the two can never disagree about what counts as a
 /// top-level `LIMIT`.
 pub fn applies_viewport_limit(input: &str) -> bool {
-    prepare_interactive(input, usize::MAX).is_ok() && {
+    prepare_interactive(input, None).is_ok() && {
         let tokens = tokenize(input);
         !has_top_level_limit(input, &tokens)
     }

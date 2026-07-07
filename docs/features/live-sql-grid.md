@@ -32,13 +32,13 @@ so fast typing never falls behind.
   with a status-line message and never reach the engine — `t` can never be mutated by an
   interactive query.
 
-## The viewport LIMIT
+## The optional viewport LIMIT
 
-Interactive results are capped to a viewport budget (default 1000 rows, see
-[`[general] row_limit`](../configuration.md#general)) so a `SELECT *` on a huge table returns a
-screenful instantly instead of materializing everything. When ciq applies this cap and the result
-fills it, a banner notes how many rows are shown and points you to `--output` to export the full
-result. A query with your own `LIMIT` is never re-capped beyond your intent.
+By default there is no row cap — a query shows every row it returns, and how many rows come back
+is your choice (write a `LIMIT`, or don't). If you want a standing cap, set
+[`[general] row_limit`](../configuration.md#general); then a query with no `LIMIT` of its own is
+wrapped to that budget, and when the result fills it a row counter notes the cap and `--output`
+exports the full result. A query with your own `LIMIT` is never re-capped beyond your intent.
 
 ## Keys
 

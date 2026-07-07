@@ -203,12 +203,13 @@ fn zero_row_result_renders_no_rows_match() {
 
 #[test]
 fn capped_result_renders_row_counter_with_plus_suffix() {
-    use crate::app::VIEWPORT_ROW_LIMIT;
     // Keep the worker receiver alive so the dispatch succeeds and the ciq-capped flag is recorded
     // (the cap signal is gated on a *successful* dispatch having applied ciq's viewport LIMIT — a
-    // dropped receiver fails the send and never records the flag).
+    // dropped receiver fails the send and never records the flag). The cap only exists when
+    // configured — the default is uncapped.
     let (tx, _rx) = std::sync::mpsc::channel();
     let mut a = App::new(tx, InterruptHandle::noop());
+    a.configure_general(Some(1000));
     a.force_power_mode_for_tests("");
     a.on_loaded("ready");
     for c in "SELECT * FROM t".chars() {
@@ -218,7 +219,7 @@ fn capped_result_renders_row_counter_with_plus_suffix() {
     a.tick(150);
     let id = a.latest_request_id();
     // A result at the viewport cap — the grid is ciq-truncated.
-    let cells: Vec<Cell> = (0..VIEWPORT_ROW_LIMIT as i64).map(Cell::Int).collect();
+    let cells: Vec<Cell> = (0..1000i64).map(Cell::Int).collect();
     let table = Table::new(vec![Column::new("id", ColumnType::Int, cells)]);
     let s = table.schema();
     a.on_response(QueryResponse::ProcessedSuccess {

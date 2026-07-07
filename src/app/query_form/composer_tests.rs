@@ -11,13 +11,20 @@ fn compose(
     l: &str,
     default_limit: usize,
 ) -> Result<String, ComposeError> {
-    compose_sql(select, w, g, o, l, default_limit)
+    compose_sql(select, w, g, o, l, Some(default_limit))
 }
 
 #[test]
 fn defaults_emit_select_star_with_default_limit() {
     let sql = compose("", "", "", "", "", 1000).unwrap();
     assert_eq!(sql, "SELECT * FROM t LIMIT 1000");
+}
+
+#[test]
+fn empty_limit_with_no_configured_cap_omits_the_clause() {
+    // The uncapped default: no [general] row_limit -> an empty LIMIT pane emits no LIMIT at all.
+    let sql = compose_sql("", "", "", "", "", None).unwrap();
+    assert_eq!(sql, "SELECT * FROM t");
 }
 
 #[test]

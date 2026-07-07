@@ -176,7 +176,11 @@ fn enter_recalls_into_bar_and_fires_normal_path() {
 
 #[test]
 fn recalled_sql_is_limit_wrapped_like_any_query() {
+    // With a configured cap, recall goes through the same prepare_interactive wrap a typed query
+    // does — proving recall is not a privileged bypass. (On the uncapped default there is no
+    // wrap for anyone, typed or recalled.)
     let (mut app, rx) = loaded_app();
+    app.configure_general(Some(1000));
     run_query(&mut app, "SELECT id FROM t", 0);
     let _ = drain(&rx);
     set_bar(&mut app, "", 300);
@@ -184,8 +188,6 @@ fn recalled_sql_is_limit_wrapped_like_any_query() {
     app.on_key(KeyEvent::plain(Key::Enter), 410); // recall the (only) entry
     app.tick(600);
     let dispatched = drain(&rx);
-    // The dispatched SQL is the LIMIT-wrapped form (the read-only guard + viewport cap applied),
-    // not the raw recalled text — proving recall is not a privileged bypass.
     assert!(
         dispatched.iter().any(|q| q.contains("LIMIT")),
         "recalled SQL goes through prepare_interactive: {dispatched:?}"

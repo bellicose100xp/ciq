@@ -126,8 +126,9 @@ pub fn run(path: PathBuf, opts: CsvOpts) -> std::io::Result<()> {
 
     let mut app = App::new(request_tx, InterruptHandle::noop());
 
-    // Wire the `[general]` viewport row cap so a bare `SELECT` is LIMIT-wrapped to the user's
-    // configured `row_limit` (the engine threads/memory pragmas were applied in the loader above).
+    // Wire the optional `[general]` viewport row cap: when the user configured a `row_limit`, a
+    // bare `SELECT` is LIMIT-wrapped to it; otherwise queries run uncapped (the default — the
+    // engine threads/memory pragmas were applied in the loader above).
     app.configure_general(cfg.general().row_limit());
 
     // Wire query history from the `[history]` config section (P5.2). Loads + seeds the on-disk

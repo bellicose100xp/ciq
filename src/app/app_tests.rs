@@ -9,7 +9,7 @@
 
 use std::sync::mpsc::{Receiver, channel};
 
-use super::{App, AppPhase, Focus, Key, KeyEvent, VIEWPORT_ROW_LIMIT};
+use super::{App, AppPhase, Focus, Key, KeyEvent};
 use crate::engine::InterruptHandle;
 use crate::engine::types::{Cell, Column, Table};
 use crate::query::worker::types::{ProcessedResult, QueryRequest, QueryResponse, RequestKind};
@@ -211,21 +211,21 @@ fn normal_mode_edit_schedules_a_debounced_query() {
 // --- debounce-fire wiring (P2.8) ---
 
 #[test]
-fn typing_then_tick_past_window_dispatches_wrapped_sql() {
+fn typing_then_tick_past_window_dispatches_uncapped_sql() {
     let (mut app, rx) = app();
     app.on_loaded("ready"); // engine ready
     type_str(&mut app, "SELECT * FROM t", 0);
     // Before the window elapses, nothing fires.
     assert!(!app.tick(100));
     assert!(drain(&rx).is_empty());
-    // After 150ms quiet, exactly one query is dispatched, LIMIT-wrapped.
+    // After 150ms quiet, exactly one query is dispatched — verbatim, with NO LIMIT wrap (the
+    // uncapped default; a cap is a user choice via [general] row_limit).
     assert!(app.tick(150));
     let sent = drain(&rx);
     assert_eq!(sent.len(), 1);
-    assert!(
-        sent[0].contains(&format!("LIMIT {VIEWPORT_ROW_LIMIT}")),
-        "expected viewport LIMIT wrap, got: {}",
-        sent[0]
+    assert_eq!(
+        sent[0], "SELECT * FROM t",
+        "the default dispatch is uncapped and unwrapped"
     );
     assert_eq!(app.phase(), &AppPhase::Querying);
 }

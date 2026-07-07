@@ -19,7 +19,7 @@ top-level tables are ignored, so a config written for a newer ciq still loads on
 
 ```toml
 [general]
-row_limit    = 1000
+row_limit    = 1000  # optional; omit for no cap (the default)
 threads      = 4
 memory_limit = "4GB"
 
@@ -46,7 +46,7 @@ Engine-wide defaults.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `row_limit` | integer | `1000` | The interactive viewport `LIMIT N` — how many rows a live query shows. `0` is clamped to `1`. |
+| `row_limit` | integer | unset (no cap) | Optional interactive viewport `LIMIT N` — cap how many rows a live query shows. Unset or `0` means no cap: every row the query returns is shown (the default). |
 | `threads` | integer | `4` | DuckDB worker-thread bound (`SET threads=<n>`). Unset applies ciq's bounded default (`4`) so a many-core host doesn't oversubscribe under rapid keystrokes. |
 | `memory_limit` | string | DuckDB default | DuckDB memory cap as a size string (e.g. `"4GB"`, `"512MB"`), applied as `SET memory_limit='<s>'`. Unset leaves DuckDB's own default. A malformed value surfaces as a clean load error. |
 

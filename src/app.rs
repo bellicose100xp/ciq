@@ -69,10 +69,9 @@ pub use layout_regions::{HoverTarget, LayoutRegions, MouseTarget, PopupKind};
 pub use mouse::MouseEvent;
 pub use query_form::{QueryForm, QueryMode, SimplePane};
 
-/// How many rows the LIMIT-wrap caps an interactive query to. A screenful-plus-margin so a
-/// bare `SELECT *` returns a viewport, not the whole table (the §2.3 latency guard). The grid
-/// only ever paints the visible window; the rest is scroll headroom.
-pub const VIEWPORT_ROW_LIMIT: usize = 1000;
+// There is deliberately no built-in viewport row cap: by default an interactive query shows
+// every row it returns. Capping is a user choice — `[general] row_limit` in the config, or a
+// LIMIT typed into the query/pane.
 
 /// The load/query lifecycle (`dev/PLAN.md` §3, P2.11).
 ///
@@ -126,7 +125,7 @@ pub struct App {
     /// The Simple/Power query form — five labeled clause panes (`SELECT` / `WHERE` / `GROUP BY` /
     /// `ORDER BY` / `LIMIT`) in Simple mode, or one full-SQL textarea in Power mode (toggle with
     /// `Ctrl+Q`). Default is **Simple**, with the cursor parked on `WHERE` and the other panes
-    /// pre-seeded so the launch composes `SELECT * FROM t LIMIT 1000` and the grid populates
+    /// pre-seeded so the launch composes `SELECT * FROM t` and the grid populates
     /// immediately. All input — typing, vim chords, autocomplete inserts — routes through
     /// [`Self::input_editor_mut`] to the active editor (the focused pane in Simple, the textarea in
     /// Power), so the rest of the App is mode-agnostic.
@@ -220,11 +219,11 @@ pub struct App {
     /// Monotonic AI-request sequence id (P5.1): bumped on each submit so a reply from a superseded
     /// request is discarded (stale-discard, like the query worker's `request_id`).
     pub(crate) ai_seq: u64,
-    /// The interactive viewport row cap (`[general] row_limit`): the `LIMIT N` a bare `SELECT` is
-    /// wrapped to, and the cap the truncation banner compares against. Defaults to
-    /// [`VIEWPORT_ROW_LIMIT`]; the event loop overrides it from the config via
-    /// [`configure_general`](Self::configure_general).
-    viewport_row_limit: usize,
+    /// The optional interactive viewport row cap (`[general] row_limit`): the `LIMIT N` a bare
+    /// `SELECT` is wrapped to, and the cap the truncation banner compares against. `None` (the
+    /// default) means uncapped — every row a query returns is shown; limiting is a user choice.
+    /// The event loop installs a configured cap via [`configure_general`](Self::configure_general).
+    viewport_row_limit: Option<usize>,
     /// The on-screen [`Rect`](ratatui::layout::Rect) of each mouse-routable surface, recorded by the
     /// render layer every frame ([`app_render`]) and read by [`on_mouse`](Self::on_mouse) to resolve
     /// a click/scroll to the surface under the pointer. A [`std::cell::Cell`] so the `&self` render
@@ -280,7 +279,7 @@ impl App {
             ai: AiState::new(),
             ai_tx: None,
             ai_seq: 0,
-            viewport_row_limit: VIEWPORT_ROW_LIMIT,
+            viewport_row_limit: None,
             layout_regions: std::cell::Cell::new(LayoutRegions::default()),
             hover: None,
             double_click: double_click::DoubleClickTracker::new(),
@@ -315,7 +314,7 @@ impl App {
 
     /// The query string the dispatcher will send to the engine.
     ///
-    /// In **Simple** mode this is the composed canonical SQL (e.g. `SELECT * FROM t LIMIT 1000`)
+    /// In **Simple** mode this is the composed canonical SQL (e.g. `SELECT * FROM t`)
     /// from the five panes. In **Power** mode it is the textarea's text verbatim (multiline
     /// joined by `\n`). On a [`ComposeError`] (a non-numeric LIMIT pane, etc.) the empty string is
     /// returned so dispatch falls back to the empty-input path; callers should consult
@@ -481,19 +480,20 @@ impl App {
         }
     }
 
-    /// Configure the interactive viewport row cap (`[general] row_limit`). The event loop calls
-    /// this once at startup with the resolved config so a bare `SELECT` is wrapped to the user's
-    /// configured `LIMIT N` (and the truncation banner compares against the same cap). The config
-    /// accessor already clamps `0` to `1`; this clamps defensively too. Also re-seeds the Simple-
-    /// mode LIMIT pane so the form's composed SQL uses the same cap the dispatcher does.
-    pub fn configure_general(&mut self, row_limit: usize) {
-        self.viewport_row_limit = row_limit.max(1);
+    /// Configure the optional interactive viewport row cap (`[general] row_limit`). The event
+    /// loop calls this once at startup with the resolved config. `None` (the default) leaves
+    /// interactive queries uncapped — limiting rows is a user choice. With `Some(n)`, a bare
+    /// `SELECT` is wrapped to `LIMIT n` (and the truncation banner compares against the same
+    /// cap). Also re-seeds the Simple-mode LIMIT pane so the form's composed SQL uses the same
+    /// cap the dispatcher does.
+    pub fn configure_general(&mut self, row_limit: Option<usize>) {
+        self.viewport_row_limit = row_limit.filter(|&n| n > 0);
         self.query_form
             .set_default_limit_seed(self.viewport_row_limit);
     }
 
-    /// The effective interactive viewport row cap (`[general] row_limit`, defaulted).
-    pub fn viewport_row_limit(&self) -> usize {
+    /// The configured interactive viewport row cap, or `None` when uncapped (the default).
+    pub fn viewport_row_limit(&self) -> Option<usize> {
         self.viewport_row_limit
     }
 
@@ -513,12 +513,13 @@ impl App {
         self.csv_summary
     }
 
-    /// The large-result truncation banner (P5.3), or `None` when the grid isn't ciq-capped. Shown
-    /// when ciq wrapped the query in its viewport `LIMIT` and the displayed row count reached the
-    /// cap — derived from state, no extra COUNT query (see [`polish::truncation_banner`]).
+    /// The large-result truncation banner (P5.3), or `None` when the grid isn't ciq-capped —
+    /// which includes the uncapped default (no configured `row_limit` means nothing to truncate
+    /// against). Derived from state, no extra COUNT query (see [`polish::truncation_banner`]).
     pub fn truncation_banner(&self) -> Option<String> {
+        let cap = self.viewport_row_limit?;
         let rows = self.result.as_ref()?.rows.row_count();
-        polish::truncation_banner(rows, self.viewport_row_limit, self.result_ciq_capped)
+        polish::truncation_banner(rows, cap, self.result_ciq_capped)
     }
 
     /// The empty-state message for the results pane when there is no grid to draw (P5.3):
@@ -870,7 +871,7 @@ impl App {
 
     /// Schedule the **initial** post-load query so the grid populates on launch without the user
     /// typing anything. In Simple mode the default panes always compose a non-empty SQL
-    /// (`SELECT * FROM t LIMIT 1000`); in Power mode an empty textarea is a no-op. The event
+    /// (`SELECT * FROM t`); in Power mode an empty textarea is a no-op. The event
     /// loop calls this once after [`on_loaded`].
     pub fn schedule_initial_query(&mut self, now_ms: u64) {
         if self.query().trim().is_empty() {
@@ -933,10 +934,12 @@ impl App {
         match prepare_interactive(&raw, self.viewport_row_limit) {
             Ok(sql) => match self.dispatcher.dispatch(sql) {
                 Ok(_id) => {
-                    // Remember whether ciq wrapped this query in its viewport LIMIT (the user
-                    // supplied none), so a result hitting the cap can show a truncation banner
-                    // (P5.3) — derived from the raw query, no extra COUNT query.
-                    self.last_query_ciq_capped = applies_viewport_limit(&raw);
+                    // Remember whether ciq wrapped this query in its viewport LIMIT (a cap is
+                    // configured AND the user supplied none), so a result hitting the cap can
+                    // show a truncation banner (P5.3) — derived from the raw query, no extra
+                    // COUNT query. Never set on the uncapped default.
+                    self.last_query_ciq_capped =
+                        self.viewport_row_limit.is_some() && applies_viewport_limit(&raw);
                     // Record the raw user query (not the LIMIT-wrapped SQL) in history — this is
                     // the felt "I ran this" moment, and only a query that passed the read-only
                     // single-statement guard reaches here (§7.6).

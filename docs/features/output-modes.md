@@ -41,9 +41,9 @@ The output preserves the distinction between a SQL `NULL` and an empty string:
 
 ## No viewport cap
 
-Unlike the interactive grid, the `--output` path is **not** capped to the viewport row limit — it
-returns the full result. It still goes through the same read-only single-statement guard, so it can
-never mutate the table.
+The `--output` path always returns the full result — even when the interactive grid has a
+configured `[general] row_limit` cap, `--output` ignores it. It still goes through the same
+read-only single-statement guard, so it can never mutate the table.
 
 ## Copying the result to your clipboard
 

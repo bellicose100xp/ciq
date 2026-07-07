@@ -206,12 +206,9 @@ fn run_output(path: &Path, opts: &CsvOpts, fmt: &str, query: Option<&str>) -> Ex
     };
 
     let raw = query.unwrap_or("SELECT * FROM t");
-    // Reuse the interactive grammar guard (single read-only SELECT — never mutates `t`) but with
-    // an effectively-unbounded row cap: the Output Result path bypasses the viewport LIMIT (§2.3).
-    // The cap is `i64::MAX` (a valid DuckDB BIGINT — `usize::MAX` overflows its INT64 LIMIT), so
-    // it never truncates a real result while keeping the read-only/single-statement guard.
-    const OUTPUT_LIMIT: usize = i64::MAX as usize;
-    let sql = match prepare_interactive(raw, OUTPUT_LIMIT) {
+    // Reuse the interactive grammar guard (single read-only SELECT — never mutates `t`) with no
+    // row cap: the Output Result path always emits the full result (§2.3).
+    let sql = match prepare_interactive(raw, None) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("ciq: {}", e.message());

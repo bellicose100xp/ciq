@@ -43,13 +43,25 @@ fn default_launch_is_simple_mode_with_cursor_in_where() {
     assert_eq!(app.query_form().text(SimplePane::Where), "");
     assert_eq!(app.query_form().text(SimplePane::GroupBy), "");
     assert_eq!(app.query_form().text(SimplePane::OrderBy), "");
-    assert_eq!(app.query_form().text(SimplePane::Limit), "1000");
+    assert_eq!(
+        app.query_form().text(SimplePane::Limit),
+        "",
+        "empty LIMIT pane = uncapped, the default"
+    );
 }
 
 #[test]
-fn default_query_is_select_star_from_t_limit_1000() {
+fn default_query_is_select_star_from_t_uncapped() {
     let (app, _rx) = app();
-    assert_eq!(app.query(), "SELECT * FROM t LIMIT 1000");
+    assert_eq!(app.query(), "SELECT * FROM t");
+}
+
+#[test]
+fn configured_row_limit_seeds_the_limit_pane_and_query() {
+    let (mut app, _rx) = app();
+    app.configure_general(Some(500));
+    assert_eq!(app.query_form().text(SimplePane::Limit), "500");
+    assert_eq!(app.query(), "SELECT * FROM t LIMIT 500");
 }
 
 // ── Typing into WHERE filters live ───────────────────────────────────────────────────────────────

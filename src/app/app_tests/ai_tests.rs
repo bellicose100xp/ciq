@@ -13,7 +13,7 @@ use std::sync::mpsc::channel;
 use crate::ai::ai_app::{AiJob, AiResult, spawn_ai_thread};
 use crate::ai::ai_state::AiPhase;
 use crate::ai::provider::{AiError, MockProvider};
-use crate::app::{App, Key, KeyEvent, KeyMods, VIEWPORT_ROW_LIMIT};
+use crate::app::{App, Key, KeyEvent, KeyMods};
 use crate::engine::QueryOutcome;
 use crate::harness::engine_harness::EngineHarness;
 use crate::query::preprocess::prepare_interactive;
@@ -141,10 +141,13 @@ fn generated_sql_drops_into_bar_and_dispatches() {
     assert_eq!(app.query(), "SELECT * FROM t WHERE status = 'active'");
 
     // The generated SQL passes the read-only single-statement guard (the same one a typed query
-    // hits) and LIMIT-wraps — so firing the debounce would dispatch it through the normal path.
-    let wrapped = prepare_interactive(&app.query(), VIEWPORT_ROW_LIMIT).expect("valid SELECT");
+    // hits); with a configured cap it LIMIT-wraps like any query, and on the uncapped default it
+    // passes through verbatim.
+    let wrapped = prepare_interactive(&app.query(), Some(1000)).expect("valid SELECT");
     assert!(wrapped.contains("status = 'active'"));
     assert!(wrapped.contains("LIMIT"), "viewport-wrapped: {wrapped}");
+    let verbatim = prepare_interactive(&app.query(), None).expect("valid SELECT");
+    assert_eq!(verbatim, app.query(), "uncapped default sends it verbatim");
 }
 
 #[test]
@@ -166,7 +169,7 @@ fn fenced_select_reply_lands_as_runnable_sql() {
 
     // The fence noise is gone — the bar holds clean SQL that passes the read-only guard.
     assert_eq!(app.query(), "SELECT * FROM t WHERE region = 'EU'");
-    let wrapped = prepare_interactive(&app.query(), VIEWPORT_ROW_LIMIT)
+    let wrapped = prepare_interactive(&app.query(), None)
         .expect("a fenced SELECT must land as a runnable read-only query");
     assert!(wrapped.contains("region = 'EU'"));
 }
@@ -189,7 +192,7 @@ fn dml_reply_is_rejected_by_the_read_only_guard() {
     // guard rejects it — it never reaches the engine.
     assert_eq!(app.query(), "DROP TABLE t");
     assert!(
-        prepare_interactive(&app.query(), VIEWPORT_ROW_LIMIT).is_err(),
+        prepare_interactive(&app.query(), None).is_err(),
         "the read-only guard rejects DROP — the model cannot smuggle DML"
     );
     // Firing the debounce surfaces the rejection as a status-line error, not an engine call.
@@ -216,7 +219,7 @@ fn multi_statement_reply_is_rejected() {
         0,
     );
     assert!(
-        prepare_interactive(&app.query(), VIEWPORT_ROW_LIMIT).is_err(),
+        prepare_interactive(&app.query(), None).is_err(),
         "a multi-statement reply is rejected before any engine call"
     );
 }
@@ -280,7 +283,7 @@ fn canned_sql_validates_and_runs_on_a_fixture_engine() {
     assert_eq!(provider.call_count(), 1);
 
     // (2) It passes the read-only single-statement guard (the gate every query crosses).
-    let validated = prepare_interactive(&sql, VIEWPORT_ROW_LIMIT).expect("read-only SELECT");
+    let validated = prepare_interactive(&sql, None).expect("read-only SELECT");
 
     // (3) Run it on a real fixture engine -> Rows with the expected count (2 EU rows).
     let h = EngineHarness::from_csv("id,region\n1,EU\n2,NA\n3,EU\n").expect("load fixture");

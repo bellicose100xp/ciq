@@ -4,7 +4,7 @@
 use super::{QueryForm, QueryMode, SimplePane};
 
 #[test]
-fn defaults_seed_select_star_and_limit_1000_focused_on_where() {
+fn defaults_seed_select_star_and_empty_limit_focused_on_where() {
     let form = QueryForm::new();
     assert_eq!(form.mode(), QueryMode::Simple);
     assert_eq!(form.focused_pane(), SimplePane::Where);
@@ -12,13 +12,17 @@ fn defaults_seed_select_star_and_limit_1000_focused_on_where() {
     assert_eq!(form.text(SimplePane::Where), "");
     assert_eq!(form.text(SimplePane::GroupBy), "");
     assert_eq!(form.text(SimplePane::OrderBy), "");
-    assert_eq!(form.text(SimplePane::Limit), "1000");
+    assert_eq!(
+        form.text(SimplePane::Limit),
+        "",
+        "empty LIMIT pane = uncapped, the default"
+    );
 }
 
 #[test]
 fn default_compose_yields_select_star_from_t_limit_1000() {
     let form = QueryForm::new();
-    let sql = form.to_full_sql(1000).unwrap();
+    let sql = form.to_full_sql(Some(1000)).unwrap();
     assert_eq!(sql, "SELECT * FROM t LIMIT 1000");
 }
 
@@ -91,7 +95,7 @@ fn typing_into_focused_pane_updates_composed_sql() {
     let mut form = QueryForm::new();
     // Default focus is on WHERE — type a predicate.
     form.focused_editor_mut().insert_str("region = 'EU'");
-    let sql = form.to_full_sql(1000).unwrap();
+    let sql = form.to_full_sql(Some(1000)).unwrap();
     assert_eq!(sql, "SELECT * FROM t WHERE region = 'EU' LIMIT 1000");
 }
 
@@ -99,7 +103,7 @@ fn typing_into_focused_pane_updates_composed_sql() {
 fn toggle_simple_to_power_loads_composed_sql_into_power_editor() {
     let mut form = QueryForm::new();
     form.set_text(SimplePane::Where, "amount > 0");
-    form.toggle_mode(1000).unwrap();
+    form.toggle_mode(Some(1000)).unwrap();
     assert_eq!(form.mode(), QueryMode::Power);
     assert_eq!(
         form.power().text(),
@@ -110,10 +114,10 @@ fn toggle_simple_to_power_loads_composed_sql_into_power_editor() {
 #[test]
 fn toggle_power_to_simple_distributes_a_clean_select() {
     let mut form = QueryForm::new();
-    form.toggle_mode(1000).unwrap(); // -> Power
+    form.toggle_mode(Some(1000)).unwrap(); // -> Power
     form.power_mut()
         .set_text("SELECT id, name FROM t WHERE region = 'EU' LIMIT 50");
-    form.toggle_mode(1000).unwrap(); // -> Simple
+    form.toggle_mode(Some(1000)).unwrap(); // -> Simple
     assert_eq!(form.mode(), QueryMode::Simple);
     assert_eq!(form.focused_pane(), SimplePane::Where);
     assert_eq!(form.text(SimplePane::Select), "id, name");
@@ -124,10 +128,10 @@ fn toggle_power_to_simple_distributes_a_clean_select() {
 #[test]
 fn toggle_power_to_simple_refuses_a_join_with_a_simplify_error() {
     let mut form = QueryForm::new();
-    form.toggle_mode(1000).unwrap();
+    form.toggle_mode(Some(1000)).unwrap();
     form.power_mut()
         .set_text("SELECT * FROM t JOIN u ON t.id = u.id");
-    let err = form.toggle_mode(1000).unwrap_err();
+    let err = form.toggle_mode(Some(1000)).unwrap_err();
     assert_eq!(err.message(), "contains a JOIN");
     // Refusal leaves the form in Power mode (so the user sees the SQL they're working on).
     assert_eq!(form.mode(), QueryMode::Power);
@@ -136,9 +140,9 @@ fn toggle_power_to_simple_refuses_a_join_with_a_simplify_error() {
 #[test]
 fn toggle_power_to_simple_with_no_limit_uses_the_default_limit() {
     let mut form = QueryForm::new();
-    form.toggle_mode(1000).unwrap();
+    form.toggle_mode(Some(1000)).unwrap();
     form.power_mut().set_text("SELECT * FROM t");
-    form.toggle_mode(500).unwrap();
+    form.toggle_mode(Some(500)).unwrap();
     assert_eq!(form.text(SimplePane::Limit), "500");
 }
 
@@ -158,7 +162,7 @@ fn limit_error_message_round_trips_through_set_and_clear() {
 #[test]
 fn set_default_limit_seed_overrides_construction_default() {
     let mut form = QueryForm::new();
-    form.set_default_limit_seed(500);
+    form.set_default_limit_seed(Some(500));
     assert_eq!(form.text(SimplePane::Limit), "500");
 }
 
@@ -166,7 +170,7 @@ fn set_default_limit_seed_overrides_construction_default() {
 fn set_default_limit_seed_does_not_clobber_user_typed_limit() {
     let mut form = QueryForm::new();
     form.set_text(SimplePane::Limit, "42");
-    form.set_default_limit_seed(500);
+    form.set_default_limit_seed(Some(500));
     assert_eq!(form.text(SimplePane::Limit), "42");
 }
 
@@ -175,8 +179,8 @@ fn set_default_limit_seed_is_only_applied_once() {
     // Regression: pre-fix the seeder used `if limit.text() == "1000"` which silently re-seeded a
     // user-typed `1000`. Now the first call wins and subsequent calls are no-ops.
     let mut form = QueryForm::new();
-    form.set_default_limit_seed(500);
-    form.set_default_limit_seed(250);
+    form.set_default_limit_seed(Some(500));
+    form.set_default_limit_seed(Some(250));
     assert_eq!(form.text(SimplePane::Limit), "500");
 }
 
@@ -189,7 +193,7 @@ fn toggle_simple_to_power_with_invalid_limit_refuses_and_preserves_panes() {
     form.set_text(SimplePane::Select, "id, name");
     form.set_text(SimplePane::Where, "region = 'EU'");
     form.set_text(SimplePane::Limit, "1k");
-    let err = form.toggle_mode(1000).unwrap_err();
+    let err = form.toggle_mode(Some(1000)).unwrap_err();
     assert_eq!(err.message(), "LIMIT must be a number, 'all', or 0");
     assert_eq!(form.mode(), QueryMode::Simple);
     assert_eq!(form.text(SimplePane::Select), "id, name");
@@ -212,7 +216,7 @@ fn enter_power_with_sql_jumps_into_power_mode() {
 #[test]
 fn focus_next_is_a_noop_in_power_mode() {
     let mut form = QueryForm::new();
-    form.toggle_mode(1000).unwrap(); // -> Power
+    form.toggle_mode(Some(1000)).unwrap(); // -> Power
     form.focus_next();
     assert_eq!(form.mode(), QueryMode::Power);
 }

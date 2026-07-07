@@ -13,6 +13,12 @@ changes alike, patch `0.minor.Y` for fixes, refactors, polish, and docs.
   returns the keyboard to grid navigation; Esc clears it. The facet chord is now strictly the
   modifier-free `f` (it previously also fired on `Ctrl+F`).
 
+### Changed
+- **No row cap by default** — interactive queries now show every row they return; the previous
+  implicit `LIMIT 1000` viewport wrap is gone. Capping is a user choice: set
+  `[general] row_limit` in the config (or type a `LIMIT`) to opt back in; `0`/unset means
+  uncapped. The Simple-mode LIMIT pane starts empty accordingly.
+
 ## [0.1.0] - 2026-07-07
 
 First tagged release. ciq is a terminal tool for querying a CSV with live DuckDB SQL: type a query,

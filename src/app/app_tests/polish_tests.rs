@@ -4,7 +4,7 @@
 
 use std::sync::mpsc::{Receiver, channel};
 
-use crate::app::{App, VIEWPORT_ROW_LIMIT};
+use crate::app::App;
 use crate::engine::InterruptHandle;
 use crate::engine::types::{Cell, Column, Table};
 use crate::query::worker::types::{ProcessedResult, QueryResponse, RequestKind};
@@ -108,8 +108,8 @@ fn clearing_the_bar_returns_to_the_initial_hint_not_no_rows() {
 #[test]
 fn configured_row_limit_changes_the_dispatched_limit() {
     let (mut app, rx) = app();
-    app.configure_general(50);
-    assert_eq!(app.viewport_row_limit(), 50);
+    app.configure_general(Some(50));
+    assert_eq!(app.viewport_row_limit(), Some(50));
     app.on_loaded("ready");
     type_str(&mut app, "SELECT * FROM t", 0);
     app.tick(150);
@@ -132,7 +132,7 @@ fn configured_row_limit_changes_the_dispatched_limit() {
 fn configured_row_limit_drives_the_truncation_banner_cap() {
     // A configured cap of 50: a 50-row bare-SELECT result hits the cap and shows the banner.
     let (mut app, _rx) = app();
-    app.configure_general(50);
+    app.configure_general(Some(50));
     app.on_loaded("ready");
     type_str(&mut app, "SELECT * FROM t", 0);
     app.tick(150);
@@ -149,36 +149,59 @@ fn configured_row_limit_drives_the_truncation_banner_cap() {
 }
 
 #[test]
-fn configure_general_clamps_zero_to_one() {
+fn configure_general_zero_and_none_mean_uncapped() {
     let (mut app, _rx) = app();
-    app.configure_general(0);
-    assert_eq!(app.viewport_row_limit(), 1);
+    app.configure_general(Some(0));
+    assert_eq!(app.viewport_row_limit(), None, "0 = explicitly uncapped");
+    app.configure_general(None);
+    assert_eq!(app.viewport_row_limit(), None, "absent = uncapped default");
 }
 
 // --- truncation banner ---
 
+/// Like `run_query` but with a configured viewport cap (the banner only exists under a cap).
+fn run_query_capped(cap: usize, query: &str, result: ProcessedResult) -> App {
+    let (mut app, _rx) = app();
+    app.configure_general(Some(cap));
+    app.on_loaded("ready");
+    type_str(&mut app, query, 0);
+    app.tick(150);
+    let id = app.latest_request_id();
+    app.on_response(QueryResponse::ProcessedSuccess {
+        result,
+        request_id: id,
+        kind: RequestKind::Main,
+    });
+    app
+}
+
 #[test]
-fn truncation_banner_shows_when_bare_select_hits_the_cap() {
-    let app = run_query("SELECT * FROM t", id_result(VIEWPORT_ROW_LIMIT));
+fn truncation_banner_shows_when_bare_select_hits_the_configured_cap() {
+    let app = run_query_capped(100, "SELECT * FROM t", id_result(100));
     assert_eq!(
         app.truncation_banner(),
-        Some(format!(
-            "showing first {VIEWPORT_ROW_LIMIT} rows (use --output to export all)"
-        ))
+        Some("showing first 100 rows (use --output to export all)".to_string())
     );
 }
 
 #[test]
 fn no_truncation_banner_under_the_cap() {
-    let app = run_query("SELECT * FROM t", id_result(VIEWPORT_ROW_LIMIT - 1));
+    let app = run_query_capped(100, "SELECT * FROM t", id_result(99));
     assert_eq!(app.truncation_banner(), None);
 }
 
 #[test]
 fn no_truncation_banner_when_user_supplied_their_own_limit() {
-    // The user wrote LIMIT 1000; a full 1000-row result is their intent, not a ciq cap.
-    let q = format!("SELECT * FROM t LIMIT {VIEWPORT_ROW_LIMIT}");
-    let app = run_query(&q, id_result(VIEWPORT_ROW_LIMIT));
+    // The user wrote LIMIT 100; a full 100-row result is their intent, not a ciq cap.
+    let app = run_query_capped(100, "SELECT * FROM t LIMIT 100", id_result(100));
+    assert_eq!(app.truncation_banner(), None);
+}
+
+#[test]
+fn no_truncation_banner_on_the_uncapped_default() {
+    // No configured row_limit -> queries run uncapped -> nothing to truncate against, even for
+    // a large result.
+    let app = run_query("SELECT * FROM t", id_result(5000));
     assert_eq!(app.truncation_banner(), None);
 }
 
@@ -219,15 +242,16 @@ fn engine_error_after_a_success_keeps_the_grid_marked_stale() {
     // truncation banner) on screen, marked stale so the render layer dims them. The error rides
     // the status line — the user sees what they had while the new error is reported.
     let (mut app, _rx) = app();
+    app.configure_general(Some(100));
     app.set_schema(Schema::new(vec![ColumnMeta::new("id", ColumnType::Int)]));
     app.on_loaded("ready");
 
-    // (1) a successful bare SELECT that hits the viewport cap -> grid + truncation banner.
+    // (1) a successful bare SELECT that hits the configured cap -> grid + truncation banner.
     type_str(&mut app, "SELECT * FROM t", 0);
     app.tick(150);
     let id = app.latest_request_id();
     app.on_response(QueryResponse::ProcessedSuccess {
-        result: id_result(VIEWPORT_ROW_LIMIT),
+        result: id_result(100),
         request_id: id,
         kind: RequestKind::Main,
     });

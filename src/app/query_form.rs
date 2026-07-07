@@ -126,8 +126,8 @@ pub fn power_default() -> QueryForm {
 
 impl QueryForm {
     /// Build a fresh form: Simple mode, panes seeded `SELECT="*"`, `WHERE=""` (focused),
-    /// `GROUP BY=""`, `ORDER BY=""`, `LIMIT=<construction default>`. The App overrides the LIMIT
-    /// seed with the configured `[general] row_limit` via
+    /// `GROUP BY=""`, `ORDER BY=""`, `LIMIT=""` (empty = uncapped, the default — limiting rows is
+    /// a user choice). The App seeds the LIMIT pane with a configured `[general] row_limit` via
     /// [`set_default_limit_seed`](Self::set_default_limit_seed).
     pub fn new() -> Self {
         let panes = [
@@ -135,7 +135,7 @@ impl QueryForm {
             Editor::new(),
             Editor::new(),
             Editor::new(),
-            Editor::with_text(crate::app::VIEWPORT_ROW_LIMIT.to_string()),
+            Editor::new(),
         ];
         Self {
             mode: QueryMode::Simple,
@@ -147,19 +147,20 @@ impl QueryForm {
         }
     }
 
-    /// Re-seed the LIMIT pane from a configured default (the `[general] row_limit` once the App
-    /// reads it). Only takes effect on the **first** call and only when the LIMIT pane is still
-    /// at the construction-default text — so a user who typed a LIMIT before the seed (or any
-    /// later reseed call) won't be clobbered. Reads the construction default from the same
-    /// `crate::app::VIEWPORT_ROW_LIMIT` constant the dispatcher uses, not a literal.
-    pub fn set_default_limit_seed(&mut self, default_limit: usize) {
+    /// Seed the LIMIT pane from a configured `[general] row_limit` once the App reads it. `None`
+    /// (no cap configured) leaves the pane empty — the uncapped default. Only takes effect on the
+    /// **first** call and only when the LIMIT pane is still at the construction default (empty) —
+    /// so a user who typed a LIMIT before the seed (or any later reseed call) won't be clobbered.
+    pub fn set_default_limit_seed(&mut self, default_limit: Option<usize>) {
         if self.limit_seeded {
             return;
         }
         self.limit_seeded = true;
         let limit = &mut self.panes[SimplePane::Limit.index()];
-        if limit.text() == crate::app::VIEWPORT_ROW_LIMIT.to_string() {
-            limit.set_text(default_limit.to_string());
+        if limit.text().is_empty()
+            && let Some(n) = default_limit
+        {
+            limit.set_text(n.to_string());
         }
     }
 
@@ -281,7 +282,7 @@ impl QueryForm {
     /// Compose the dispatched SQL from the current Simple pane texts (the composer's projection).
     /// `default_limit` is the App's `[general] row_limit` (used as the LIMIT-pane fallback).
     /// In Power mode, returns the Power editor's text verbatim.
-    pub fn to_full_sql(&self, default_limit: usize) -> Result<String, ComposeError> {
+    pub fn to_full_sql(&self, default_limit: Option<usize>) -> Result<String, ComposeError> {
         match self.mode {
             QueryMode::Simple => compose_sql(
                 &self.panes[SimplePane::Select.index()].text(),
@@ -300,7 +301,7 @@ impl QueryForm {
     /// parsed SimpleParts into the panes (with the LIMIT pane defaulted to `default_limit` when
     /// the source had no LIMIT). Returns an `Err(SimplifyError)` only on a refused Power -> Simple
     /// (the form stays in Power); all other transitions return `Ok(())`.
-    pub fn toggle_mode(&mut self, default_limit: usize) -> Result<(), SimplifyError> {
+    pub fn toggle_mode(&mut self, default_limit: Option<usize>) -> Result<(), SimplifyError> {
         match self.mode {
             QueryMode::Simple => {
                 // Refuse the toggle when the LIMIT pane is invalid: silently rewriting to a
@@ -331,15 +332,17 @@ impl QueryForm {
         }
     }
 
-    /// Distribute parsed [`SimpleParts`] into the five Simple panes, defaulting the LIMIT pane
-    /// to `default_limit.to_string()` when the source had no LIMIT.
-    fn apply_parts(&mut self, parts: SimpleParts, default_limit: usize) {
+    /// Distribute parsed [`SimpleParts`] into the five Simple panes. A source with no LIMIT
+    /// seeds the pane with the configured cap when one exists, else leaves it empty (uncapped).
+    fn apply_parts(&mut self, parts: SimpleParts, default_limit: Option<usize>) {
         self.panes[SimplePane::Select.index()].set_text(parts.select);
         self.panes[SimplePane::Where.index()].set_text(parts.where_clause);
         self.panes[SimplePane::GroupBy.index()].set_text(parts.group_by);
         self.panes[SimplePane::OrderBy.index()].set_text(parts.order_by);
         let limit_text = if parts.limit.is_empty() {
-            default_limit.to_string()
+            // No LIMIT in the source: seed the configured cap when one exists, else stay empty
+            // (empty pane = uncapped, the default).
+            default_limit.map(|n| n.to_string()).unwrap_or_default()
         } else {
             parts.limit
         };
@@ -357,7 +360,7 @@ impl QueryForm {
     /// Replace **all** five panes wholesale and force Simple mode (the palette-emit / palette-seed
     /// path: the palette emits a clean `SELECT … FROM t LIMIT n`, which the App distributes into
     /// the panes). Caller has already simplified the SQL into parts.
-    pub fn enter_simple_with_parts(&mut self, parts: SimpleParts, default_limit: usize) {
+    pub fn enter_simple_with_parts(&mut self, parts: SimpleParts, default_limit: Option<usize>) {
         self.apply_parts(parts, default_limit);
         self.mode = QueryMode::Simple;
         self.focused_pane = SimplePane::Where;

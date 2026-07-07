@@ -39,7 +39,7 @@ fn simple_app() -> (App, Receiver<QueryRequest>) {
     app.on_loaded("ready");
     // Switch from the App's default Power mode to Simple, with empty pane texts.
     app.query_form
-        .enter_simple_with_parts(Default::default(), 1000);
+        .enter_simple_with_parts(Default::default(), Some(1000));
     (app, rx)
 }
 

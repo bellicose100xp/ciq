@@ -36,7 +36,8 @@ impl ComposeError {
 /// Trimming + fallbacks per the locked design (`CLAUDE.md` post-5 UX section):
 /// * empty `select` -> emit `*` (composer fallback; the pane text is left empty in the form);
 /// * empty `where_clause` / `group_by` / `order_by` -> the clause is omitted entirely;
-/// * empty `limit` -> use `default_limit` (composer fallback);
+/// * empty `limit` -> use `default_limit` when one is configured, else omit the clause (the
+///   uncapped default — limiting rows is a user choice);
 /// * `limit` literal `0` or `all` (case-insensitive, after trim) -> omit the LIMIT clause (no cap);
 /// * any other `limit` must parse as a positive `i64` (decimal); otherwise [`ComposeError::InvalidLimit`].
 ///
@@ -49,7 +50,7 @@ pub fn compose_sql(
     group_by: &str,
     order_by: &str,
     limit: &str,
-    default_limit: usize,
+    default_limit: Option<usize>,
 ) -> Result<String, ComposeError> {
     let projection = trim_or(select, "*");
     let where_text = where_clause.trim();
@@ -92,13 +93,17 @@ fn trim_or<'a>(s: &'a str, fallback: &'a str) -> &'a str {
     }
 }
 
-/// Compose the LIMIT clause from the LIMIT pane. Returns `Ok(Some("LIMIT 1000"))` for the common
-/// case, `Ok(None)` to omit the clause (`0` / `all`), or [`ComposeError::InvalidLimit`] when the
-/// pane has a value that is neither a positive integer nor the documented `all` / `0` keywords.
-fn compose_limit_clause(limit: &str, default_limit: usize) -> Result<Option<String>, ComposeError> {
+/// Compose the LIMIT clause from the LIMIT pane. Returns `Ok(Some("LIMIT n"))` for a typed
+/// number, `Ok(None)` to omit the clause (empty pane with no configured default, or the explicit
+/// `0` / `all` opt-outs), or [`ComposeError::InvalidLimit`] when the pane has a value that is
+/// neither a positive integer nor the documented `all` / `0` keywords.
+fn compose_limit_clause(
+    limit: &str,
+    default_limit: Option<usize>,
+) -> Result<Option<String>, ComposeError> {
     let trimmed = limit.trim();
     if trimmed.is_empty() {
-        return Ok(Some(format!("LIMIT {default_limit}")));
+        return Ok(default_limit.map(|n| format!("LIMIT {n}")));
     }
     if trimmed.eq_ignore_ascii_case("all") || trimmed == "0" {
         return Ok(None); // user opted out of the cap
