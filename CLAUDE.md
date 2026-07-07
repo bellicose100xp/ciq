@@ -29,6 +29,16 @@ Before changing anything, read **`dev/PLAN.md` §0** (the single source of truth
 - `--test-threads=1` is load-bearing: the worker/channel and `TestBackend` tests touch process-global state and would race otherwise.
 - Long-running builds/tests: run in background mode.
 
+## Manual-test CSVs (gitignored — regenerate on demand)
+
+The files the user drives the real TUI against live at the repo root and are **gitignored** (the `/*.csv` entry), so a fresh clone won't have them. When the user wants to manually test and they're missing, regenerate them with the deterministic generator (no deps, no randomness — same bytes every run):
+
+- `python3 dev/gen_showcase.py` — writes both: **`showcase-xl.csv`** (1,000,000 rows × 100 cols, ~800 MB, ~2 min) and **`showcase-m.csv`** (100,000 rows × 20 cols, ~22 MB, seconds).
+- `python3 dev/gen_showcase.py m` (or `xl`) — just that one tier. Prefer `m` unless the test is specifically about scale.
+- Launch: `./target/release/ciq showcase-m.csv`.
+
+Both carry the same 14 edge-case columns (NULL cadences, RFC-4180 quoting, CJK/emoji, quoted identifiers like `"Total ($)"` / `"order"`) plus typed filler columns. **Never commit them.** The tracked 5,000×14 test fixture is separate — `python3 dev/gen_showcase.py --fixture` regenerates `tests/fixtures/showcase.csv` byte-identically; don't confuse the two.
+
 ## Determinism rules (MUST — a flaky test gives a false fix signal)
 
 - **No ambient time/rand in library logic.** No `Instant::now()`, `SystemTime::now()`, `rand::*` outside the named seam wrappers (the debouncer's `system_time_ms`, any explicit-seed sampler). Time enters logic as a `u64` parameter (jiq's time-as-parameter debouncer; there is **no `Clock` trait**). Enforced by `clippy.toml` `disallowed-methods`, which rides the clippy gate.
