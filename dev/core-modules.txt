@@ -90,6 +90,14 @@ src/text_match.rs
 # off-screen item on a scrolled list; pure usize-in/usize-out, so it earns the hard floor.
 src/scroll_window.rs
 
+# Post-release UX: the Ctrl+F row search — the pure case-insensitive substring matcher (byte
+# ranges against the ORIGINAL string, char-boundary-safe under case folding) and the search state
+# machine + any-column row filter. A wrong range panics the highlighter on a boundary slice; a
+# wrong filter silently shows/hides the wrong rows — both data-in/data-out, so they earn the hard
+# floor. The bar blit (`search_render.rs`) is a TestBackend seam like the other *_render files.
+src/search/matcher.rs
+src/search/search_state.rs
+
 # Phase 3 (present now): the clause-context detector — pure `detect_context` over the lexer token
 # stream; a wrong cursor-context silently corrupts every suggestion, so it earns the hard floor.
 src/autocomplete/clause_context.rs

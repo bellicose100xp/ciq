@@ -61,6 +61,7 @@ pub mod palette_app;
 pub mod polish;
 pub mod query_form;
 pub mod query_form_app;
+pub mod search_app;
 
 pub use editor::Editor;
 pub use key::{Key, KeyEvent, KeyMods};
@@ -236,6 +237,13 @@ pub struct App {
     /// Pairs two fast left clicks into a double (double-click recall/accept/toggle). Time enters
     /// as `now_ms` (the debouncer's time-as-parameter seam), never a wall clock.
     pub(crate) double_click: double_click::DoubleClickTracker,
+    /// The `Ctrl+F` row-filter search bar (visibility / editing-vs-confirmed / needle). While
+    /// filtering, the grid displays [`search_filtered`](Self::search_filtered) via
+    /// [`display_rows`](Self::display_rows).
+    pub(crate) search: crate::search::SearchState,
+    /// The cached search-filtered projection of the current result — recomputed on every needle
+    /// edit and every new result (never per frame). `None` when no filter is active.
+    pub(crate) search_filtered: Option<crate::engine::Table>,
 }
 
 impl App {
@@ -276,6 +284,8 @@ impl App {
             layout_regions: std::cell::Cell::new(LayoutRegions::default()),
             hover: None,
             double_click: double_click::DoubleClickTracker::new(),
+            search: crate::search::SearchState::new(),
+            search_filtered: None,
         }
     }
 
@@ -518,8 +528,10 @@ impl App {
         if matches!(self.phase, AppPhase::Loading) {
             return Some(polish::empty_state(polish::EmptyKind::Loading));
         }
-        match self.result.as_ref() {
-            Some(result) if result.rows.row_count() == 0 => {
+        // Displayed rows, not raw result rows: a Ctrl+F filter that matches nothing shows the
+        // same "no rows match" notice a zero-row query does.
+        match self.display_rows() {
+            Some(rows) if rows.row_count() == 0 => {
                 Some(polish::empty_state(polish::EmptyKind::ZeroRows))
             }
             Some(_) => None, // a populated grid is drawn, not an empty-state message
@@ -550,6 +562,12 @@ impl App {
         }
         if self.palette_open {
             return self.handle_palette_key(&ev, now_ms);
+        }
+        // The search bar in EDITING mode captures the keyboard (typing edits the needle, Enter
+        // confirms, Esc closes). Once confirmed it stops capturing — the filter stays applied
+        // while keys navigate the filtered grid normally, except Esc (below) which clears it.
+        if self.search.is_editing() {
+            return self.handle_search_key(&ev);
         }
         // The facet popup, when open, intercepts Esc (close) and Ctrl-C (quit) before the rest of
         // routing — so Esc dismisses the popup rather than quitting. Any other key closes it and
@@ -598,12 +616,28 @@ impl App {
             self.toggle_query_mode(now_ms);
             return false;
         }
+        // Ctrl+F opens the row-filter search bar (or re-enters editing on a confirmed search).
+        // Top-level so it works from either focus state, like Ctrl+T.
+        if ev.mods.ctrl && matches!(ev.key, Key::Char('f') | Key::Char('F')) {
+            self.open_search();
+            return false;
+        }
         if self.autocomplete.is_open() && self.handle_popup_key(&ev, now_ms) {
             return false; // the popup consumed the key
         }
-        // `f` in the results pane opens a facet for the focused (leftmost visible) grid column.
-        if self.focus == Focus::Results && matches!(ev.key, Key::Char('f') | Key::Char('F')) {
+        // Bare `f` (no Ctrl — that chord is the search above) in the results pane opens a facet
+        // for the focused (leftmost visible) grid column.
+        if self.focus == Focus::Results
+            && !ev.mods.ctrl
+            && matches!(ev.key, Key::Char('f') | Key::Char('F'))
+        {
             self.open_facet();
+            return false;
+        }
+        // Esc on a CONFIRMED search clears the filter (the editing-mode Esc is handled by the
+        // capture above); it must run before the quit check so Esc doesn't fall through.
+        if self.search.is_confirmed() && matches!(ev.key, Key::Esc) {
+            self.close_search();
             return false;
         }
         // Ctrl-C / Esc quit from anywhere (Esc only reaches here when no popup is open).
@@ -756,21 +790,13 @@ impl App {
     }
 
     fn scroll_down(&mut self, by: usize) {
-        let row_count = self
-            .result
-            .as_ref()
-            .map(|r| r.rows.row_count())
-            .unwrap_or(0);
+        let row_count = self.display_rows().map(|r| r.row_count()).unwrap_or(0);
         let max = row_count.saturating_sub(1);
         self.v_row_offset = (self.v_row_offset + by).min(max);
     }
 
     fn scroll_right(&mut self) {
-        let col_count = self
-            .result
-            .as_ref()
-            .map(|r| r.rows.col_count())
-            .unwrap_or(0);
+        let col_count = self.display_rows().map(|r| r.col_count()).unwrap_or(0);
         let max = col_count.saturating_sub(1);
         self.h_col_offset = (self.h_col_offset + 1).min(max);
         self.snap_h_char_to_col();
@@ -781,12 +807,12 @@ impl App {
     /// trackpad slide). Pure App-side computation: ask the laid-out widths for the prefix edge.
     /// No-op when there is no result (no widths to compute against).
     fn snap_h_char_to_col(&mut self) {
-        let Some(result) = self.result.as_ref() else {
+        let Some(rows) = self.display_rows() else {
             self.h_char_offset = 0;
             return;
         };
         let inner_w = self.results_inner_width();
-        let widths = crate::grid::col_width::compute_widths(&result.rows, inner_w);
+        let widths = crate::grid::col_width::compute_widths(rows, inner_w);
         let take = self.h_col_offset.min(widths.len());
         self.h_char_offset = crate::grid::grid_layout::prefix_left_edge(&widths[..take]);
     }
@@ -797,11 +823,11 @@ impl App {
     /// `total_grid_width.saturating_sub(viewport_width / 2)` (keep at least half a viewport of
     /// content visible at the right edge so the user can not scroll into the void).
     pub(crate) fn slide_h_chars(&mut self, delta: i32) {
-        let Some(result) = self.result.as_ref() else {
+        let Some(rows) = self.display_rows() else {
             return;
         };
         let inner_w = self.results_inner_width();
-        let widths = crate::grid::col_width::compute_widths(&result.rows, inner_w);
+        let widths = crate::grid::col_width::compute_widths(rows, inner_w);
         // Total rendered grid width: cumulative left edge after the LAST column with the trailing
         // gutter subtracted (no gutter follows the rightmost column).
         let total: u16 = crate::grid::grid_layout::prefix_left_edge(&widths).saturating_sub(2);
@@ -953,6 +979,8 @@ impl App {
         self.v_row_offset = 0;
         self.h_col_offset = 0;
         self.h_char_offset = 0;
+        // No result -> nothing to filter; the bar closes with the grid it filtered.
+        self.close_search();
     }
 
     // --- response handling (stale-discard + state update) ---
@@ -1037,6 +1065,9 @@ impl App {
                 // render layer goes back to NORMAL polarity for the new rows.
                 self.result_is_stale = false;
                 self.v_row_offset = 0;
+                // An active Ctrl+F filter re-applies to the new rows (the needle outlives the
+                // result it was typed against).
+                self.refresh_search_filter();
                 self.phase = AppPhase::Ready;
                 true
             }

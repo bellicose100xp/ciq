@@ -7,6 +7,12 @@ changes alike, patch `0.minor.Y` for fixes, refactors, polish, and docs.
 
 ## [Unreleased]
 
+### Added
+- **Row search** (`Ctrl+F`) — filter the grid to rows where any column contains the typed text
+  (case-insensitive), with every match highlighted in place. Enter confirms the filter and
+  returns the keyboard to grid navigation; Esc clears it. The facet chord is now strictly the
+  modifier-free `f` (it previously also fired on `Ctrl+F`).
+
 ## [0.1.0] - 2026-07-07
 
 First tagged release. ciq is a terminal tool for querying a CSV with live DuckDB SQL: type a query,

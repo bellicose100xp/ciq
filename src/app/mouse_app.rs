@@ -89,12 +89,10 @@ impl App {
         };
     }
 
-    /// Whether absolute grid body row `row` holds data in the current result — a hover on the
-    /// blank area below a short result highlights nothing.
+    /// Whether absolute grid body row `row` holds data in the displayed (possibly search-
+    /// filtered) result — a hover on the blank area below a short result highlights nothing.
     fn grid_row_exists(&self, row: usize) -> bool {
-        self.result
-            .as_ref()
-            .is_some_and(|r| row < r.rows.row_count())
+        self.display_rows().is_some_and(|r| row < r.row_count())
     }
 
     /// Vertical wheel: scroll the grid body when over the results pane (or outside any surface, the

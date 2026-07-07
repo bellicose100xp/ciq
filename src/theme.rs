@@ -487,6 +487,46 @@ pub mod ai {
     }
 }
 
+/// Search bar (`Ctrl+F` row filter) colors and styles. Polarity follows jiq's search bar: the
+/// pink accent while editing (active), the muted slate once confirmed (the filter is frozen and
+/// keys navigate the grid again).
+pub mod search {
+    use super::base as p;
+    use ratatui::style::{Modifier, Style};
+
+    pub fn border_active() -> Style {
+        Style::default().fg(p::PINK)
+    }
+
+    pub fn border_inactive() -> Style {
+        Style::default().fg(p::BORDER_UNFOCUSED)
+    }
+
+    pub fn text_active() -> Style {
+        Style::default().fg(p::TEXT)
+    }
+
+    pub fn text_inactive() -> Style {
+        Style::default().fg(p::TEXT_MUTED)
+    }
+
+    /// The `shown/total` filtered-row badge on the bar's top border.
+    pub fn badge() -> Style {
+        Style::default().fg(p::CYAN)
+    }
+
+    /// The badge when the needle matched zero rows.
+    pub fn badge_no_matches() -> Style {
+        Style::default().fg(p::ERROR).add_modifier(Modifier::BOLD)
+    }
+
+    pub fn hint() -> Style {
+        Style::default()
+            .fg(p::TEXT_MUTED)
+            .add_modifier(Modifier::DIM)
+    }
+}
+
 /// Grid (results table) colors and styles.
 pub mod grid {
     use super::base as p;
@@ -525,6 +565,15 @@ pub mod grid {
     pub fn hover_bar(accent: Color) -> Style {
         Style::default()
             .fg(accent)
+            .bg(p::BG_HIGHLIGHT)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// A `Ctrl+F` search-match run within a body line — jiq's match-highlight band (light slate
+    /// over the normal text) so matches read in place without drowning the row.
+    pub fn search_match() -> Style {
+        Style::default()
+            .fg(p::TEXT)
             .bg(p::BG_HIGHLIGHT)
             .add_modifier(Modifier::BOLD)
     }

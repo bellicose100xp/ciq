@@ -9,7 +9,7 @@ use ratatui::style::Modifier;
 use super::style_body_line;
 use crate::engine::{Cell, Column, Table};
 use crate::grid::grid_layout::{BodyRow, GridView, layout_grid};
-use crate::grid::grid_render::{body_viewport_height, render_grid};
+use crate::grid::grid_render::{GridPaint, body_viewport_height, render_grid};
 use crate::theme;
 
 fn render_to_string(table: &Table, view: GridView, w: u16, h: u16, v_row_offset: usize) -> String {
@@ -23,10 +23,11 @@ fn render_to_string(table: &Table, view: GridView, w: u16, h: u16, v_row_offset:
                 f,
                 area,
                 &frame,
-                v_row_offset,
-                false,
-                None,
-                theme::base::CYAN,
+                GridPaint {
+                    v_row_offset,
+                    accent: theme::base::CYAN,
+                    ..Default::default()
+                },
             );
         })
         .expect("draw to TestBackend");
@@ -76,10 +77,10 @@ fn render_does_not_panic_on_zero_height() {
                 f,
                 Rect::new(0, 0, 80, 0),
                 &frame,
-                0,
-                false,
-                None,
-                theme::base::CYAN,
+                GridPaint {
+                    accent: theme::base::CYAN,
+                    ..Default::default()
+                },
             )
         })
         .unwrap();
@@ -166,7 +167,7 @@ fn only_genuine_null_span_is_dimmed_not_literal_text_null() {
         ),
     ]);
     let frame = layout_grid(&t, &GridView::new(80, 24));
-    let line = style_body_line(&frame.body[0], Modifier::empty());
+    let line = style_body_line(&frame.body[0], Modifier::empty(), "");
 
     // Collect (text, dimmed) per span, then check exactly the first cell's "NULL" is dimmed.
     let dimmed: String = line
@@ -208,7 +209,7 @@ fn truncated_null_in_narrow_column_is_still_dimmed() {
         vec![Cell::Null],
     )]);
     let frame = layout_grid(&t, &GridView::new(2, 24));
-    let line = style_body_line(&frame.body[0], Modifier::empty());
+    let line = style_body_line(&frame.body[0], Modifier::empty(), "");
     let dimmed_text: String = line
         .spans
         .iter()
@@ -231,10 +232,146 @@ fn no_null_row_is_a_single_normal_span() {
         text: "  1  Ada ".to_string(),
         null_spans: Vec::new(),
     };
-    let line = style_body_line(&row, Modifier::empty());
+    let line = style_body_line(&row, Modifier::empty(), "");
     assert_eq!(line.spans.len(), 1);
     assert_eq!(line.spans[0].style, theme::grid::cell());
     assert!(!is_null_styled(line.spans[0].style));
+}
+
+// --- Ctrl+F match highlighting ---
+
+/// True iff `style` is the search-match highlight.
+fn is_match_styled(style: ratatui::style::Style) -> bool {
+    style.bg == theme::grid::search_match().bg && style.add_modifier.contains(Modifier::BOLD)
+}
+
+#[test]
+fn search_needle_highlights_matching_runs_case_insensitively() {
+    let t = typed_table();
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    // Row 0 is `1  Ada  12.5`; needle "ada" must highlight the "Ada" run only.
+    let line = style_body_line(&frame.body[0], Modifier::empty(), "ada");
+    let matched: String = line
+        .spans
+        .iter()
+        .filter(|s| is_match_styled(s.style))
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert_eq!(matched, "Ada");
+    let full: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(full, frame.body[0].text, "highlighting never alters text");
+}
+
+#[test]
+fn search_highlight_covers_every_occurrence_in_the_line() {
+    let t = Table::new(vec![
+        Column::new(
+            "a",
+            crate::schema::ColumnType::Text,
+            vec![Cell::Text("go".into())],
+        ),
+        Column::new(
+            "b",
+            crate::schema::ColumnType::Text,
+            vec![Cell::Text("GOing".into())],
+        ),
+    ]);
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    let line = style_body_line(&frame.body[0], Modifier::empty(), "go");
+    let matched: Vec<&str> = line
+        .spans
+        .iter()
+        .filter(|s| is_match_styled(s.style))
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert_eq!(matched, vec!["go", "GO"], "both cells' runs highlight");
+}
+
+#[test]
+fn null_glyph_keeps_null_style_even_when_needle_says_null() {
+    // The filter says NULL never matches; the render agrees — a needle of "null" must not
+    // repaint the absent-value glyph as a match.
+    let t = Table::new(vec![
+        Column::new("a", crate::schema::ColumnType::Text, vec![Cell::Null]),
+        Column::new(
+            "b",
+            crate::schema::ColumnType::Text,
+            vec![Cell::Text("nullable".into())],
+        ),
+    ]);
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    let line = style_body_line(&frame.body[0], Modifier::empty(), "null");
+    let matched: String = line
+        .spans
+        .iter()
+        .filter(|s| is_match_styled(s.style))
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert_eq!(matched, "null", "only column b's literal text highlights");
+    let dimmed: String = line
+        .spans
+        .iter()
+        .filter(|s| is_null_styled(s.style))
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert!(dimmed.contains("NULL"), "the genuine null stays dimmed");
+}
+
+#[test]
+fn empty_needle_leaves_the_line_unstyled() {
+    let t = typed_table();
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    let line = style_body_line(&frame.body[0], Modifier::empty(), "");
+    assert!(line.spans.iter().all(|s| !is_match_styled(s.style)));
+}
+
+#[test]
+fn stale_dim_rides_match_highlight_spans() {
+    let t = typed_table();
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    let line = style_body_line(&frame.body[0], Modifier::DIM, "ada");
+    for span in &line.spans {
+        assert!(
+            span.style.add_modifier.contains(Modifier::DIM),
+            "every span (matched or not) carries the stale dim"
+        );
+    }
+}
+
+#[test]
+fn render_grid_paints_needle_matches_into_the_buffer() {
+    let t = typed_table();
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    let backend = TestBackend::new(80, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            render_grid(
+                f,
+                Rect::new(0, 0, 80, 10),
+                &frame,
+                GridPaint {
+                    accent: theme::base::CYAN,
+                    search_needle: "ada",
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer();
+    // Find the "Ada" cell in body row 0 (screen row 1) and check its background.
+    let row_text: String = (0..80).map(|x| buf[(x, 1)].symbol().to_string()).collect();
+    let col = row_text.find("Ada").expect("Ada on the first body row");
+    assert_eq!(
+        buf[(col as u16, 1)].style().bg,
+        theme::grid::search_match().bg,
+        "the matched run carries the highlight band"
+    );
+    assert_ne!(
+        buf[(0, 1)].style().bg,
+        theme::grid::search_match().bg,
+        "unmatched cells keep the plain background"
+    );
 }
 
 #[test]
@@ -249,10 +386,11 @@ fn hovered_row_carries_the_hover_background() {
                 f,
                 Rect::new(0, 0, 80, 10),
                 &frame,
-                0,
-                false,
-                Some(1),
-                theme::base::CYAN,
+                GridPaint {
+                    hovered_row: Some(1),
+                    accent: theme::base::CYAN,
+                    ..Default::default()
+                },
             )
         })
         .unwrap();
@@ -298,10 +436,12 @@ fn hovered_row_respects_the_scroll_offset() {
                 f,
                 Rect::new(0, 0, 80, 10),
                 &frame,
-                1,
-                false,
-                Some(2),
-                theme::base::CYAN,
+                GridPaint {
+                    v_row_offset: 1,
+                    hovered_row: Some(2),
+                    accent: theme::base::CYAN,
+                    ..Default::default()
+                },
             )
         })
         .unwrap();

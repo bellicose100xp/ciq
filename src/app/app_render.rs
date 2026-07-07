@@ -67,23 +67,43 @@ const SIMPLE_PANE_COUNT: usize = 5;
 /// Render the whole app into `frame`.
 pub fn render(app: &App, frame: &mut Frame) {
     let area = frame.area();
+    // When the Ctrl+F search bar is open it takes a fixed-height row between the results pane
+    // and the query box (jiq's placement); closed, the results pane reclaims the space.
+    let search_height = if app.search().is_visible() {
+        crate::search::search_render::SEARCH_BAR_HEIGHT
+    } else {
+        0
+    };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),                  // results pane (fills the space)
+            Constraint::Length(search_height),   // Ctrl+F search bar (0 when closed)
             Constraint::Length(box_height(app)), // bordered query box (text rows + 2 border rows)
             Constraint::Length(1),               // status line (very bottom)
         ])
         .split(area);
 
     let results = chunks[0];
-    let query_box = chunks[1];
+    let query_box = chunks[2];
 
     render_results(app, frame, results);
+    if app.search().is_visible() {
+        let shown = app.display_rows().map(|r| r.row_count()).unwrap_or(0);
+        let total = app.result().map(|r| r.rows.row_count()).unwrap_or(0);
+        crate::search::search_render::render_search_bar(
+            frame,
+            chunks[1],
+            app.search().needle(),
+            app.search().is_confirmed(),
+            shown,
+            total,
+        );
+    }
     // The query box is bordered; its bottom border carries the help hints. `render_query_box`
     // returns the inner text rect — what the editor occupies and what a mouse click maps onto.
     let text_area = render_query_box(app, frame, query_box);
-    render_status(app, frame, chunks[2]);
+    render_status(app, frame, chunks[3]);
     // The popups overlay the results pane, anchored just ABOVE the bottom query box (drawn last so
     // they sit on top). Headless: still just cells in the TestBackend buffer. They are mutually
     // exclusive (opening one closes the others), so painting them all is at most one visible box.
@@ -571,7 +591,9 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
         return;
     }
 
-    if let Some(result) = app.result() {
+    // The displayed rows: the Ctrl+F-filtered projection while a search is active, else the full
+    // result — one seam (`App::display_rows`) so the grid, scroll bounds, and counters agree.
+    if let Some(rows) = app.display_rows() {
         // The grid claims the full inner pane (no reserved interior row for a banner) — the
         // row counter on the border carries the cap signal instead.
         let view = GridView {
@@ -581,21 +603,29 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
             h_char_offset: app.h_char_offset(),
             v_row_offset: app.v_row_offset(),
         };
-        let grid = layout_grid(&result.rows, &view);
+        let grid = layout_grid(rows, &view);
         // The hover band only paints while the pointer is on a grid row (popup hover paints in
         // the popup renderers instead).
         let hovered_row = match app.hover() {
             Some(crate::app::HoverTarget::GridRow(row)) => Some(row),
             _ => None,
         };
+        let needle = if app.search().is_filtering() {
+            app.search().needle()
+        } else {
+            ""
+        };
         grid_render::render_grid(
             frame,
             inner,
             &grid,
-            app.v_row_offset(),
-            app.result_is_stale(),
-            hovered_row,
-            accent,
+            grid_render::GridPaint {
+                v_row_offset: app.v_row_offset(),
+                stale: app.result_is_stale(),
+                hovered_row,
+                accent,
+                search_needle: needle,
+            },
         );
     }
 }
@@ -608,8 +638,9 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
 /// `1000+` for a capped grid, `12` for an uncapped one. The cap-suffix path is unreachable on
 /// `rendered == 0` because truncation requires `rendered >= cap > 0`.
 fn row_counter_text(app: &App) -> Option<String> {
-    let result = app.result()?;
-    let rendered = result.rows.row_count();
+    // Displayed (possibly Ctrl+F-filtered) rows — the counter describes what's on screen; the
+    // search bar's own shown/total badge carries the filter arithmetic.
+    let rendered = app.display_rows()?.row_count();
     if rendered == 0 {
         return None;
     }

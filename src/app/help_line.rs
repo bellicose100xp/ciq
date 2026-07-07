@@ -59,13 +59,29 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
     if app.is_facet_open() {
         return hints!["Ctrl+C" => "quit"];
     }
+    // The search bar's editing mode captures the keyboard; its own bottom border teaches
+    // Enter/Esc, so the main legend just shows quit (like the other capture surfaces).
+    if app.search().is_editing() {
+        return hints!["Ctrl+C" => "quit"];
+    }
     if app.autocomplete().is_open() {
         return hints!["Ctrl+C" => "quit"];
     }
     if app.focus() == Focus::Results {
+        // A confirmed search adds the two chords that act on it (re-edit / clear).
+        if app.search().is_confirmed() {
+            return hints![
+                "Ctrl+F" => "edit search",
+                "Esc" => "clear search",
+                "f" => "facet",
+                "Ctrl+T" => "query",
+                "Ctrl+C" => "quit",
+            ];
+        }
         // Arrow/PgUp/PgDn/Home scrolling is intuitive — only the non-obvious chords show.
         return hints![
             "f" => "facet",
+            "Ctrl+F" => "search",
             "Ctrl+T" => "query",
             "Ctrl+C" => "quit",
         ];

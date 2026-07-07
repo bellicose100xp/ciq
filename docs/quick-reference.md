@@ -43,6 +43,7 @@ The table is always named `t`. Inside the session:
 | `Ctrl+K` | Open the column palette (needs a loaded schema). |
 | `Ctrl+R` | Open the query-history popup (seeds its filter with the bar text). |
 | `Ctrl+G` | Open the AI natural-language popup (needs the AI feature configured + a schema). |
+| `Ctrl+F` | Open the row-filter search bar (needs a result on screen); on a confirmed search, re-enter editing. |
 | `Esc` | Quit (when no popup is open; closes the focused popup otherwise). |
 | `Ctrl+C` | Quit (from anywhere, including any open popup). |
 
@@ -68,6 +69,17 @@ The table is always named `t`. Inside the session:
 | `Left` / `Right` | Scroll one column left / right. |
 | `Home` | Jump to the first row. |
 | `f` | Open a facet for the leftmost visible column. |
+| `Esc` | Clear a confirmed search filter (restores the full grid). |
+
+### Search bar (Ctrl+F, while editing)
+
+| Key | Action |
+|---|---|
+| printable character | Append to the filter needle (the grid filters live). |
+| `Backspace` | Delete the last needle character. |
+| `Enter` / `Tab` | Confirm: freeze the filter, resume grid navigation. |
+| `Esc` | Close the bar and clear the filter. |
+| `Ctrl+C` | Quit. |
 
 ### Autocomplete popup (when open)
 

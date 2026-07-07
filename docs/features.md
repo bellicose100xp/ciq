@@ -18,5 +18,6 @@ covers what the capability does, how to use it, and the exact keys or flags invo
 - [AI: natural language to SQL](features/ai-nl-to-sql.md) — describe the query in plain English.
 - [Query history](features/query-history.md) — recall prior queries, in-session and on disk.
 - [CSV ingest and overrides](features/csv-ingest.md) — how the file is parsed and how to override the dialect.
+- [Row search](features/search.md) — `Ctrl+F` filters the grid to rows matching the typed text, with in-place highlights.
 
 For a single flat list of every key and flag, see the [Quick Reference](quick-reference.md).
