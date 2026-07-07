@@ -18,3 +18,11 @@ targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-da
 install-path = "CARGO_HOME"
 # Whether to install an updater program
 install-updater = false
+
+# Stock ubuntu runners lack a musl C++ cross-toolchain, which the bundled
+# DuckDB build needs (x86_64-linux-musl-g++). This image ships the full musl
+# cross toolchain with CC/CXX/linker pre-wired, producing a fully static
+# binary that runs on old-glibc hosts (e.g. AL2) and Alpine.
+[dist.github-custom-runners.x86_64-unknown-linux-musl]
+runner = "ubuntu-22.04"
+container = { image = "messense/rust-musl-cross:x86_64-musl", host = "x86_64-unknown-linux-gnu" }
