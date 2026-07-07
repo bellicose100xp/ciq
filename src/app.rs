@@ -770,6 +770,26 @@ impl App {
     }
 
     fn on_key_results(&mut self, ev: KeyEvent) {
+        // With a confirmed Ctrl+F search, n/N (and Enter/Shift+Tab) step between matching rows,
+        // scrolling each into view — vim's match navigation. These shadow no plain grid nav (the
+        // grid has no n/N binding otherwise), and only while a search is confirmed.
+        if self.search.is_confirmed() {
+            match ev.key {
+                Key::Char('n') if !ev.mods.ctrl && !ev.mods.alt => {
+                    self.search_next_match();
+                    return;
+                }
+                Key::Char('N') if !ev.mods.ctrl && !ev.mods.alt => {
+                    self.search_prev_match();
+                    return;
+                }
+                Key::Enter => {
+                    self.search_next_match();
+                    return;
+                }
+                _ => {}
+            }
+        }
         match ev.key {
             Key::Up if self.v_row_offset == 0 => {
                 // Returning focus to the bar lands in Insert mode so typing resumes immediately.
@@ -854,6 +874,20 @@ impl App {
         view_width
             .saturating_sub(2)
             .max(crate::grid::col_width::MIN_COL_WIDTH)
+    }
+
+    /// The number of visible grid BODY rows: the last-rendered results-pane inner height minus
+    /// the border rows and the sticky header. 0 before the first render records a region. Drives
+    /// the search scrolloff math (the same window the renderer slices).
+    pub(crate) fn results_body_height(&self) -> u16 {
+        let inner_h = self
+            .layout_regions
+            .get()
+            .results_pane
+            .map(|r| r.height)
+            .unwrap_or(0)
+            .saturating_sub(2); // top + bottom border
+        crate::grid::grid_render::body_viewport_height(inner_h)
     }
 
     // The mouse-routing impl block (on_mouse / scroll / click / popup) lives in

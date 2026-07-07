@@ -26,6 +26,7 @@ fn render_to_string(table: &Table, view: GridView, w: u16, h: u16, v_row_offset:
                 GridPaint {
                     v_row_offset,
                     accent: theme::base::CYAN,
+                    current_match_row: None,
                     ..Default::default()
                 },
             );
@@ -79,6 +80,7 @@ fn render_does_not_panic_on_zero_height() {
                 &frame,
                 GridPaint {
                     accent: theme::base::CYAN,
+                    current_match_row: None,
                     ..Default::default()
                 },
             )
@@ -167,7 +169,7 @@ fn only_genuine_null_span_is_dimmed_not_literal_text_null() {
         ),
     ]);
     let frame = layout_grid(&t, &GridView::new(80, 24));
-    let line = style_body_line(&frame.body[0], Modifier::empty(), "");
+    let line = style_body_line(&frame.body[0], Modifier::empty(), "", false);
 
     // Collect (text, dimmed) per span, then check exactly the first cell's "NULL" is dimmed.
     let dimmed: String = line
@@ -209,7 +211,7 @@ fn truncated_null_in_narrow_column_is_still_dimmed() {
         vec![Cell::Null],
     )]);
     let frame = layout_grid(&t, &GridView::new(2, 24));
-    let line = style_body_line(&frame.body[0], Modifier::empty(), "");
+    let line = style_body_line(&frame.body[0], Modifier::empty(), "", false);
     let dimmed_text: String = line
         .spans
         .iter()
@@ -228,11 +230,14 @@ fn truncated_null_in_narrow_column_is_still_dimmed() {
 
 #[test]
 fn no_null_row_is_a_single_normal_span() {
+    let text = "  1  Ada ".to_string();
+    let whole = 0..text.len();
     let row = BodyRow {
-        text: "  1  Ada ".to_string(),
+        text,
         null_spans: Vec::new(),
+        cell_spans: vec![whole],
     };
-    let line = style_body_line(&row, Modifier::empty(), "");
+    let line = style_body_line(&row, Modifier::empty(), "", false);
     assert_eq!(line.spans.len(), 1);
     assert_eq!(line.spans[0].style, theme::grid::cell());
     assert!(!is_null_styled(line.spans[0].style));
@@ -250,7 +255,7 @@ fn search_needle_highlights_matching_runs_case_insensitively() {
     let t = typed_table();
     let frame = layout_grid(&t, &GridView::new(80, 24));
     // Row 0 is `1  Ada  12.5`; needle "ada" must highlight the "Ada" run only.
-    let line = style_body_line(&frame.body[0], Modifier::empty(), "ada");
+    let line = style_body_line(&frame.body[0], Modifier::empty(), "ada", false);
     let matched: String = line
         .spans
         .iter()
@@ -260,6 +265,59 @@ fn search_needle_highlights_matching_runs_case_insensitively() {
     assert_eq!(matched, "Ada");
     let full: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
     assert_eq!(full, frame.body[0].text, "highlighting never alters text");
+}
+
+/// True iff `style` is the CURRENT-match highlight (distinct from the dim other-match style).
+fn is_current_match_styled(style: ratatui::style::Style) -> bool {
+    style.bg == theme::grid::current_match().bg
+}
+
+#[test]
+fn current_match_row_uses_the_distinct_current_style() {
+    let t = typed_table();
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    // is_current = true: the "Ada" run takes the current-match bg, NOT the plain search-match bg.
+    let line = style_body_line(&frame.body[0], Modifier::empty(), "ada", true);
+    let cur: String = line
+        .spans
+        .iter()
+        .filter(|s| is_current_match_styled(s.style))
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert_eq!(cur, "Ada", "the current match uses the current-match style");
+    assert!(
+        line.spans.iter().all(|s| !is_match_styled(s.style)),
+        "no run uses the non-current (dim) match style on the current row"
+    );
+    assert_ne!(
+        theme::grid::current_match().bg,
+        theme::grid::search_match().bg,
+        "the two match styles are visually distinct"
+    );
+}
+
+#[test]
+fn cell_scoped_match_does_not_straddle_the_column_gutter() {
+    // Two adjacent single-char cells "a" | "a" render as "a  a" (2-space gutter). A needle that
+    // could only match across the gutter ("a a") must NOT highlight — matches are cell-scoped.
+    let t = Table::new(vec![
+        Column::new(
+            "x",
+            crate::schema::ColumnType::Text,
+            vec![Cell::Text("a".into())],
+        ),
+        Column::new(
+            "y",
+            crate::schema::ColumnType::Text,
+            vec![Cell::Text("a".into())],
+        ),
+    ]);
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    let line = style_body_line(&frame.body[0], Modifier::empty(), "a a", false);
+    assert!(
+        line.spans.iter().all(|s| !is_match_styled(s.style)),
+        "a needle spanning the gutter must not match"
+    );
 }
 
 #[test]
@@ -277,7 +335,7 @@ fn search_highlight_covers_every_occurrence_in_the_line() {
         ),
     ]);
     let frame = layout_grid(&t, &GridView::new(80, 24));
-    let line = style_body_line(&frame.body[0], Modifier::empty(), "go");
+    let line = style_body_line(&frame.body[0], Modifier::empty(), "go", false);
     let matched: Vec<&str> = line
         .spans
         .iter()
@@ -300,7 +358,7 @@ fn null_glyph_keeps_null_style_even_when_needle_says_null() {
         ),
     ]);
     let frame = layout_grid(&t, &GridView::new(80, 24));
-    let line = style_body_line(&frame.body[0], Modifier::empty(), "null");
+    let line = style_body_line(&frame.body[0], Modifier::empty(), "null", false);
     let matched: String = line
         .spans
         .iter()
@@ -321,7 +379,7 @@ fn null_glyph_keeps_null_style_even_when_needle_says_null() {
 fn empty_needle_leaves_the_line_unstyled() {
     let t = typed_table();
     let frame = layout_grid(&t, &GridView::new(80, 24));
-    let line = style_body_line(&frame.body[0], Modifier::empty(), "");
+    let line = style_body_line(&frame.body[0], Modifier::empty(), "", false);
     assert!(line.spans.iter().all(|s| !is_match_styled(s.style)));
 }
 
@@ -329,7 +387,7 @@ fn empty_needle_leaves_the_line_unstyled() {
 fn stale_dim_rides_match_highlight_spans() {
     let t = typed_table();
     let frame = layout_grid(&t, &GridView::new(80, 24));
-    let line = style_body_line(&frame.body[0], Modifier::DIM, "ada");
+    let line = style_body_line(&frame.body[0], Modifier::DIM, "ada", false);
     for span in &line.spans {
         assert!(
             span.style.add_modifier.contains(Modifier::DIM),
@@ -353,6 +411,7 @@ fn render_grid_paints_needle_matches_into_the_buffer() {
                 GridPaint {
                     accent: theme::base::CYAN,
                     search_needle: "ada",
+                    current_match_row: None,
                     ..Default::default()
                 },
             )
@@ -389,6 +448,7 @@ fn hovered_row_carries_the_hover_background() {
                 GridPaint {
                     hovered_row: Some(1),
                     accent: theme::base::CYAN,
+                    current_match_row: None,
                     ..Default::default()
                 },
             )
@@ -440,6 +500,7 @@ fn hovered_row_respects_the_scroll_offset() {
                     v_row_offset: 1,
                     hovered_row: Some(2),
                     accent: theme::base::CYAN,
+                    current_match_row: None,
                     ..Default::default()
                 },
             )

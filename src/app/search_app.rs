@@ -63,6 +63,13 @@ impl App {
             (true, Some(result)) => Some(filter_table(&result.rows, self.search.needle())),
             _ => None,
         };
+        // A shrunk filtered set must not leave the current-match index past the end.
+        let count = self
+            .search_filtered
+            .as_ref()
+            .map(|t| t.row_count())
+            .unwrap_or(0);
+        self.search.clamp_current(count);
     }
 
     /// Route a key while the search bar is in **editing** mode (it captures the keyboard, like
@@ -75,12 +82,14 @@ impl App {
         }
         match ev.key {
             Key::Esc => self.close_search(),
-            // Confirming an empty needle closes instead — there is nothing to freeze.
+            // Confirming an empty needle closes instead — there is nothing to freeze. Confirming
+            // a non-empty search freezes it and scrolls the (first) current match into view.
             Key::Enter | Key::Tab => {
                 if self.search.needle().is_empty() {
                     self.close_search();
                 } else {
                     self.search.confirm();
+                    self.scroll_current_match_into_view();
                 }
             }
             Key::Backspace => {
@@ -98,7 +107,96 @@ impl App {
 
     fn on_search_needle_changed(&mut self) {
         self.refresh_search_filter();
-        // The old offset indexes a different row set; snap back to the top of the new one.
+        // The old offset indexes a different row set; snap back to the top of the new one, and the
+        // current match resets to the first row (SearchState::push/pop already reset it).
         self.v_row_offset = 0;
+        self.h_col_offset = 0;
+        self.h_char_offset = 0;
+    }
+
+    /// Step to the next matching row (`n`, or Enter on a confirmed search) and scroll it into
+    /// view. No-op unless a confirmed search is filtering rows.
+    pub(crate) fn search_next_match(&mut self) {
+        let count = self.display_rows().map(|r| r.row_count()).unwrap_or(0);
+        self.search.next_match(count);
+        self.scroll_current_match_into_view();
+    }
+
+    /// Step to the previous matching row (`N`) and scroll it into view.
+    pub(crate) fn search_prev_match(&mut self) {
+        let count = self.display_rows().map(|r| r.row_count()).unwrap_or(0);
+        self.search.prev_match(count);
+        self.scroll_current_match_into_view();
+    }
+
+    /// Scroll the grid so the current-match row (and, for the leftmost matching cell, its column)
+    /// is comfortably inside the viewport — never flush against a pane edge unless it is the very
+    /// first/last row or column. Vim's `scrolloff`, applied on both axes (jiq parity).
+    pub(crate) fn scroll_current_match_into_view(&mut self) {
+        let Some(rows) = self.display_rows() else {
+            return;
+        };
+        let row_count = rows.row_count();
+        if row_count == 0 {
+            return;
+        }
+        let cur = self.search.current_row().min(row_count.saturating_sub(1));
+
+        // Vertical: keep `cur` inside the SCROLLOFF margin of the visible body window.
+        let body_h = self.results_body_height() as usize;
+        if body_h > 0 {
+            self.v_row_offset = crate::scroll_window::scroll_offset_for_cursor(
+                cur,
+                row_count,
+                body_h,
+                self.v_row_offset,
+            );
+        }
+
+        // Horizontal: bring the leftmost column whose cell matches the needle into view, with a
+        // one-column margin so it isn't flush to the left/right border. Falls back to no h-scroll
+        // change when no specific column matches (e.g. the match is only in an off-screen wide
+        // cell — the vertical scroll already surfaced the row).
+        if let Some(col) = self.current_match_column() {
+            self.scroll_column_into_view(col);
+        }
+    }
+
+    /// The index of the leftmost column whose current-match-row cell contains the needle, if any.
+    fn current_match_column(&self) -> Option<usize> {
+        let needle = self.search.needle();
+        if needle.is_empty() {
+            return None;
+        }
+        let rows = self.display_rows()?;
+        let cur = self
+            .search
+            .current_row()
+            .min(rows.row_count().saturating_sub(1));
+        rows.columns()
+            .iter()
+            .position(|col| crate::search::matcher::contains(&col.cells[cur].display(), needle))
+    }
+
+    /// Slide `h_col_offset` (and its char twin) so column `col` sits inside the viewport with a
+    /// one-column scrolloff margin, clamped at the true first/last column.
+    fn scroll_column_into_view(&mut self, col: usize) {
+        let Some(rows) = self.display_rows() else {
+            return;
+        };
+        let col_count = rows.col_count();
+        if col_count == 0 {
+            return;
+        }
+        const H_MARGIN: usize = 1;
+        // A cheap column-count estimate of how many columns fit; the exact fit is width-dependent
+        // and re-derived by the renderer, so we only need to guarantee `col` is not the leftmost
+        // visible column (which would put it flush to the border).
+        if col < self.h_col_offset.saturating_add(H_MARGIN) {
+            self.h_col_offset = col.saturating_sub(H_MARGIN);
+        }
+        // Never over-scroll past the last column.
+        self.h_col_offset = self.h_col_offset.min(col_count.saturating_sub(1));
+        self.snap_h_char_to_col();
     }
 }

@@ -22,7 +22,12 @@ untouched, and closing the search restores the full grid instantly. For a durabl
   box, and the grid filters live as you type.
 - The badge on the bar shows `shown/total` rows; it turns red when nothing matches.
 - **Enter** (or **Tab**) confirms: the needle freezes, the bar dims, and the keyboard goes back to
-  normal grid navigation (scrolling, `f` facets, `Ctrl+T`) over the filtered rows.
+  normal grid navigation (scrolling, `f` facets, `Ctrl+T`) over the filtered rows. The first
+  matching row becomes the **current match**.
+- Once confirmed, **n** / **N** (or **Enter**) step to the next / previous matching row. The
+  current match is highlighted in a distinct color (bright, vs. the dim highlight on the other
+  matches) and scrolled into view with a margin, so it's never pinned against a pane edge unless
+  it's the very first or last row. Navigation wraps around the ends.
 - On a confirmed search, **Ctrl+F** re-enters editing with the needle intact, and **Esc** clears
   the filter and closes the bar.
 - While editing, **Esc** closes and clears; **Ctrl+C** quits from either mode.

@@ -164,3 +164,79 @@ fn filter_table_empty_needle_is_identity_shape() {
     assert_eq!(f.row_count(), t.row_count());
     assert_eq!(f.col_count(), t.col_count());
 }
+
+// --- current-match navigation ---
+
+#[test]
+fn current_row_defaults_to_first_and_resets_on_edit() {
+    let mut s = SearchState::new();
+    s.open();
+    assert_eq!(s.current_row(), 0);
+    s.push('e');
+    s.next_match(5);
+    assert_eq!(s.current_row(), 1);
+    // Editing the needle resets the current match to the first row.
+    s.push('u');
+    assert_eq!(s.current_row(), 0);
+    s.next_match(5);
+    s.pop();
+    assert_eq!(s.current_row(), 0, "backspace also resets");
+}
+
+#[test]
+fn next_match_advances_and_wraps() {
+    let mut s = SearchState::new();
+    s.open();
+    s.push('x');
+    s.next_match(3); // 0 -> 1
+    s.next_match(3); // 1 -> 2
+    assert_eq!(s.current_row(), 2);
+    s.next_match(3); // 2 -> 0 (wrap)
+    assert_eq!(s.current_row(), 0);
+}
+
+#[test]
+fn prev_match_retreats_and_wraps() {
+    let mut s = SearchState::new();
+    s.open();
+    s.push('x');
+    s.prev_match(3); // 0 -> 2 (wrap)
+    assert_eq!(s.current_row(), 2);
+    s.prev_match(3); // 2 -> 1
+    assert_eq!(s.current_row(), 1);
+}
+
+#[test]
+fn navigation_on_empty_result_stays_at_zero() {
+    let mut s = SearchState::new();
+    s.open();
+    s.push('z');
+    s.next_match(0);
+    assert_eq!(s.current_row(), 0);
+    s.prev_match(0);
+    assert_eq!(s.current_row(), 0);
+}
+
+#[test]
+fn clamp_current_pulls_index_within_a_shrunk_result() {
+    let mut s = SearchState::new();
+    s.open();
+    s.push('x');
+    s.next_match(5); // -> 1
+    s.next_match(5); // -> 2
+    s.next_match(5); // -> 3
+    s.clamp_current(2); // result shrank to 2 rows
+    assert_eq!(s.current_row(), 1, "clamped to last valid index");
+    s.clamp_current(0);
+    assert_eq!(s.current_row(), 0, "empty result clamps to 0");
+}
+
+#[test]
+fn close_resets_the_current_row() {
+    let mut s = SearchState::new();
+    s.open();
+    s.push('x');
+    s.next_match(5);
+    s.close();
+    assert_eq!(s.current_row(), 0);
+}

@@ -106,6 +106,11 @@ pub struct BodyRow {
     /// Byte ranges within `text` (in ascending, non-overlapping order) that render a
     /// `Cell::Null`. Empty when the row has no nulls (the common case).
     pub null_spans: Vec<Range<usize>>,
+    /// Byte range of each visible column's padded cell within `text`, in visible-column order
+    /// (parallel to [`GridFrame::col_x`]). Lets the renderer scan/style per cell — e.g. the
+    /// search highlighter matches within cells (never across the gutter) and needs to know
+    /// which ranges belong to the current-match column.
+    pub cell_spans: Vec<Range<usize>>,
 }
 
 impl BodyRow {
@@ -293,21 +298,28 @@ fn join_cells(cells: impl Iterator<Item = String>) -> String {
 }
 
 /// Assemble one [`BodyRow`] from an iterator of `(padded_cell_text, is_null)`, joining with the
-/// gutter and recording the byte range of each null cell within the joined text.
+/// gutter and recording the byte range of every cell (and separately of each null cell) within
+/// the joined text.
 fn build_body_row(cells: impl Iterator<Item = (String, bool)>) -> BodyRow {
     let mut text = String::new();
     let mut null_spans: Vec<Range<usize>> = Vec::new();
+    let mut cell_spans: Vec<Range<usize>> = Vec::new();
     for (i, (cell, is_null)) in cells.enumerate() {
         if i != 0 {
             text.push_str(COL_GAP);
         }
         let start = text.len();
         text.push_str(&cell);
+        cell_spans.push(start..text.len());
         if is_null {
             null_spans.push(start..text.len());
         }
     }
-    BodyRow { text, null_spans }
+    BodyRow {
+        text,
+        null_spans,
+        cell_spans,
+    }
 }
 
 #[cfg(test)]

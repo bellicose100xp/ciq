@@ -68,13 +68,13 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
         return hints!["Ctrl+C" => "quit"];
     }
     if app.focus() == Focus::Results {
-        // A confirmed search adds the two chords that act on it (re-edit / clear).
+        // A confirmed search adds match navigation + the chords that act on it (re-edit / clear).
         if app.search().is_confirmed() {
             return hints![
+                "n/N" => "next/prev match",
                 "Ctrl+F" => "edit search",
                 "Esc" => "clear search",
                 "f" => "facet",
-                "Ctrl+T" => "query",
                 "Ctrl+C" => "quit",
             ];
         }

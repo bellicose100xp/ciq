@@ -293,3 +293,183 @@ fn new_result_reapplies_the_active_filter() {
     assert_eq!(rows.row_count(), 1, "the standing needle filters new rows");
     assert_eq!(rows.columns()[1].cells, vec![Cell::Text("EU-NORTH".into())]);
 }
+
+// --- current-match navigation (n / N / Enter when confirmed) ---
+
+/// An app whose result is `n` rows all containing "eu" in a `tag` column, plus a distinguishing
+/// `id`. A prior render at 60x16 records the results-pane region so scrolloff math has a viewport.
+fn app_with_many_eu_rows(n: usize) -> App {
+    let (mut app, _rx) = loaded_app();
+    type_str(&mut app, "SELECT * FROM t", 0);
+    app.tick(150);
+    let ids: Vec<Cell> = (0..n as i64).map(Cell::Int).collect();
+    let tags: Vec<Cell> = (0..n).map(|i| Cell::Text(format!("eu-{i}"))).collect();
+    let table = Table::new(vec![
+        Column::new("id", ColumnType::Int, ids),
+        Column::new("tag", ColumnType::Text, tags),
+    ]);
+    let schema = table.schema();
+    let id = app.latest_request_id();
+    app.on_response(QueryResponse::ProcessedSuccess {
+        result: ProcessedResult::new(table, schema, 0),
+        request_id: id,
+        kind: RequestKind::Main,
+    });
+    if app.autocomplete().is_open() {
+        app.on_key(KeyEvent::plain(Key::Esc), 200);
+    }
+    let _ = render(&app, 60, 16); // record the results-pane region for scrolloff
+    app
+}
+
+#[test]
+fn n_and_shift_n_navigate_matches_when_confirmed() {
+    let mut app = app_with_many_eu_rows(30);
+    app.on_key(ctrl(Key::Char('f')), 300);
+    type_needle(&mut app, "eu");
+    app.on_key(KeyEvent::plain(Key::Enter), 300); // confirm
+    assert_eq!(
+        app.search().current_row(),
+        0,
+        "first match current by default"
+    );
+    app.on_key(KeyEvent::char('n'), 300);
+    assert_eq!(app.search().current_row(), 1);
+    app.on_key(KeyEvent::char('n'), 300);
+    assert_eq!(app.search().current_row(), 2);
+    app.on_key(KeyEvent::char('N'), 300);
+    assert_eq!(app.search().current_row(), 1, "Shift+N goes back");
+}
+
+#[test]
+fn enter_when_confirmed_steps_to_next_match() {
+    let mut app = app_with_many_eu_rows(10);
+    app.on_key(ctrl(Key::Char('f')), 300);
+    type_needle(&mut app, "eu");
+    app.on_key(KeyEvent::plain(Key::Enter), 300); // confirm (current = 0)
+    app.on_key(KeyEvent::plain(Key::Enter), 300); // next
+    assert_eq!(app.search().current_row(), 1);
+}
+
+#[test]
+fn navigation_wraps_at_the_ends() {
+    let mut app = app_with_many_eu_rows(3);
+    app.on_key(ctrl(Key::Char('f')), 300);
+    type_needle(&mut app, "eu");
+    app.on_key(KeyEvent::plain(Key::Enter), 300);
+    app.on_key(KeyEvent::char('N'), 300); // 0 -> 2 (wrap back)
+    assert_eq!(app.search().current_row(), 2);
+    app.on_key(KeyEvent::char('n'), 300); // 2 -> 0 (wrap forward)
+    assert_eq!(app.search().current_row(), 0);
+}
+
+#[test]
+fn n_does_nothing_while_editing_or_unconfirmed() {
+    let mut app = app_with_many_eu_rows(10);
+    app.on_key(ctrl(Key::Char('f')), 300);
+    type_needle(&mut app, "eu");
+    // Still editing: 'n' is a needle char, not a navigation key.
+    app.on_key(KeyEvent::char('n'), 300);
+    assert_eq!(app.search().needle(), "eun");
+    assert_eq!(app.search().current_row(), 0);
+}
+
+#[test]
+fn navigating_down_scrolls_the_match_into_view_with_scrolloff() {
+    let mut app = app_with_many_eu_rows(60);
+    app.on_key(ctrl(Key::Char('f')), 300);
+    type_needle(&mut app, "eu");
+    app.on_key(KeyEvent::plain(Key::Enter), 300);
+    // Step forward many times; the current match must stay within the visible body window, and
+    // never be pinned to the very top/bottom edge until the data ends.
+    for _ in 0..20 {
+        app.on_key(KeyEvent::char('n'), 300);
+    }
+    let cur = app.search().current_row();
+    let off = app.v_row_offset();
+    let body_h = app.results_body_height() as usize;
+    assert!(
+        cur >= off && cur < off + body_h,
+        "current match {cur} is inside the visible window [{off}, {})",
+        off + body_h
+    );
+    assert!(
+        cur > off,
+        "with scrolloff, the match is not flush against the top edge"
+    );
+}
+
+#[test]
+fn last_match_may_reach_the_bottom_edge() {
+    let mut app = app_with_many_eu_rows(60);
+    app.on_key(ctrl(Key::Char('f')), 300);
+    type_needle(&mut app, "eu");
+    app.on_key(KeyEvent::plain(Key::Enter), 300);
+    // Jump to the last match via one wrap-around N.
+    app.on_key(KeyEvent::char('N'), 300);
+    assert_eq!(app.search().current_row(), 59);
+    let body_h = app.results_body_height() as usize;
+    // The window is clamped at the data end: offset = row_count - body_h.
+    assert_eq!(app.v_row_offset(), 60 - body_h);
+}
+
+#[test]
+fn current_match_row_renders_in_the_distinct_style() {
+    let mut app = app_with_many_eu_rows(5);
+    app.on_key(ctrl(Key::Char('f')), 300);
+    type_needle(&mut app, "eu");
+    app.on_key(KeyEvent::plain(Key::Enter), 300); // confirm; current = row 0
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut t = Terminal::new(TestBackend::new(60, 16)).unwrap();
+    t.draw(|f| app.render(f)).unwrap();
+    let buf = t.backend().buffer().clone();
+    // Row 0's "eu-0" cell should carry the current-match bg somewhere on screen.
+    let cur_bg = crate::theme::grid::current_match().bg;
+    let mut found = false;
+    for y in 0..16u16 {
+        for x in 0..60u16 {
+            if buf[(x, y)].symbol() == "e" && buf[(x, y)].style().bg == cur_bg {
+                found = true;
+            }
+        }
+    }
+    assert!(
+        found,
+        "the current match row paints in the current-match bg"
+    );
+}
+
+#[test]
+fn match_highlight_survives_vertical_scrolling() {
+    // Regression: scrolling a confirmed filtered result must not drop the highlights on the rows
+    // that scroll into view.
+    let mut app = app_with_many_eu_rows(60);
+    app.on_key(ctrl(Key::Char('f')), 300);
+    type_needle(&mut app, "eu");
+    app.on_key(KeyEvent::plain(Key::Enter), 300);
+    for _ in 0..15 {
+        app.on_key(KeyEvent::char('n'), 300);
+    }
+    assert!(app.v_row_offset() > 0, "we actually scrolled");
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut t = Terminal::new(TestBackend::new(60, 16)).unwrap();
+    t.draw(|f| app.render(f)).unwrap();
+    let buf = t.backend().buffer().clone();
+    let match_bg = crate::theme::grid::search_match().bg;
+    let cur_bg = crate::theme::grid::current_match().bg;
+    let mut highlighted = 0;
+    for y in 0..16u16 {
+        for x in 0..60u16 {
+            let bg = buf[(x, y)].style().bg;
+            if bg == match_bg || bg == cur_bg {
+                highlighted += 1;
+            }
+        }
+    }
+    assert!(
+        highlighted > 0,
+        "scrolled-in rows still carry match highlights"
+    );
+}

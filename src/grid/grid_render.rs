@@ -48,6 +48,10 @@ pub struct GridPaint<'a> {
     /// The `Ctrl+F` needle: when non-empty, every case-insensitive occurrence within the
     /// visible body lines is highlighted (the filter's in-place match marking).
     pub search_needle: &'a str,
+    /// The absolute body-row index of the **current** search match, if any. Its matched runs are
+    /// painted with [`theme::grid::current_match`] (bright, distinct) instead of the dim
+    /// [`theme::grid::search_match`] every other match gets — jiq's current-vs-other match colors.
+    pub current_match_row: Option<usize>,
 }
 
 /// Render `frame` (the laid-out grid) into `area` with the given [`GridPaint`] presentation.
@@ -64,6 +68,7 @@ pub fn render_grid(f: &mut Frame, area: Rect, grid: &GridFrame, paint: GridPaint
         hovered_row,
         accent,
         search_needle,
+        current_match_row,
     } = paint;
 
     let extra = if stale {
@@ -103,11 +108,13 @@ pub fn render_grid(f: &mut Frame, area: Rect, grid: &GridFrame, paint: GridPaint
     let hovered_offset = hovered_row
         .and_then(|abs| abs.checked_sub(v_row_offset))
         .filter(|&off| off < visible.len());
+    let current_offset = current_match_row.and_then(|abs| abs.checked_sub(v_row_offset));
     let lines: Vec<Line> = visible
         .iter()
         .enumerate()
         .map(|(offset, row)| {
-            let line = style_body_line(row, extra, search_needle);
+            let is_current = Some(offset) == current_offset;
+            let line = style_body_line(row, extra, search_needle, is_current);
             if Some(offset) == hovered_offset {
                 line.style(theme::grid::hovered_bg())
             } else {
@@ -142,12 +149,21 @@ pub fn render_grid(f: &mut Frame, area: Rect, grid: &GridFrame, paint: GridPaint
 /// overlaps a null span keeps the null styling (the filter says NULL never matches; the render
 /// agrees — a needle like "null" must not light up absent values). `extra` is OR'd into every
 /// span's modifier so a stale-dimmed render adds DIM uniformly without losing the per-span
-/// colors.
-fn style_body_line(row: &BodyRow, extra: Modifier, needle: &str) -> Line<'static> {
+/// colors. When `is_current` the row is the current search match, so its matched runs use the
+/// bright [`theme::grid::current_match`] style instead of the dim [`theme::grid::search_match`]
+/// every other match gets — the active result stands out from the rest.
+fn style_body_line(
+    row: &BodyRow,
+    extra: Modifier,
+    needle: &str,
+    is_current: bool,
+) -> Line<'static> {
     let matches = if needle.is_empty() {
         Vec::new()
     } else {
-        matcher::find_matches(&row.text, needle)
+        // Match within each cell (never across the gutter), so a needle can't spuriously
+        // "match" a run that straddles two columns' padding.
+        cell_scoped_matches(row, needle)
     };
     if row.null_spans.is_empty() && matches.is_empty() {
         return Line::from(Span::styled(
@@ -155,6 +171,11 @@ fn style_body_line(row: &BodyRow, extra: Modifier, needle: &str) -> Line<'static
             theme::grid::cell().add_modifier(extra),
         ));
     }
+    let match_style = if is_current {
+        theme::grid::current_match()
+    } else {
+        theme::grid::search_match()
+    };
     // Walk the line as boundary-delimited segments; each takes the highest-precedence styling of
     // the range sets covering it (null > match > plain).
     let mut boundaries: Vec<usize> = vec![0, row.text.len()];
@@ -176,7 +197,7 @@ fn style_body_line(row: &BodyRow, extra: Modifier, needle: &str) -> Line<'static
         let style = if covered(&row.null_spans, start) {
             theme::grid::null()
         } else if covered(&matches, start) {
-            theme::grid::search_match()
+            match_style
         } else {
             theme::grid::cell()
         };
@@ -186,6 +207,20 @@ fn style_body_line(row: &BodyRow, extra: Modifier, needle: &str) -> Line<'static
         ));
     }
     Line::from(spans)
+}
+
+/// Needle matches found **within each cell** of the row, offset back into the row's byte space.
+/// Scoping to cells (via [`BodyRow::cell_spans`]) keeps a match from straddling the two-space
+/// gutter between columns — a run of gutter+cell-edge text is never a real cell value.
+fn cell_scoped_matches(row: &BodyRow, needle: &str) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    for cell in &row.cell_spans {
+        let text = &row.text[cell.start..cell.end];
+        for m in matcher::find_matches(text, needle) {
+            out.push((cell.start + m.start)..(cell.start + m.end));
+        }
+    }
+    out
 }
 
 #[cfg(test)]

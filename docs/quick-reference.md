@@ -69,6 +69,7 @@ The table is always named `t`. Inside the session:
 | `Left` / `Right` | Scroll one column left / right. |
 | `Home` | Jump to the first row. |
 | `f` | Open a facet for the leftmost visible column. |
+| `n` / `N` | With a confirmed search: jump to the next / previous matching row (wraps, scrolls into view). |
 | `Esc` | Clear a confirmed search filter (restores the full grid). |
 
 ### Search bar (Ctrl+F, while editing)
@@ -77,9 +78,11 @@ The table is always named `t`. Inside the session:
 |---|---|
 | printable character | Append to the filter needle (the grid filters live). |
 | `Backspace` | Delete the last needle character. |
-| `Enter` / `Tab` | Confirm: freeze the filter, resume grid navigation. |
+| `Enter` / `Tab` | Confirm: freeze the filter, resume grid navigation (the first match becomes current). |
 | `Esc` | Close the bar and clear the filter. |
 | `Ctrl+C` | Quit. |
+
+Once confirmed, `n` / `N` (or `Enter`) step through matching rows — the current match is highlighted in a distinct color and scrolled into view.
 
 ### Autocomplete popup (when open)
 

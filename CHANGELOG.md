@@ -11,7 +11,10 @@ changes alike, patch `0.minor.Y` for fixes, refactors, polish, and docs.
 - **Row search** (`Ctrl+F`) — filter the grid to rows where any column contains the typed text
   (case-insensitive), with every match highlighted in place. Enter confirms the filter and
   returns the keyboard to grid navigation; Esc clears it. The facet chord is now strictly the
-  modifier-free `f` (it previously also fired on `Ctrl+F`).
+  modifier-free `f` (it previously also fired on `Ctrl+F`). Once confirmed, `n` / `N` (or Enter)
+  step between matching rows: the current match gets a distinct highlight color and is scrolled
+  into view with a scrolloff margin (vim-style, both axes), and highlights persist while
+  scrolling. Matches are scoped per cell so a needle never spans the column gutter.
 
 ### Changed
 - **No row cap by default** — interactive queries now show every row they return; the previous

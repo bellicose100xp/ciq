@@ -570,11 +570,22 @@ pub mod grid {
     }
 
     /// A `Ctrl+F` search-match run within a body line — jiq's match-highlight band (light slate
-    /// over the normal text) so matches read in place without drowning the row.
+    /// over the normal text) so matches read in place without drowning the row. This is the
+    /// **non-current** match style; the actively-selected match uses [`current_match`].
     pub fn search_match() -> Style {
         Style::default()
             .fg(p::TEXT)
             .bg(p::BG_HIGHLIGHT)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// The **current** search match (the one `n`/`N` navigation lands on) — jiq's bright orange
+    /// band with a dark fg for maximum contrast, so the active result stands out from the other
+    /// (dim-slate) matches on screen.
+    pub fn current_match() -> Style {
+        Style::default()
+            .fg(p::BG_DARK)
+            .bg(p::ORANGE)
             .add_modifier(Modifier::BOLD)
     }
 }

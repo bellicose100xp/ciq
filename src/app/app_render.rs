@@ -610,11 +610,12 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
             Some(crate::app::HoverTarget::GridRow(row)) => Some(row),
             _ => None,
         };
-        let needle = if app.search().is_filtering() {
-            app.search().needle()
-        } else {
-            ""
-        };
+        let filtering = app.search().is_filtering();
+        let needle = if filtering { app.search().needle() } else { "" };
+        // The current match is only meaningful (and only painted distinctly) once the search is
+        // confirmed — while editing, every match is equal and there is no "selected" one yet.
+        let current_match_row =
+            (filtering && app.search().is_confirmed()).then(|| app.search().current_row());
         grid_render::render_grid(
             frame,
             inner,
@@ -625,6 +626,7 @@ fn render_results(app: &App, frame: &mut Frame, area: Rect) {
                 hovered_row,
                 accent,
                 search_needle: needle,
+                current_match_row,
             },
         );
     }

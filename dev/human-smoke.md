@@ -444,6 +444,37 @@ Confirm by hand (light + dark terminal):
 
 ---
 
+## Post-release UX — Ctrl+F row search (current match + n/N navigation)
+
+The headless suite proves the filter, the current-match index, n/N navigation, and the
+scroll-into-view math (against a recorded viewport). It does NOT prove the felt scrolling, the
+two match colors reading distinctly on a real terminal, or the edge-margin feel. Confirm by hand
+on a tall result (`./target/release/ciq showcase-m.csv`, then `SELECT * FROM t`):
+
+1. **Live filter + highlights.** Press `Ctrl+F`, type a common substring (e.g. `eu` or a name).
+   Rows filter as you type and every matching run is highlighted in place. The bar badge shows
+   `shown/total rows`.
+2. **Confirm makes a current match.** Press `Enter`. The bar dims; the first matching row's run is
+   painted in the **bright/orange** current-match color while the others stay in the **dim slate**
+   match color — the two must read as clearly different.
+3. **n / N navigate + scroll into view.** Press `n` repeatedly: the current-match highlight moves
+   down row by row, the grid scrolls to follow, and the current match is never pinned flush to the
+   top or bottom border — it keeps a few rows of margin (scrolloff). `N` goes back up. Confirm both
+   wrap around the ends.
+4. **Horizontal margin.** With a wide result, navigate to a match whose matching cell is off to the
+   right; the grid should scroll horizontally to bring that column in with a small left/right
+   margin, not flush against the border.
+5. **First/last may touch the edge.** Navigate to the very first match (`n`-wrap or fresh confirm)
+   and the very last (`N` from the first): at the true data ends the current match is allowed to sit
+   at the top / bottom row (there's nothing beyond to keep margin against).
+6. **Highlights survive scrolling.** Scroll a confirmed search with the wheel / arrows so new rows
+   come into view — the highlights on those rows must be present (not just on the rows visible at
+   confirm time).
+7. **Re-edit / clear.** `Ctrl+F` re-opens editing with the needle intact; `Esc` clears the filter
+   and restores the full grid.
+
+---
+
 ## Showcase fixture — edge-case tour (tests/fixtures/showcase.csv)
 
 A meatier fixture for driving every TUI edge case by hand. **5000 rows, 14 columns**, generated
