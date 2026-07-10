@@ -13,6 +13,7 @@ const PROMPT_W: u16 = 2;
 fn base_regions() -> LayoutRegions {
     LayoutRegions {
         results_pane: Some(Rect::new(0, 0, 40, 10)),
+        search_bar: None,
         query_bar: Some(Rect::new(0, 10, 40, 1)),
         popup: None,
     }
@@ -115,6 +116,7 @@ fn click_on_a_lower_line_of_a_multiline_bar_resolves_its_row() {
     // row 1, and the 3rd line (y=10) resolves row 2 — the clicked line is not discarded.
     let r = LayoutRegions {
         results_pane: Some(Rect::new(0, 0, 40, 8)),
+        search_bar: None,
         query_bar: Some(Rect::new(0, 8, 40, 3)),
         popup: None,
     };
@@ -129,6 +131,52 @@ fn click_on_a_lower_line_of_a_multiline_bar_resolves_its_row() {
     assert_eq!(
         r.target_at(5, 10, PROMPT_W, 0, 0),
         Some(MouseTarget::QueryBar { row: 2, col: 3 })
+    );
+}
+
+#[test]
+fn click_on_the_open_search_bar_resolves_search_bar() {
+    // Layout with the Ctrl+F bar open: pane rows 0..7, search bar rows 7..10, query bar at 10.
+    let r = LayoutRegions {
+        results_pane: Some(Rect::new(0, 0, 40, 7)),
+        search_bar: Some(Rect::new(0, 7, 40, 3)),
+        query_bar: Some(Rect::new(0, 10, 40, 1)),
+        popup: None,
+    };
+    // Anywhere in the box (border or text row) is the one search-bar target.
+    for y in 7..10 {
+        assert_eq!(
+            r.target_at(5, y, PROMPT_W, 0, 0),
+            Some(MouseTarget::SearchBar),
+            "row {y} is inside the search bar box"
+        );
+    }
+    // The surfaces around it still resolve to themselves.
+    assert_eq!(
+        r.target_at(5, 2, PROMPT_W, 0, 0),
+        Some(MouseTarget::Results { body_row: Some(0) })
+    );
+    assert_eq!(
+        r.target_at(5, 10, PROMPT_W, 0, 0),
+        Some(MouseTarget::QueryBar { row: 0, col: 3 })
+    );
+}
+
+#[test]
+fn popup_overlay_wins_over_the_search_bar_behind_it() {
+    let r = LayoutRegions {
+        results_pane: Some(Rect::new(0, 0, 40, 7)),
+        search_bar: Some(Rect::new(0, 7, 40, 3)),
+        query_bar: Some(Rect::new(0, 10, 40, 1)),
+        popup: Some((PopupKind::History, Rect::new(0, 5, 20, 5))), // rows 5..10
+    };
+    assert_eq!(
+        r.target_at(3, 8, PROMPT_W, 0, 0),
+        Some(MouseTarget::Popup {
+            kind: PopupKind::History,
+            row: Some(2),
+        }),
+        "a popup drawn over the search bar wins the hit-test"
     );
 }
 
@@ -194,6 +242,7 @@ fn empty_regions_resolve_to_none() {
 fn zero_height_pane_has_no_body_row() {
     let r = LayoutRegions {
         results_pane: Some(Rect::new(0, 0, 40, 0)),
+        search_bar: None,
         query_bar: None,
         popup: None,
     };

@@ -4,7 +4,7 @@ assertion_line: 126
 expression: screen
 ---
 "┌──────────────────────────┐            "
-"│▌id                    int│            "
+"│▍id                    int│            "
 "│ status                txt│            "
 "│ amount                num│            "
 "│ created_at           date│            "

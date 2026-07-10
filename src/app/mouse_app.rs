@@ -126,7 +126,9 @@ impl App {
         self.double_click.reset();
         if matches!(
             target,
-            Some(MouseTarget::Popup { .. }) | Some(MouseTarget::QueryBar { .. })
+            Some(MouseTarget::Popup { .. })
+                | Some(MouseTarget::QueryBar { .. })
+                | Some(MouseTarget::SearchBar)
         ) {
             return;
         }
@@ -165,21 +167,38 @@ impl App {
             self.ai.close();
             return;
         }
+        if self.save.is_open() && !on_popup(&target, PopupKind::Save) {
+            self.close_save();
+            return;
+        }
         match target {
             Some(MouseTarget::Popup { kind, row }) => {
                 self.popup_click(kind, row, x, y, now_ms, drag)
             }
+            // A click on the open search bar re-enters needle editing on a confirmed search
+            // (the Ctrl+F chord's unconfirm), and is a no-op while already editing — the bar
+            // has no positionable cursor, so the whole box is one "give me the keyboard" target.
+            Some(MouseTarget::SearchBar) if self.search.is_confirmed() => {
+                self.search.unconfirm();
+            }
+            Some(MouseTarget::SearchBar) => {}
             // Move focus to the grid (matching the keyboard Down-handoff) only when there is a
             // result to navigate. A focused-cell concept does not exist yet, so the click row only
             // focuses the pane — the resolved `body_row` is available for a future row-cursor without
             // changing this seam.
             Some(MouseTarget::Results { .. }) if self.result.is_some() => {
+                self.leave_search_editing();
                 self.focus = Focus::Results;
             }
             Some(MouseTarget::QueryBar { row, col }) => {
                 if matches!(self.phase, AppPhase::LoadError(_)) {
                     return; // bar frozen on load error (same invariant as on_key_query_bar)
                 }
+                // While the search bar is editing it captures the keyboard; a click on the query
+                // bar is an explicit "type here now", so leave editing first (Enter parity:
+                // confirm a non-empty needle, close an empty one) or the keys would still edit
+                // the needle.
+                self.leave_search_editing();
                 // Focus the bar and land the cursor at the clicked (line, column), in Insert mode so
                 // typing resumes immediately (jiq's click_input_field: focus, then position the
                 // cursor). In Simple mode, the row indexes into the five-pane stack — clicking pane
@@ -240,7 +259,7 @@ impl App {
                         self.history.select_next();
                     }
                 }
-                PopupKind::Facet | PopupKind::Ai => {}
+                PopupKind::Facet | PopupKind::Ai | PopupKind::Save => {}
             }
         }
     }
@@ -281,7 +300,7 @@ impl App {
             // The history popup scrolls through its own state (`adjust_scroll_to_selection`), not
             // the shared scroll_window helper — read the offset it rendered with.
             PopupKind::History => (self.history.scroll_offset(), self.history.filtered_count()),
-            PopupKind::Facet | PopupKind::Ai => return None,
+            PopupKind::Facet | PopupKind::Ai | PopupKind::Save => return None,
         };
         let abs = start + row;
         (abs < len).then_some(abs)
@@ -353,7 +372,7 @@ impl App {
                     self.recall_selected_history(now_ms);
                 }
             }
-            PopupKind::Facet | PopupKind::Ai => {}
+            PopupKind::Facet | PopupKind::Ai | PopupKind::Save => {}
         }
     }
 }

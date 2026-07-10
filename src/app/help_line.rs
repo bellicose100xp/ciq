@@ -40,6 +40,11 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
     // Home, Space, type-to-filter) are omitted — the legend teaches what a user can't guess, not
     // what they already know. `Ctrl+C quit` is the one universal we keep, since "how do I get out"
     // is not always obvious in a full-screen TUI.
+    // The save popup carries its own bottom-border hints (Enter save / Esc cancel), so the main
+    // legend just shows quit, like the other capture surfaces.
+    if app.is_save_open() {
+        return hints!["Ctrl+C" => "quit"];
+    }
     if app.is_ai_open() {
         return hints!["Ctrl+C" => "quit"];
     }
@@ -83,6 +88,8 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
             "f" => "facet",
             "Ctrl+F" => "search",
             "Ctrl+T" => "query",
+            "Ctrl+O" => "output",
+            "Ctrl+W" => "save csv",
             "Ctrl+C" => "quit",
         ];
     }

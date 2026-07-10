@@ -112,6 +112,7 @@ pub fn render(app: &App, frame: &mut Frame) {
     render_facet_popup(app, frame, query_box, results);
     render_history_popup(app, frame, query_box, results);
     render_ai_popup(app, frame, query_box, results);
+    render_save_popup(app, frame, query_box, results);
 
     // Record the on-screen regions so the next mouse event resolves against the geometry the user
     // actually sees (the click-to-focus / click-to-position / scroll-routing seam). The query-bar
@@ -120,6 +121,7 @@ pub fn render(app: &App, frame: &mut Frame) {
     // the same `popup_above_bar` anchoring the render used above.
     app.set_layout_regions(LayoutRegions {
         results_pane: Some(results),
+        search_bar: app.search().is_visible().then_some(chunks[1]),
         query_bar: Some(text_area),
         popup: active_popup_region(app, query_box, results),
     });
@@ -138,6 +140,9 @@ fn active_popup_region(app: &App, bar: Rect, results: Rect) -> Option<(PopupKind
 /// The single open popup's kind, or `None` when none is open. Mutually exclusive — opening one
 /// closes the others.
 fn active_popup_kind(app: &App) -> Option<PopupKind> {
+    if app.is_save_open() {
+        return Some(PopupKind::Save);
+    }
     if app.is_ai_open() {
         return Some(PopupKind::Ai);
     }
@@ -163,6 +168,7 @@ fn active_popup_kind(app: &App) -> Option<PopupKind> {
 fn popup_rect_for(app: &App, kind: PopupKind, bar: Rect, results: Rect) -> Rect {
     let rows = match kind {
         PopupKind::Ai => 2,
+        PopupKind::Save => crate::save::save_render::SAVE_POPUP_ROWS,
         PopupKind::History => {
             (app.history().filtered_count().max(1) as u16).min(MAX_VISIBLE_HISTORY as u16)
         }
@@ -212,6 +218,17 @@ fn render_ai_popup(app: &App, frame: &mut Frame, bar: Rect, results: Rect) {
     }
     let area = popup_rect_for(app, PopupKind::Ai, bar, results);
     render_ai(app.ai(), frame, area);
+}
+
+/// Overlay the save-to-CSV popup just above the query bar, over the results pane, when open
+/// (`Ctrl+W`). A short fixed-height box (the filename line + the resolved-path preview). No-op
+/// when the popup is closed.
+fn render_save_popup(app: &App, frame: &mut Frame, bar: Rect, results: Rect) {
+    if !app.is_save_open() {
+        return;
+    }
+    let area = popup_rect_for(app, PopupKind::Save, bar, results);
+    crate::save::save_render::render_save(app.save(), frame, area);
 }
 
 /// Overlay the history popup just above the query bar, over the results pane, when open (P5.2).

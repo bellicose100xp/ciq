@@ -44,6 +44,8 @@ The table is always named `t`. Inside the session:
 | `Ctrl+R` | Open the query-history popup (seeds its filter with the bar text). |
 | `Ctrl+G` | Open the AI natural-language popup (needs the AI feature configured + a schema). |
 | `Ctrl+F` | Open the row-filter search bar (needs a result on screen); on a confirmed search, re-enter editing. |
+| `Ctrl+O` | Quit and print the displayed result to the terminal (an aligned, colored table in your scrollback). |
+| `Ctrl+W` | Open the save-to-CSV popup for the displayed result (writes RFC-4180 CSV to a file). |
 | `Esc` | Quit (when no popup is open; closes the focused popup otherwise). |
 | `Ctrl+C` | Quit (from anywhere, including any open popup). |
 
@@ -83,6 +85,16 @@ The table is always named `t`. Inside the session:
 | `Ctrl+C` | Quit. |
 
 Once confirmed, `n` / `N` (or `Enter`) step through matching rows — the current match is highlighted in a distinct color and scrolled into view.
+
+### Save-to-CSV popup (Ctrl+W, while open)
+
+| Key | Action |
+|---|---|
+| printable character | Append to the filename (the resolved path preview updates live). |
+| `Backspace` | Delete the last filename character. |
+| `Enter` | Resolve the name (`~` expands, `.csv` added when no extension) and write the result. |
+| `Esc` | Close without saving. |
+| `Ctrl+C` | Quit. |
 
 ### Autocomplete popup (when open)
 

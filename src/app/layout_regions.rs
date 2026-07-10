@@ -24,6 +24,8 @@ use ratatui::layout::Rect;
 pub struct LayoutRegions {
     /// The bordered results pane (the whole box, border included).
     pub results_pane: Option<Rect>,
+    /// The Ctrl+F search bar (the whole bordered box), `None` when the bar is closed.
+    pub search_bar: Option<Rect>,
     /// The query bar (the prompt + textarea row(s), no border).
     pub query_bar: Option<Rect>,
     /// The open popup overlay (autocomplete / palette / facet / history / AI), if any. Carries which
@@ -40,6 +42,7 @@ pub enum PopupKind {
     Facet,
     History,
     Ai,
+    Save,
 }
 
 /// The row the pointer is resting on (set by `Move` events, read by the render layer to paint the
@@ -66,6 +69,9 @@ pub enum MouseTarget {
     /// bar; the App maps the pair onto the editor so a click on the second/third line of a multiline
     /// query lands the cursor on that line.
     QueryBar { row: usize, col: usize },
+    /// A cell inside the open Ctrl+F search bar (border included — the whole box is one click
+    /// target; the needle is a plain string with no positionable cursor).
+    SearchBar,
     /// A cell inside an open popup. `row` is the 0-based row index within the popup's inner area
     /// (past its border), or `None` when the cell is on the border itself.
     Popup { kind: PopupKind, row: Option<usize> },
@@ -107,6 +113,11 @@ impl LayoutRegions {
                 kind,
                 row: Self::inner_row(rect, y),
             });
+        }
+        if let Some(rect) = self.search_bar
+            && Self::contains(rect, x, y)
+        {
+            return Some(MouseTarget::SearchBar);
         }
         if let Some(rect) = self.query_bar
             && Self::contains(rect, x, y)

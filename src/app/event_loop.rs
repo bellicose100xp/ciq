@@ -89,6 +89,10 @@ pub fn run(path: PathBuf, opts: CsvOpts) -> std::io::Result<()> {
     let summary_delim = opts.delimiter;
     let summary_header = opts.header.unwrap_or(true);
 
+    // The CSV's file stem seeds the save popup's default filename (`<stem>-out.csv`). Captured
+    // before `path` moves into the loader thread.
+    let source_stem = path.file_stem().map(|s| s.to_string_lossy().into_owned());
+
     // Load the full config once up front (the shell's filesystem touch). The `[general]` section
     // drives the engine pragmas (threads / memory_limit) and the App's viewport row cap; `[history]`
     // and `[ai]` are wired below. Reading it here (before the loader thread) lets the engine config
@@ -141,6 +145,11 @@ pub fn run(path: PathBuf, opts: CsvOpts) -> std::io::Result<()> {
         .or_else(crate::history::storage::default_history_path);
     app.configure_history(history_path, hist.max_entries(), hist.enabled());
 
+    // Wire the save-to-CSV popup context (`Ctrl+W`): the CSV's stem seeds the default filename
+    // (`<stem>-out.csv`), and the home dir powers `~` expansion. The env read is a shell-edge
+    // touch, like the config/history reads above; tests inject a tempdir instead.
+    app.configure_save(source_stem, std::env::var_os("HOME").map(PathBuf::from));
+
     // Wire the AI NL->SQL feature (P5.1) when `[ai]` is active. A provider is built from the
     // config (the API key is read from the env var it names, never the file); the AI thread owns
     // it and blocks on `Provider::complete` off the UI thread. When inactive, no thread is spawned
@@ -168,6 +177,15 @@ pub fn run(path: PathBuf, opts: CsvOpts) -> std::io::Result<()> {
         start,
     );
     restore_terminal(&mut terminal)?;
+    // After the terminal is restored, honor the exit action (jiq's output-on-exit): a `Ctrl+O`
+    // quit prints the displayed result as the console-styled aligned grid to stdout, so it lands
+    // in the scrollback. Done here (not inside the alternate screen) so the output survives.
+    if result.is_ok()
+        && app.exit_action() == Some(crate::app::ExitAction::PrintResult)
+        && let Some(rows) = app.display_rows()
+    {
+        print!("{}", crate::output::render_console(rows));
+    }
     result
 }
 

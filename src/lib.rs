@@ -33,6 +33,7 @@ pub mod logging;
 pub mod output;
 pub mod palette;
 pub mod query;
+pub mod save;
 pub mod schema;
 pub mod scroll_window;
 pub mod search;

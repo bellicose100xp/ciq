@@ -61,6 +61,7 @@ pub mod palette_app;
 pub mod polish;
 pub mod query_form;
 pub mod query_form_app;
+pub mod save_app;
 pub mod search_app;
 
 pub use editor::Editor;
@@ -99,6 +100,15 @@ enum FacetKey {
     Consumed,
     /// Any other key: the popup closed, but the key should still route normally.
     FallThrough,
+}
+
+/// What the shell should do after the event loop exits (jiq's `OutputMode` analog, §8/Q10).
+/// `Ctrl+C` quits plain (no action); `Ctrl+O` quits and prints the displayed result to stdout
+/// once the terminal is restored, so the grid the user was looking at lands in the scrollback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitAction {
+    /// Print the displayed result as the console-styled grid after terminal restore.
+    PrintResult,
 }
 
 /// Which surface currently has keyboard focus. Minimal in Phase 2 (only the query bar exists);
@@ -243,6 +253,19 @@ pub struct App {
     /// The cached search-filtered projection of the current result — recomputed on every needle
     /// edit and every new result (never per frame). `None` when no filter is active.
     pub(crate) search_filtered: Option<crate::engine::Table>,
+    /// The `Ctrl+W` save-to-CSV popup state (filename input + resolved-path preview + inline
+    /// error). Captures the keyboard while open, like the other popups.
+    pub(crate) save: crate::save::SaveState,
+    /// What the shell should do after quitting — set by the exit chords (`Ctrl+O` = print the
+    /// displayed result to stdout) and read by the event loop once the terminal is restored.
+    /// `None` = a plain quit (`Ctrl+C`).
+    exit_action: Option<ExitAction>,
+    /// The source CSV path stem (e.g. `showcase-m` for `showcase-m.csv`) — seeds the save
+    /// popup's default filename (`<stem>-out.csv`). Set by the event loop at startup.
+    pub(crate) source_stem: Option<String>,
+    /// The home directory for `~` expansion in the save popup's filename. Injected by the event
+    /// loop (the one `$HOME` read); tests pass a tempdir so the suite never reads the env.
+    pub(crate) save_home: Option<PathBuf>,
 }
 
 impl App {
@@ -285,6 +308,10 @@ impl App {
             double_click: double_click::DoubleClickTracker::new(),
             search: crate::search::SearchState::new(),
             search_filtered: None,
+            save: crate::save::SaveState::new(),
+            exit_action: None,
+            source_stem: None,
+            save_home: None,
         }
     }
 
@@ -555,6 +582,9 @@ impl App {
     /// so Esc dismisses the popup rather than quitting (it only quits when no popup is open).
     /// `Ctrl+P` opens the palette from anywhere.
     pub fn on_key(&mut self, ev: KeyEvent, now_ms: u64) -> bool {
+        if self.save.is_open() {
+            return self.handle_save_key(&ev);
+        }
         if self.ai.is_open() {
             return self.handle_ai_key(&ev, now_ms);
         }
@@ -621,6 +651,17 @@ impl App {
         // Top-level so it works from either focus state, like Ctrl+T.
         if ev.mods.ctrl && matches!(ev.key, Key::Char('f') | Key::Char('F')) {
             self.open_search();
+            return false;
+        }
+        // Ctrl+O quits and prints the displayed result to the scrollback (jiq's output-on-exit,
+        // §8/Q10). Enter is deliberately NOT the output key — it already means newline / confirm /
+        // accept on ciq's other surfaces, so overloading it would be ambiguous.
+        if ev.mods.ctrl && matches!(ev.key, Key::Char('o') | Key::Char('O')) {
+            return self.quit_with_print();
+        }
+        // Ctrl+W opens the save-to-CSV popup for the displayed result (the file analog of Ctrl+O).
+        if ev.mods.ctrl && matches!(ev.key, Key::Char('w') | Key::Char('W')) {
+            self.open_save();
             return false;
         }
         if self.autocomplete.is_open() && self.handle_popup_key(&ev, now_ms) {

@@ -943,6 +943,148 @@ fn drag_over_a_history_row_selects_but_does_not_recall() {
     );
 }
 
+// --- search bar mouse ---
+
+/// A loaded app with the Ctrl+F search bar open in editing mode and a typed needle.
+fn app_with_search_editing() -> App {
+    let mut app = app_with_result_on_bar(20);
+    if app.autocomplete().is_open() {
+        app.on_key(KeyEvent::plain(Key::Esc), 0);
+    }
+    app.on_key(
+        KeyEvent::new(Key::Char('f'), super::super::KeyMods::CTRL),
+        0,
+    );
+    assert!(app.search().is_editing());
+    // "0" matches the wide_result cells (Int columns counting from 0).
+    app.on_key(KeyEvent::char('0'), 0);
+    assert!(app.search().is_filtering());
+    app
+}
+
+#[test]
+fn click_on_confirmed_search_bar_reenters_editing() {
+    let mut app = app_with_search_editing();
+    app.on_key(KeyEvent::plain(Key::Enter), 0); // confirm
+    assert!(app.search().is_confirmed());
+    render_and_record(&app);
+    let rect = app.layout_regions().search_bar.expect("bar recorded");
+    app.on_mouse(
+        MouseEvent::Click {
+            col: rect.x + 2,
+            row: rect.y + 1,
+        },
+        0,
+    );
+    assert!(
+        app.search().is_editing(),
+        "a click on the confirmed bar re-enters needle editing (Ctrl+F parity)"
+    );
+    // Typing now edits the needle again.
+    app.on_key(KeyEvent::char('1'), 0);
+    assert_eq!(app.search().needle(), "01");
+}
+
+#[test]
+fn click_on_search_bar_while_editing_keeps_editing() {
+    let mut app = app_with_search_editing();
+    render_and_record(&app);
+    let rect = app.layout_regions().search_bar.expect("bar recorded");
+    app.on_mouse(
+        MouseEvent::Click {
+            col: rect.x + 2,
+            row: rect.y + 1,
+        },
+        0,
+    );
+    assert!(
+        app.search().is_editing(),
+        "already editing: click is a no-op"
+    );
+    assert_eq!(app.search().needle(), "0", "the needle is untouched");
+}
+
+#[test]
+fn click_on_query_bar_while_search_editing_confirms_and_moves_typing_to_the_bar() {
+    let mut app = app_with_search_editing();
+    let (_w, h) = render_and_record(&app);
+    let bar_row = h - 3; // the query box inner text row
+    app.on_mouse(
+        MouseEvent::Click {
+            col: 8,
+            row: bar_row,
+        },
+        0,
+    );
+    assert!(
+        app.search().is_confirmed(),
+        "clicking the query bar confirms the non-empty needle (Enter parity)"
+    );
+    assert_eq!(app.focus(), Focus::QueryBar);
+    let before = app.query().to_string();
+    app.on_key(KeyEvent::char('x'), 0);
+    assert_ne!(
+        app.query(),
+        before,
+        "typing lands in the query bar, not the needle"
+    );
+    assert_eq!(
+        app.search().needle(),
+        "0",
+        "the needle stopped capturing keys"
+    );
+}
+
+#[test]
+fn click_on_query_bar_with_empty_needle_closes_the_search() {
+    let mut app = app_with_result_on_bar(20);
+    if app.autocomplete().is_open() {
+        app.on_key(KeyEvent::plain(Key::Esc), 0);
+    }
+    app.on_key(
+        KeyEvent::new(Key::Char('f'), super::super::KeyMods::CTRL),
+        0,
+    );
+    assert!(app.search().is_editing());
+    let (_w, h) = render_and_record(&app);
+    let bar_row = h - 3;
+    app.on_mouse(
+        MouseEvent::Click {
+            col: 8,
+            row: bar_row,
+        },
+        0,
+    );
+    assert!(
+        !app.search().is_visible(),
+        "an empty needle has nothing to freeze — the bar closes (Enter parity)"
+    );
+    assert_eq!(app.focus(), Focus::QueryBar);
+}
+
+#[test]
+fn click_on_results_while_search_editing_confirms_the_filter() {
+    let mut app = app_with_search_editing();
+    render_and_record(&app);
+    app.on_mouse(MouseEvent::Click { col: 5, row: 5 }, 0); // inside the grid body
+    assert!(
+        app.search().is_confirmed(),
+        "a grid click freezes the filter and resumes navigation"
+    );
+    assert_eq!(app.focus(), Focus::Results);
+}
+
+#[test]
+fn search_bar_region_is_absent_when_the_bar_is_closed() {
+    let app = app_with_result_on_bar(5);
+    render_and_record(&app);
+    assert_eq!(
+        app.layout_regions().search_bar,
+        None,
+        "no phantom click target when Ctrl+F is closed"
+    );
+}
+
 // --- Simple-mode click column mapping ---
 
 #[test]

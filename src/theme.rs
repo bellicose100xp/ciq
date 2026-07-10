@@ -415,8 +415,10 @@ pub mod popup {
     use super::base as p;
     use ratatui::style::{Color, Modifier, Style};
 
-    /// The glyph for the current-row left accent bar.
-    pub const BAR: &str = "\u{258c}";
+    /// The glyph for the current-row left accent bar — a three-eighths block (`▍`), a touch
+    /// thinner than the half block so the selection's leading edge reads as a crisp stripe, not a
+    /// heavy slab.
+    pub const BAR: &str = "\u{258d}";
 
     /// Opaque popup fill — set as the `Block`'s `.style()` so the whole box (border-inner
     /// included) paints over the grid behind it. Paired with a `Clear` first so no stale
@@ -557,6 +559,73 @@ pub mod ai {
             .add_modifier(Modifier::BOLD)
     }
 
+    pub fn error() -> Style {
+        Style::default()
+            .fg(p::ERROR)
+            .bg(p::BG_DARK)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    pub fn hint() -> Style {
+        Style::default().fg(p::TEXT_MUTED).bg(p::BG_DARK)
+    }
+}
+
+/// Save-to-CSV popup (`Ctrl+W`) colors and styles. Green accent — the "write it out" verb reads
+/// as a success-colored surface, distinct from the cyan (autocomplete/history/facet), magenta
+/// (palette), and purple (AI) popups.
+pub mod save {
+    use super::base as p;
+    use ratatui::style::{Color, Modifier, Style};
+
+    /// The popup's accent (green) — border and title key off it.
+    pub const ACCENT: Color = p::GREEN;
+
+    pub fn border() -> Style {
+        Style::default().fg(ACCENT).bg(p::BG_DARK)
+    }
+
+    /// The popup's title text, same accent as the border so the chrome reads as one.
+    pub fn title() -> Style {
+        Style::default()
+            .fg(ACCENT)
+            .bg(p::BG_DARK)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    pub fn prompt() -> Style {
+        Style::default()
+            .fg(ACCENT)
+            .bg(p::BG_DARK)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    pub fn input() -> Style {
+        Style::default().fg(p::TEXT).bg(p::BG_DARK)
+    }
+
+    /// The block-cursor cell after the filename (reverse-video, like the query bar's Insert
+    /// cursor) so "typing goes here" reads at a glance.
+    pub fn cursor() -> Style {
+        Style::default()
+            .bg(p::BG_DARK)
+            .add_modifier(Modifier::REVERSED)
+    }
+
+    /// The resolved-path preview line (`→ /path/to/out.csv`) — muted on the opaque surface.
+    pub fn preview() -> Style {
+        Style::default().fg(p::TEXT_MUTED).bg(p::BG_DARK)
+    }
+
+    /// The overwrite warning appended to the preview when the destination already exists.
+    pub fn overwrite_warning() -> Style {
+        Style::default()
+            .fg(p::WARNING)
+            .bg(p::BG_DARK)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// An inline resolve/write error — the popup stays open so the user can fix and retry.
     pub fn error() -> Style {
         Style::default()
             .fg(p::ERROR)

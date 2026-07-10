@@ -6,7 +6,7 @@ expression: screen
 "                                                                                "
 "┌ history (3) ───────────────────────────────────┐                              "
 "│ SELECT id FROM t                               │                              "
-"│▌SELECT name FROM t WHERE id > 5                │                              "
+"│▍SELECT name FROM t WHERE id > 5                │                              "
 "│ SELECT count(*) FROM t                         │                              "
 "│                                                │                              "
 "└────────────────────────────────────────────────┘                              "

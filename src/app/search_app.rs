@@ -56,6 +56,20 @@ impl App {
         self.v_row_offset = 0;
     }
 
+    /// Leave needle-editing mode because the user clicked another surface: a non-empty needle is
+    /// confirmed (the filter stays, exactly what Enter does), an empty one closes the bar. No-op
+    /// unless the bar is editing.
+    pub(crate) fn leave_search_editing(&mut self) {
+        if !self.search.is_editing() {
+            return;
+        }
+        if self.search.needle().is_empty() {
+            self.close_search();
+        } else {
+            self.search.confirm();
+        }
+    }
+
     /// Recompute the cached filtered projection from the current result + needle. Called on
     /// every needle edit and every new result; `None` whenever nothing is being filtered.
     pub(crate) fn refresh_search_filter(&mut self) {
@@ -79,6 +93,18 @@ impl App {
     pub(crate) fn handle_search_key(&mut self, ev: &KeyEvent) -> bool {
         if ev.is_quit() {
             return true;
+        }
+        // Ctrl+O / Ctrl+W act on the filtered view even while the needle is still being edited:
+        // leave editing first (confirm a non-empty needle, close an empty one — the same
+        // semantics as clicking away) so what gets output is exactly the filtered grid on screen.
+        if ev.mods.ctrl && matches!(ev.key, Key::Char('o') | Key::Char('O')) {
+            self.leave_search_editing();
+            return self.quit_with_print();
+        }
+        if ev.mods.ctrl && matches!(ev.key, Key::Char('w') | Key::Char('W')) {
+            self.leave_search_editing();
+            self.open_save();
+            return false;
         }
         match ev.key {
             Key::Esc => self.close_search(),

@@ -967,6 +967,8 @@ mod mouse_tests;
 mod palette_tests;
 #[path = "app_tests/polish_tests.rs"]
 mod polish_tests;
+#[path = "app_tests/save_tests.rs"]
+mod save_tests;
 #[path = "app_tests/search_tests.rs"]
 mod search_tests;
 #[path = "app_tests/simple_mode_tests.rs"]

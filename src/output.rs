@@ -11,8 +11,14 @@
 //! fully headless integration test. The only §4.7 residue is the OSC 52 clipboard *write*, which
 //! lives in `clipboard::osc52::copy`, not here (there is no `output/clipboard.rs`).
 //!
-//! Per ciq conventions: no `mod.rs`; the `emit` submodule is declared from this sibling file.
+//! Per ciq conventions: no `mod.rs`; the submodules are declared from this sibling file.
+//!
+//! [`console::render_console`] is the fifth serialization — the ANSI-styled aligned table the
+//! `Ctrl+O` exit path prints to the scrollback. Equally pure (`&Table -> String`; escape codes
+//! are just bytes), so it goldens like the other four.
 
+pub mod console;
 pub mod emit;
 
+pub use console::render_console;
 pub use emit::{OutputFormat, render_output};
