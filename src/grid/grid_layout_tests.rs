@@ -40,10 +40,54 @@ fn align_for_type_matches_column_type_helper() {
 }
 
 #[test]
-fn one_body_line_per_row() {
+fn one_body_line_per_visible_row() {
+    // The body materializes only the visible vertical window; with a tall viewport and a 3-row
+    // table, that is every row (body_row_offset 0, all rows fit).
     let t = sample_table();
     let frame = layout_grid(&t, &GridView::new(80, 24));
     assert_eq!(frame.body.len(), t.row_count());
+    assert_eq!(frame.body_row_offset, 0);
+}
+
+#[test]
+fn body_is_windowed_to_the_visible_height() {
+    // 10 rows, a viewport whose body height is 3 (height 4 minus the sticky header): only 3 body
+    // lines are laid out, not all 10 — the O(viewport) redraw contract.
+    let cells: Vec<Cell> = (0..10).map(Cell::Int).collect();
+    let t = Table::new(vec![Column::new("id", ColumnType::Int, cells)]);
+    let frame = layout_grid(&t, &GridView::new(80, 4));
+    assert_eq!(
+        frame.body.len(),
+        3,
+        "only the visible body height is formatted"
+    );
+    assert_eq!(frame.body_row_offset, 0);
+}
+
+#[test]
+fn body_window_starts_at_v_row_offset() {
+    // Scrolled down: the body page starts at v_row_offset and its first line is that absolute row.
+    let cells: Vec<Cell> = (0..10).map(Cell::Int).collect();
+    let t = Table::new(vec![Column::new("id", ColumnType::Int, cells)]);
+    let mut view = GridView::new(80, 4); // body height 3
+    view.v_row_offset = 5;
+    let frame = layout_grid(&t, &view);
+    assert_eq!(frame.body_row_offset, 5);
+    assert_eq!(frame.body.len(), 3, "rows 5,6,7");
+    assert_eq!(frame.body[0].text.trim(), "5");
+    assert_eq!(frame.body[2].text.trim(), "7");
+}
+
+#[test]
+fn body_window_clamps_at_the_end() {
+    // v_row_offset near the end yields a short final page, never past the table.
+    let cells: Vec<Cell> = (0..10).map(Cell::Int).collect();
+    let t = Table::new(vec![Column::new("id", ColumnType::Int, cells)]);
+    let mut view = GridView::new(80, 6); // body height 5
+    view.v_row_offset = 8;
+    let frame = layout_grid(&t, &view);
+    assert_eq!(frame.body_row_offset, 8);
+    assert_eq!(frame.body.len(), 2, "only rows 8,9 remain");
 }
 
 #[test]
@@ -326,9 +370,14 @@ fn arb_table() -> impl Strategy<Value = Table> {
 
 proptest! {
     #[test]
-    fn prop_one_body_line_per_row(t in arb_table(), w in 1u16..120, h in 1u16..40) {
+    fn prop_body_matches_the_visible_window(t in arb_table(), w in 1u16..120, h in 1u16..40) {
         let frame = layout_grid(&t, &GridView::new(w, h));
-        prop_assert_eq!(frame.body.len(), t.row_count());
+        // The body is the visible vertical window: the body height (viewport minus the header
+        // row), clamped to the rows available from `body_row_offset`. Never more than the table.
+        let body_height = h.saturating_sub(1) as usize;
+        let expected = body_height.min(t.row_count());
+        prop_assert_eq!(frame.body.len(), expected);
+        prop_assert!(frame.body.len() <= t.row_count());
     }
 
     #[test]

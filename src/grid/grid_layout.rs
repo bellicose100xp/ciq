@@ -8,11 +8,15 @@
 //! Two things kept out of here on purpose:
 //! - **Color/style** lives in the blit (`theme::grid::*`); `GridFrame` carries plain aligned
 //!   text plus the per-column alignment so the renderer can style without re-deciding layout.
-//! - **Scroll *policy*** (which rows/columns are visible) is the caller's: the vertical row
-//!   page is sliced by the caller before calling (jiq's `scroll_offset..end_line` model is
-//!   reused unchanged); column-granular horizontal scroll is applied here from
-//!   [`GridView::h_col_offset`] because it is a layout concern (drop whole leading columns,
-//!   never slice mid-cell).
+//! - **Scroll *policy*** (the scroll offsets themselves) is the caller's: it sets
+//!   [`GridView::v_row_offset`] / [`GridView::h_col_offset`] / [`GridView::h_char_offset`].
+//!   `layout_grid` then materializes only the rows in the visible vertical window
+//!   `[v_row_offset, v_row_offset + body_height)` — so a redraw of an uncapped million-row
+//!   result formats ~one screenful of cells, not the whole table (the per-keystroke lag before
+//!   this was the whole-table format). `GridFrame::body` is therefore the *visible page*, not one
+//!   line per table row; its first line is absolute row `v_row_offset`. Column-granular
+//!   horizontal scroll is applied here from [`GridView::h_col_offset`] because it is a layout
+//!   concern (drop whole leading columns, never slice mid-cell).
 //!
 //! `GridLayout` is an alias for `GridFrame` (see `dev/DECISIONS.md` S6: canonical name is
 //! `GridFrame`). The App lays a result out fresh against the real viewport on every frame, so a
@@ -23,7 +27,7 @@ use std::ops::Range;
 use crate::engine::{Cell, Table};
 use crate::schema::ColumnType;
 
-use super::col_width::{MIN_COL_WIDTH, compute_widths, render_cell};
+use super::col_width::{MIN_COL_WIDTH, interactive_widths, render_cell};
 
 /// Two spaces between adjacent columns (the grid's column gutter).
 const COL_GAP: &str = "  ";
@@ -128,10 +132,16 @@ pub struct GridFrame {
     /// The sticky header line text (column names, aligned + gutters), rendered OUTSIDE the
     /// scrolled body by the blit.
     pub header: String,
-    /// One formatted line per data row — the `Vec` the existing vertical-slice scroll model
-    /// operates on (1 line == 1 row invariant preserved). Each row carries its line text and
-    /// the byte ranges that are genuine SQL nulls (so the renderer dims them without scanning).
+    /// The formatted lines for the **visible vertical window** only — one line per table row in
+    /// `[body_row_offset, body_row_offset + body.len())`, not one per table row. Materializing
+    /// just the on-screen page is what keeps layout O(viewport) against an uncapped result. Each
+    /// row carries its line text and the byte ranges that are genuine SQL nulls (so the renderer
+    /// dims them without scanning).
     pub body: Vec<BodyRow>,
+    /// Absolute table-row index of `body[0]` — i.e. the `v_row_offset` this frame was laid out at.
+    /// The blit already slices `body` from its own `v_row_offset`, so with a pre-windowed body it
+    /// subtracts this base to index into the page (`body[abs - body_row_offset]`).
+    pub body_row_offset: usize,
     /// The start column (0-based, within the rendered frame) of each VISIBLE column, in
     /// visible order. Feeds the schema bar's lockstep alignment and cursor math.
     pub col_x: Vec<u16>,
@@ -170,7 +180,9 @@ fn pad(text: &str, width: u16, align: Align) -> String {
 /// viewport width; each is padded to its width and right/left-aligned by type. The header line
 /// and each body line are the visible cells joined by the two-space gutter.
 pub fn layout_grid(table: &Table, view: &GridView) -> GridFrame {
-    let all_widths = compute_widths(table, view.width.max(MIN_COL_WIDTH));
+    // Widths come from a fixed row prefix, not the whole table — O(1) in total row count and
+    // stable as the user scrolls (see `interactive_widths`).
+    let all_widths = interactive_widths(table, view.width.max(MIN_COL_WIDTH));
     let columns = table.columns();
 
     // Choose visible columns: skip h_col_offset leading columns, then take as many as fit the
@@ -221,9 +233,17 @@ pub fn layout_grid(table: &Table, view: &GridView) -> GridFrame {
             }),
     );
 
-    // Body lines: one per row, each a join of the visible cells. Track which byte ranges came
-    // from a genuine `Cell::Null` so the renderer can dim them without re-scanning the text.
-    let body: Vec<BodyRow> = (0..table.row_count())
+    // Body lines: only the visible vertical window `[body_row_offset, body_end)`, each a join of
+    // the visible cells. Formatting just the on-screen page (not every table row) is what keeps
+    // this O(viewport) against an uncapped result. The body's height is `view.height` minus the
+    // sticky header row the blit reserves. Track which byte ranges came from a genuine `Cell::Null`
+    // so the renderer can dim them without re-scanning the text.
+    let body_row_offset = view.v_row_offset.min(table.row_count());
+    let body_height = view.height.saturating_sub(1) as usize;
+    let body_end = body_row_offset
+        .saturating_add(body_height)
+        .min(table.row_count());
+    let body: Vec<BodyRow> = (body_row_offset..body_end)
         .map(|r| {
             build_body_row(
                 visible
@@ -249,6 +269,7 @@ pub fn layout_grid(table: &Table, view: &GridView) -> GridFrame {
     GridFrame {
         header,
         body,
+        body_row_offset,
         col_x,
         widths,
         aligns,

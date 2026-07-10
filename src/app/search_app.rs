@@ -194,7 +194,7 @@ impl App {
         }
         const H_MARGIN: usize = 1;
         let inner_w = self.results_inner_width();
-        let widths = crate::grid::col_width::compute_widths(rows, inner_w);
+        let widths = crate::grid::col_width::interactive_widths(rows, inner_w);
         self.h_col_offset = crate::grid::grid_layout::h_col_offset_to_reveal(
             &widths,
             inner_w,

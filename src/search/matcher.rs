@@ -28,11 +28,25 @@ pub fn find_matches(hay: &str, needle: &str) -> Vec<Range<usize>> {
     out
 }
 
-/// Whether `hay` contains `needle` case-insensitively. The filter's fast path — no allocation of
-/// a range list.
+/// Whether `hay` contains `needle` case-insensitively. The row filter calls this once per cell
+/// over the whole (uncapped) result, so it is the hot path: an allocating fold per cell turned a
+/// 1M-row filter into a multi-second UI-thread stall. When both sides are ASCII — the
+/// overwhelmingly common case for CSV data — it does a no-allocation ASCII-case-insensitive
+/// substring scan, which is exactly equivalent to folding both (ASCII case-folding *is*
+/// `to_ascii_lowercase`). Only genuinely non-ASCII text falls back to the offset-preserving fold.
 pub fn contains(hay: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return true;
+    }
+    if hay.is_ascii() && needle.is_ascii() {
+        let n = needle.as_bytes();
+        if n.len() > hay.len() {
+            return false;
+        }
+        return hay
+            .as_bytes()
+            .windows(n.len())
+            .any(|w| w.eq_ignore_ascii_case(n));
     }
     fold_case_offset_preserving(hay).contains(fold_case_offset_preserving(needle).as_str())
 }

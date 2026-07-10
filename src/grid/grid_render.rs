@@ -99,9 +99,15 @@ pub fn render_grid(f: &mut Frame, area: Rect, grid: &GridFrame, paint: GridPaint
         ..area
     };
 
-    let end = (v_row_offset + body_height as usize).min(grid.body.len());
-    let visible = if v_row_offset < grid.body.len() {
-        &grid.body[v_row_offset..end]
+    // `grid.body` is already the visible page starting at `grid.body_row_offset` (the layout
+    // windowed it), so rebase the absolute `v_row_offset` / hover / current-match indices onto the
+    // page before slicing. In the normal path `v_row_offset == body_row_offset`, so `local` is 0
+    // and the whole page is taken; the subtraction only guards a caller that slices further.
+    let base = grid.body_row_offset;
+    let local = v_row_offset.saturating_sub(base);
+    let end = (local + body_height as usize).min(grid.body.len());
+    let visible = if local < grid.body.len() {
+        &grid.body[local..end]
     } else {
         &[]
     };

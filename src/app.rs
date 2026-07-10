@@ -833,7 +833,7 @@ impl App {
             return;
         };
         let inner_w = self.results_inner_width();
-        let widths = crate::grid::col_width::compute_widths(rows, inner_w);
+        let widths = crate::grid::col_width::interactive_widths(rows, inner_w);
         let take = self.h_col_offset.min(widths.len());
         self.h_char_offset = crate::grid::grid_layout::prefix_left_edge(&widths[..take]);
     }
@@ -848,7 +848,7 @@ impl App {
             return;
         };
         let inner_w = self.results_inner_width();
-        let widths = crate::grid::col_width::compute_widths(rows, inner_w);
+        let widths = crate::grid::col_width::interactive_widths(rows, inner_w);
         // Total rendered grid width: cumulative left edge after the LAST column with the trailing
         // gutter subtracted (no gutter follows the rightmost column).
         let total: u16 = crate::grid::grid_layout::prefix_left_edge(&widths).saturating_sub(2);

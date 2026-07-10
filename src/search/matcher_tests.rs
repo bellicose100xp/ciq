@@ -82,6 +82,34 @@ fn needle_longer_than_hay_no_match() {
 }
 
 #[test]
+fn contains_needle_longer_than_hay_is_false() {
+    // Guards the ASCII fast-path length check and the non-ASCII fallback alike.
+    assert!(!contains("ab", "abc"));
+    assert!(!contains("é", "ébc"));
+}
+
+#[test]
+fn contains_ascii_fast_path_matches_fold_fallback() {
+    // The ASCII fast path must agree with the folding path on the same ASCII inputs.
+    for (hay, needle, want) in [
+        ("Hello World", "WORLD", true),
+        ("Hello World", "xyz", false),
+        ("ABCabc", "cA", true),
+        ("", "a", false),
+        ("a", "", true),
+    ] {
+        assert_eq!(contains(hay, needle), want, "contains({hay:?}, {needle:?})");
+    }
+}
+
+#[test]
+fn contains_ascii_hay_nonascii_needle_uses_fallback() {
+    // A non-ASCII needle can never match inside an ASCII hay; the fallback returns false without
+    // the fast path (which is skipped because the needle isn't ASCII).
+    assert!(!contains("cafe", "é"));
+}
+
+#[test]
 fn full_string_match() {
     assert_eq!(find_matches("abc", "ABC"), vec![0..3]);
 }
