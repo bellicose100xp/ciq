@@ -145,6 +145,16 @@ pub struct GridFrame {
     /// The start column (0-based, within the rendered frame) of each VISIBLE column, in
     /// visible order. Feeds the schema bar's lockstep alignment and cursor math.
     pub col_x: Vec<u16>,
+    /// The **absolute** table-column index of each visible column, in visible order (parallel to
+    /// [`col_x`](Self::col_x) / [`widths`](Self::widths) / [`aligns`](Self::aligns) and to each
+    /// [`BodyRow::cell_spans`] entry). The renderer keys the per-column pastel hue off the absolute
+    /// index so a column keeps its color under horizontal scroll (a purely presentational lookup —
+    /// the layout stays color-free, it just says *which* column each visible slot is).
+    pub col_indices: Vec<usize>,
+    /// Byte range of each visible column's label within [`header`](Self::header), in visible-column
+    /// order (parallel to [`col_indices`](Self::col_indices)). Lets the renderer paint each header
+    /// label in its column's pastel hue without re-deriving char-vs-byte positions.
+    pub header_spans: Vec<Range<usize>>,
     /// The rendered width of each visible column (parallel to `col_x`).
     pub widths: Vec<u16>,
     /// Per-visible-column alignment (parallel to `col_x`).
@@ -218,8 +228,9 @@ pub fn layout_grid(table: &Table, view: &GridView) -> GridFrame {
 
     // Header line: each column's `name (badge)` label, aligned by type, joined by the gutter.
     // The badge is folded in here so the one sticky header carries the column's sniffed type;
-    // `compute_widths` sized each column to fit this label.
-    let header = join_cells(
+    // `compute_widths` sized each column to fit this label. `header_spans` records each label's
+    // byte range so the renderer paints it in the column's pastel hue.
+    let (header, header_spans) = join_cells_with_spans(
         visible
             .iter()
             .zip(&widths)
@@ -268,9 +279,11 @@ pub fn layout_grid(table: &Table, view: &GridView) -> GridFrame {
 
     GridFrame {
         header,
+        header_spans,
         body,
         body_row_offset,
         col_x,
+        col_indices: visible,
         widths,
         aligns,
         total_width,
@@ -374,10 +387,21 @@ fn render_str(text: &str, width: u16) -> String {
     super::col_width::truncate_to_width(text, width as usize)
 }
 
-/// Join already-padded cell strings (for the header line) with the column gutter.
-fn join_cells(cells: impl Iterator<Item = String>) -> String {
-    let parts: Vec<String> = cells.collect();
-    parts.join(COL_GAP)
+/// Join already-padded cell strings (for the header line) with the column gutter, recording the
+/// byte range of each cell within the joined line. Parallel to the layout's visible-column order,
+/// so the renderer can paint each header label in its column's pastel hue.
+fn join_cells_with_spans(cells: impl Iterator<Item = String>) -> (String, Vec<Range<usize>>) {
+    let mut text = String::new();
+    let mut spans: Vec<Range<usize>> = Vec::new();
+    for (i, cell) in cells.enumerate() {
+        if i != 0 {
+            text.push_str(COL_GAP);
+        }
+        let start = text.len();
+        text.push_str(&cell);
+        spans.push(start..text.len());
+    }
+    (text, spans)
 }
 
 /// Assemble one [`BodyRow`] from an iterator of `(padded_cell_text, is_null)`, joining with the

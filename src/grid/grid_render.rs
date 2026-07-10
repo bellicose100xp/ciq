@@ -82,11 +82,7 @@ pub fn render_grid(f: &mut Frame, area: Rect, grid: &GridFrame, paint: GridPaint
     // stay in lockstep — the trackpad smooth scroll. ratatui's `Paragraph::scroll((rows, cols))`
     // is exactly the right primitive: cols is char-offset into the laid-out line.
     let h = grid.body_scroll_chars;
-    let header = Paragraph::new(Line::from(Span::styled(
-        grid.header.clone(),
-        theme::grid::header().add_modifier(extra),
-    )))
-    .scroll((0, h));
+    let header = Paragraph::new(style_header_line(grid, extra)).scroll((0, h));
     f.render_widget(header, header_area);
 
     let body_height = body_viewport_height(area.height);
@@ -120,7 +116,7 @@ pub fn render_grid(f: &mut Frame, area: Rect, grid: &GridFrame, paint: GridPaint
         .enumerate()
         .map(|(offset, row)| {
             let is_current = Some(offset) == current_offset;
-            let line = style_body_line(row, extra, search_needle, is_current);
+            let line = style_body_line(row, &grid.col_indices, extra, search_needle, is_current);
             if Some(offset) == hovered_offset {
                 line.style(theme::grid::hovered_bg())
             } else {
@@ -147,19 +143,60 @@ pub fn render_grid(f: &mut Frame, area: Rect, grid: &GridFrame, paint: GridPaint
     }
 }
 
-/// Style one body line: dim the byte ranges `layout_grid` flagged as genuine SQL nulls so a
-/// `NULL` reads as absent, leaving everything else (including a present `Cell::Text("NULL")`) in
-/// the normal cell style; then paint the search needle's case-insensitive occurrences with the
-/// match highlight. Null-ness comes from the layout mask, not from scanning the text — the text
-/// alone cannot distinguish an absent null from data that happens to read "NULL". A match that
-/// overlaps a null span keeps the null styling (the filter says NULL never matches; the render
-/// agrees — a needle like "null" must not light up absent values). `extra` is OR'd into every
-/// span's modifier so a stale-dimmed render adds DIM uniformly without losing the per-span
-/// colors. When `is_current` the row is the current search match, so its matched runs use the
-/// bright [`theme::grid::current_match`] style instead of the dim [`theme::grid::search_match`]
-/// every other match gets — the active result stands out from the rest.
+/// Style the sticky header line: paint each column's label in its column's pastel hue (keyed on
+/// the absolute column index via [`theme::grid::header_column`]), so every header ties to the
+/// color of the data below it. Any gap between labels (the gutter, or the empty tail of a
+/// header-only frame) takes the neutral header style. `extra` rides every span so a stale render
+/// dims uniformly. Falls back to a single neutral span when the frame carries no header spans (an
+/// empty grid).
+fn style_header_line(grid: &GridFrame, extra: Modifier) -> Line<'static> {
+    if grid.header_spans.is_empty() {
+        return Line::from(Span::styled(
+            grid.header.clone(),
+            theme::grid::header().add_modifier(extra),
+        ));
+    }
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut cursor = 0usize;
+    for (span, &col) in grid.header_spans.iter().zip(&grid.col_indices) {
+        if cursor < span.start {
+            // Gutter between two labels — neutral.
+            spans.push(Span::styled(
+                grid.header[cursor..span.start].to_string(),
+                theme::grid::header().add_modifier(extra),
+            ));
+        }
+        spans.push(Span::styled(
+            grid.header[span.start..span.end].to_string(),
+            theme::grid::header_column(col).add_modifier(extra),
+        ));
+        cursor = span.end;
+    }
+    if cursor < grid.header.len() {
+        spans.push(Span::styled(
+            grid.header[cursor..].to_string(),
+            theme::grid::header().add_modifier(extra),
+        ));
+    }
+    Line::from(spans)
+}
+
+/// Style one body line. Each visible cell is painted in its column's pastel hue (keyed on the
+/// absolute column index in `col_indices`, so a column keeps its color under horizontal scroll),
+/// with two overrides layered on top:
+/// - genuine SQL nulls (the byte ranges `layout_grid` flagged) render dim so a `NULL` reads as
+///   absent — the text alone can't distinguish an absent null from data that reads "NULL", so
+///   null-ness comes from the layout mask;
+/// - the search needle's case-insensitive occurrences take the match highlight (bright band).
+///
+/// Precedence is null > match > column-hue: a match overlapping a null keeps the null styling (the
+/// filter says NULL never matches; the render agrees). `extra` is OR'd into every span so a
+/// stale-dimmed render adds DIM uniformly without losing the per-span colors. When `is_current`
+/// the row is the current search match, so its matched runs use the bright
+/// [`theme::grid::current_match`] style instead of the dim [`theme::grid::search_match`].
 fn style_body_line(
     row: &BodyRow,
+    col_indices: &[usize],
     extra: Modifier,
     needle: &str,
     is_current: bool,
@@ -171,21 +208,21 @@ fn style_body_line(
         // "match" a run that straddles two columns' padding.
         cell_scoped_matches(row, needle)
     };
-    if row.null_spans.is_empty() && matches.is_empty() {
-        return Line::from(Span::styled(
-            row.text.clone(),
-            theme::grid::cell().add_modifier(extra),
-        ));
-    }
     let match_style = if is_current {
         theme::grid::current_match()
     } else {
         theme::grid::search_match()
     };
     // Walk the line as boundary-delimited segments; each takes the highest-precedence styling of
-    // the range sets covering it (null > match > plain).
+    // the range sets covering it (null > match > column-hue). Cell boundaries are always included
+    // so each segment lies within exactly one column and picks up that column's pastel hue.
     let mut boundaries: Vec<usize> = vec![0, row.text.len()];
-    for r in row.null_spans.iter().chain(matches.iter()) {
+    for r in row
+        .cell_spans
+        .iter()
+        .chain(row.null_spans.iter())
+        .chain(matches.iter())
+    {
         boundaries.push(r.start);
         boundaries.push(r.end);
     }
@@ -193,6 +230,14 @@ fn style_body_line(
     boundaries.dedup();
     let covered = |ranges: &[Range<usize>], start: usize| {
         ranges.iter().any(|r| r.start <= start && start < r.end)
+    };
+    // The absolute column index of the cell containing byte `start`, if any — its position among
+    // `cell_spans` maps 1:1 onto `col_indices` (both in visible-column order).
+    let column_at = |start: usize| {
+        row.cell_spans
+            .iter()
+            .position(|c| c.start <= start && start < c.end)
+            .and_then(|vis| col_indices.get(vis).copied())
     };
     let mut spans: Vec<Span<'static>> = Vec::new();
     for pair in boundaries.windows(2) {
@@ -205,11 +250,21 @@ fn style_body_line(
         } else if covered(&matches, start) {
             match_style
         } else {
-            theme::grid::cell()
+            match column_at(start) {
+                Some(col) => theme::grid::column(col),
+                None => theme::grid::cell(),
+            }
         };
         spans.push(Span::styled(
             row.text[start..end].to_string(),
             style.add_modifier(extra),
+        ));
+    }
+    if spans.is_empty() {
+        // No visible columns (empty row) — emit one neutral span so the line still renders.
+        return Line::from(Span::styled(
+            row.text.clone(),
+            theme::grid::cell().add_modifier(extra),
         ));
     }
     Line::from(spans)

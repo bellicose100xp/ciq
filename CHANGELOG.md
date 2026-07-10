@@ -7,6 +7,15 @@ changes alike, patch `0.minor.Y` for fixes, refactors, polish, and docs.
 
 ## [Unreleased]
 
+### Added
+- **Per-column colors** — each grid column paints in its own pastel hue, rotating through an
+  eight-color palette, so adjacent columns read as distinct bands when you scan a wide result. The
+  sticky header label carries the same hue as the data below it, and the hue is keyed on the
+  absolute column index, so a column keeps its color as the grid scrolls horizontally. A genuine
+  SQL `NULL` still renders dim and a search match still takes the highlight band; both override the
+  column hue. The `Ctrl+O` console dump uses the same palette, so it matches what was on screen.
+  Only the on-screen page is colored, so this adds no per-row cost against a large result.
+
 ## [0.2.1] - 2026-07-10
 
 ### Fixed

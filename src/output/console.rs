@@ -29,6 +29,22 @@ fn ansi_fg(color: Color) -> String {
     }
 }
 
+/// The ANSI foreground for the column at index `idx` — the same pastel hue the TUI grid paints
+/// (via [`theme::grid::column`]), so a `Ctrl+O` dump matches what was on screen. Falls back to
+/// empty for the (never-produced) non-RGB case.
+fn column_fg(idx: usize) -> String {
+    theme::grid::column(idx).fg.map(ansi_fg).unwrap_or_default()
+}
+
+/// The ANSI foreground for the header label of column `idx` — its pastel hue (via
+/// [`theme::grid::header_column`]), matching the TUI's per-column headers.
+fn header_fg(idx: usize) -> String {
+    theme::grid::header_column(idx)
+        .fg
+        .map(ansi_fg)
+        .unwrap_or_default()
+}
+
 /// Serialize `rows` as an ANSI-colored aligned table for the console: a bold header row (the
 /// grid's `name (type)` labels), a dim rule under it, one line per row with the grid's alignment
 /// and NULL treatment, and a dim `(N rows)` footer. Column widths fit the widest cell — nothing
@@ -38,8 +54,6 @@ pub fn render_console(rows: &Table) -> String {
     if cols.is_empty() {
         return String::new();
     }
-    let header_color = ansi_fg(theme::base::CYAN);
-    let text_color = ansi_fg(theme::base::TEXT);
     let muted_color = ansi_fg(theme::base::TEXT_MUTED);
 
     // Width per column: the widest of the header label and every cell (char count, the grid's
@@ -60,11 +74,13 @@ pub fn render_console(rows: &Table) -> String {
 
     let mut out = String::new();
 
-    // Header: bold cyan labels, left-aligned (matching the in-TUI sticky header).
+    // Header: bold labels in each column's pastel hue, left-aligned (matching the in-TUI sticky
+    // header's per-column coloring).
     let header = labels
         .iter()
         .zip(&widths)
-        .map(|(label, &w)| format!("{header_color}{BOLD}{label:<w$}{RESET}"))
+        .enumerate()
+        .map(|(idx, (label, &w))| format!("{}{BOLD}{label:<w$}{RESET}", header_fg(idx)))
         .collect::<Vec<_>>()
         .join("  ");
     out.push_str(&header);
@@ -83,7 +99,8 @@ pub fn render_console(rows: &Table) -> String {
         let line = cols
             .iter()
             .zip(&widths)
-            .map(|(col, &w)| {
+            .enumerate()
+            .map(|(idx, (col, &w))| {
                 let cell = &col.cells[r];
                 let text = cell_display(cell);
                 let padded = if col.ty.is_right_aligned() {
@@ -94,7 +111,7 @@ pub fn render_console(rows: &Table) -> String {
                 if cell.is_null() {
                     format!("{muted_color}{DIM}{padded}{RESET}")
                 } else {
-                    format!("{text_color}{padded}{RESET}")
+                    format!("{}{padded}{RESET}", column_fg(idx))
                 }
             })
             .collect::<Vec<_>>()

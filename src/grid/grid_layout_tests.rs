@@ -183,6 +183,43 @@ fn col_x_tracks_gutters() {
 }
 
 #[test]
+fn col_indices_are_absolute_and_visible_ordered() {
+    let t = sample_table();
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    // Both columns visible: absolute indices 0,1 in visible order.
+    assert_eq!(frame.col_indices, vec![0, 1]);
+    // Parallel to col_x / widths / aligns.
+    assert_eq!(frame.col_indices.len(), frame.col_x.len());
+    assert_eq!(frame.col_indices.len(), frame.widths.len());
+}
+
+#[test]
+fn header_spans_bound_each_visible_label() {
+    let t = sample_table();
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    // One span per visible column, parallel to col_indices.
+    assert_eq!(frame.header_spans.len(), frame.col_indices.len());
+    // Each span slices out that column's padded label; the id label contains "id (int)".
+    let first = frame.header_spans[0].clone();
+    assert!(frame.header[first].contains("id (int)"));
+    let second = frame.header_spans[1].clone();
+    assert!(frame.header[second].contains("name (txt)"));
+    // Spans are ascending and non-overlapping (second starts at/after first's end + gutter).
+    assert!(frame.header_spans[1].start >= frame.header_spans[0].end);
+}
+
+#[test]
+fn col_indices_stay_absolute_under_h_scroll() {
+    let t = sample_table();
+    let mut view = GridView::new(80, 24);
+    view.h_col_offset = 1;
+    let frame = layout_grid(&t, &view);
+    // The leftmost visible column is now absolute index 1 (the "name" column) — the renderer keys
+    // its pastel hue off this so the column keeps its color when scrolled to the left edge.
+    assert_eq!(frame.col_indices, vec![1]);
+}
+
+#[test]
 fn h_col_offset_drops_leading_columns() {
     let t = sample_table();
     let mut view = GridView::new(80, 24);
@@ -204,6 +241,8 @@ fn h_col_offset_past_end_yields_empty_visible() {
     let frame = layout_grid(&t, &view);
     assert!(frame.widths.is_empty());
     assert!(frame.col_x.is_empty());
+    assert!(frame.col_indices.is_empty());
+    assert!(frame.header_spans.is_empty());
     assert_eq!(frame.header, "");
     assert_eq!(frame.total_width, 0);
     // Body lines still 1 per row, but each empty (no visible columns).

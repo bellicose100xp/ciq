@@ -169,7 +169,13 @@ fn only_genuine_null_span_is_dimmed_not_literal_text_null() {
         ),
     ]);
     let frame = layout_grid(&t, &GridView::new(80, 24));
-    let line = style_body_line(&frame.body[0], Modifier::empty(), "", false);
+    let line = style_body_line(
+        &frame.body[0],
+        &frame.col_indices,
+        Modifier::empty(),
+        "",
+        false,
+    );
 
     // Collect (text, dimmed) per span, then check exactly the first cell's "NULL" is dimmed.
     let dimmed: String = line
@@ -211,7 +217,13 @@ fn truncated_null_in_narrow_column_is_still_dimmed() {
         vec![Cell::Null],
     )]);
     let frame = layout_grid(&t, &GridView::new(2, 24));
-    let line = style_body_line(&frame.body[0], Modifier::empty(), "", false);
+    let line = style_body_line(
+        &frame.body[0],
+        &frame.col_indices,
+        Modifier::empty(),
+        "",
+        false,
+    );
     let dimmed_text: String = line
         .spans
         .iter()
@@ -237,10 +249,146 @@ fn no_null_row_is_a_single_normal_span() {
         null_spans: Vec::new(),
         cell_spans: vec![whole],
     };
-    let line = style_body_line(&row, Modifier::empty(), "", false);
+    let line = style_body_line(&row, &[], Modifier::empty(), "", false);
     assert_eq!(line.spans.len(), 1);
     assert_eq!(line.spans[0].style, theme::grid::cell());
     assert!(!is_null_styled(line.spans[0].style));
+}
+
+// --- per-column pastel coloring ---
+
+#[test]
+fn each_body_cell_takes_its_columns_pastel_hue() {
+    let t = typed_table(); // 3 columns: id, name, amount
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    let line = style_body_line(
+        &frame.body[0],
+        &frame.col_indices,
+        Modifier::empty(),
+        "",
+        false,
+    );
+    // The first span (column 0's cell) carries column 0's hue; later spans carry columns 1 and 2.
+    assert_eq!(line.spans[0].style.fg, theme::grid::column(0).fg);
+    assert!(
+        line.spans
+            .iter()
+            .any(|s| s.style.fg == theme::grid::column(1).fg),
+        "a span carries column 1's hue"
+    );
+    assert!(
+        line.spans
+            .iter()
+            .any(|s| s.style.fg == theme::grid::column(2).fg),
+        "a span carries column 2's hue"
+    );
+    assert_ne!(
+        theme::grid::column(0).fg,
+        theme::grid::column(1).fg,
+        "adjacent columns are visually distinct"
+    );
+}
+
+#[test]
+fn body_hue_keyed_on_absolute_index_survives_h_scroll() {
+    let t = typed_table();
+    let mut view = GridView::new(80, 24);
+    view.h_col_offset = 1; // drop column 0; leftmost visible is absolute column 1
+    let frame = layout_grid(&t, &view);
+    assert_eq!(frame.col_indices[0], 1);
+    let line = style_body_line(
+        &frame.body[0],
+        &frame.col_indices,
+        Modifier::empty(),
+        "",
+        false,
+    );
+    // The leftmost visible cell keeps column 1's hue (not column 0's), because the hue is keyed on
+    // the absolute index — the column doesn't change color when scrolled to the left edge.
+    assert_eq!(line.spans[0].style.fg, theme::grid::column(1).fg);
+    assert_ne!(line.spans[0].style.fg, theme::grid::column(0).fg);
+}
+
+#[test]
+fn null_style_overrides_the_column_hue() {
+    // Column 1's row-2 cell is a genuine NULL: it must render dim (null style), NOT column 1's hue.
+    let t = typed_table();
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    let line = style_body_line(
+        &frame.body[2],
+        &frame.col_indices,
+        Modifier::empty(),
+        "",
+        false,
+    );
+    let null_span = line
+        .spans
+        .iter()
+        .find(|s| is_null_styled(s.style))
+        .expect("the NULL cell is dimmed");
+    assert_eq!(null_span.style, theme::grid::null());
+    assert_ne!(
+        null_span.style.fg,
+        theme::grid::column(1).fg,
+        "a null cell keeps the null style, not its column hue"
+    );
+}
+
+#[test]
+fn match_style_overrides_the_column_hue() {
+    let t = typed_table();
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    // "ada" matches column 1's "Ada": that run takes the match band, not column 1's hue.
+    let line = style_body_line(
+        &frame.body[0],
+        &frame.col_indices,
+        Modifier::empty(),
+        "ada",
+        false,
+    );
+    let matched = line
+        .spans
+        .iter()
+        .find(|s| is_match_styled(s.style))
+        .expect("the matched run is highlighted");
+    assert_eq!(matched.content.as_ref(), "Ada");
+    assert_ne!(
+        matched.style.fg,
+        theme::grid::column(1).fg,
+        "a matched run keeps the match style, not its column hue"
+    );
+}
+
+#[test]
+fn header_labels_take_their_column_hues() {
+    let t = typed_table();
+    let frame = layout_grid(&t, &GridView::new(80, 24));
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            render_grid(
+                f,
+                Rect::new(0, 0, 80, 24),
+                &frame,
+                GridPaint {
+                    accent: theme::base::CYAN,
+                    current_match_row: None,
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+    let buf = terminal.backend().buffer();
+    // The header row (screen row 0) opens with column 0's header hue on the first label char.
+    assert_eq!(buf[(0, 0)].style().fg, theme::grid::header_column(0).fg);
+    // The "name" label (column 1) carries column 1's header hue where it starts.
+    let header_text: String = (0..80).map(|x| buf[(x, 0)].symbol().to_string()).collect();
+    let name_col = header_text.find("name").expect("name label in header") as u16;
+    assert_eq!(
+        buf[(name_col, 0)].style().fg,
+        theme::grid::header_column(1).fg
+    );
 }
 
 // --- Ctrl+F match highlighting ---
@@ -255,7 +403,13 @@ fn search_needle_highlights_matching_runs_case_insensitively() {
     let t = typed_table();
     let frame = layout_grid(&t, &GridView::new(80, 24));
     // Row 0 is `1  Ada  12.5`; needle "ada" must highlight the "Ada" run only.
-    let line = style_body_line(&frame.body[0], Modifier::empty(), "ada", false);
+    let line = style_body_line(
+        &frame.body[0],
+        &frame.col_indices,
+        Modifier::empty(),
+        "ada",
+        false,
+    );
     let matched: String = line
         .spans
         .iter()
@@ -277,7 +431,13 @@ fn current_match_row_uses_the_distinct_current_style() {
     let t = typed_table();
     let frame = layout_grid(&t, &GridView::new(80, 24));
     // is_current = true: the "Ada" run takes the current-match bg, NOT the plain search-match bg.
-    let line = style_body_line(&frame.body[0], Modifier::empty(), "ada", true);
+    let line = style_body_line(
+        &frame.body[0],
+        &frame.col_indices,
+        Modifier::empty(),
+        "ada",
+        true,
+    );
     let cur: String = line
         .spans
         .iter()
@@ -313,7 +473,13 @@ fn cell_scoped_match_does_not_straddle_the_column_gutter() {
         ),
     ]);
     let frame = layout_grid(&t, &GridView::new(80, 24));
-    let line = style_body_line(&frame.body[0], Modifier::empty(), "a a", false);
+    let line = style_body_line(
+        &frame.body[0],
+        &frame.col_indices,
+        Modifier::empty(),
+        "a a",
+        false,
+    );
     assert!(
         line.spans.iter().all(|s| !is_match_styled(s.style)),
         "a needle spanning the gutter must not match"
@@ -335,7 +501,13 @@ fn search_highlight_covers_every_occurrence_in_the_line() {
         ),
     ]);
     let frame = layout_grid(&t, &GridView::new(80, 24));
-    let line = style_body_line(&frame.body[0], Modifier::empty(), "go", false);
+    let line = style_body_line(
+        &frame.body[0],
+        &frame.col_indices,
+        Modifier::empty(),
+        "go",
+        false,
+    );
     let matched: Vec<&str> = line
         .spans
         .iter()
@@ -358,7 +530,13 @@ fn null_glyph_keeps_null_style_even_when_needle_says_null() {
         ),
     ]);
     let frame = layout_grid(&t, &GridView::new(80, 24));
-    let line = style_body_line(&frame.body[0], Modifier::empty(), "null", false);
+    let line = style_body_line(
+        &frame.body[0],
+        &frame.col_indices,
+        Modifier::empty(),
+        "null",
+        false,
+    );
     let matched: String = line
         .spans
         .iter()
@@ -379,7 +557,13 @@ fn null_glyph_keeps_null_style_even_when_needle_says_null() {
 fn empty_needle_leaves_the_line_unstyled() {
     let t = typed_table();
     let frame = layout_grid(&t, &GridView::new(80, 24));
-    let line = style_body_line(&frame.body[0], Modifier::empty(), "", false);
+    let line = style_body_line(
+        &frame.body[0],
+        &frame.col_indices,
+        Modifier::empty(),
+        "",
+        false,
+    );
     assert!(line.spans.iter().all(|s| !is_match_styled(s.style)));
 }
 
@@ -387,7 +571,13 @@ fn empty_needle_leaves_the_line_unstyled() {
 fn stale_dim_rides_match_highlight_spans() {
     let t = typed_table();
     let frame = layout_grid(&t, &GridView::new(80, 24));
-    let line = style_body_line(&frame.body[0], Modifier::DIM, "ada", false);
+    let line = style_body_line(
+        &frame.body[0],
+        &frame.col_indices,
+        Modifier::DIM,
+        "ada",
+        false,
+    );
     for span in &line.spans {
         assert!(
             span.style.add_modifier.contains(Modifier::DIM),

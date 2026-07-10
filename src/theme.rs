@@ -26,6 +26,23 @@ pub mod base {
     /// reads clearly against the grid (verbatim from jiq's galaxy `match_highlight_bg`).
     pub const BG_MATCH: Color = Color::Rgb(85, 85, 115);
 
+    /// Modern pastel column palette — soft, desaturated hues that stay legible on the deep base
+    /// ([`BG_DARK`]) and are rotated per grid column so adjacent columns are easy to tell apart
+    /// when scanning a wide result. The order alternates hue families (blue / green / peach /
+    /// mauve / …) so two neighbors never share a family. Keyed on the **absolute** column index by
+    /// [`grid::column`](super::grid::column), so a column keeps its hue as the grid scrolls
+    /// horizontally.
+    pub const COLUMN_PASTELS: [Color; 8] = [
+        Color::Rgb(137, 180, 250), // blue
+        Color::Rgb(166, 227, 161), // green
+        Color::Rgb(250, 179, 135), // peach
+        Color::Rgb(203, 166, 247), // mauve
+        Color::Rgb(249, 226, 175), // yellow
+        Color::Rgb(148, 226, 213), // teal
+        Color::Rgb(243, 139, 168), // pink
+        Color::Rgb(180, 190, 254), // lavender
+    ];
+
     // --- accents ---
     pub const CYAN: Color = Color::Rgb(0, 217, 255);
     pub const YELLOW: Color = Color::Rgb(255, 217, 61);
@@ -683,11 +700,38 @@ pub mod grid {
     use super::base as p;
     use ratatui::style::{Color, Modifier, Style};
 
-    /// Sticky header row — bright cyan + bold.
+    /// Sticky header row — bright cyan + bold. Kept as the neutral fallback; the live header is
+    /// painted per-column by [`header_column`] so each label carries its column's pastel hue.
     pub fn header() -> Style {
         Style::default().fg(p::CYAN).add_modifier(Modifier::BOLD)
     }
 
+    /// The pastel hue for the column at absolute index `col_index`, rotating through
+    /// [`COLUMN_PASTELS`](p::COLUMN_PASTELS). Keyed on the absolute (not visible) index so a column
+    /// keeps its color as the grid scrolls horizontally. Pure and branch-free (a modulo index into
+    /// a const table), so painting every visible cell with it stays O(1) per cell.
+    fn column_hue(col_index: usize) -> Color {
+        p::COLUMN_PASTELS[col_index % p::COLUMN_PASTELS.len()]
+    }
+
+    /// A body cell in the column at absolute index `col_index` — its pastel hue, so adjacent
+    /// columns read as distinct bands when scanning a wide result.
+    pub fn column(col_index: usize) -> Style {
+        Style::default().fg(column_hue(col_index))
+    }
+
+    /// The sticky-header label for the column at absolute index `col_index` — the same pastel hue
+    /// as its body cells, bolded so the header still reads as a header. Ties each header to the
+    /// color of the data below it.
+    pub fn header_column(col_index: usize) -> Style {
+        Style::default()
+            .fg(column_hue(col_index))
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// Neutral body-cell style — the fallback when a cell has no column context (e.g. a
+    /// pre-built [`BodyRow`](crate::grid::grid_layout::BodyRow) test fixture). Live rendering uses
+    /// [`column`] so cells carry their column's pastel hue.
     pub fn cell() -> Style {
         Style::default().fg(p::TEXT)
     }

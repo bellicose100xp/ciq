@@ -32,6 +32,15 @@ so fast typing never falls behind.
   with a status-line message and never reach the engine — `t` can never be mutated by an
   interactive query.
 
+## Column colors
+
+Each column is painted in its own soft pastel hue, rotating through an eight-color palette, so
+adjacent columns read as distinct bands when you scan across a wide result. The header label shares
+the hue of the data below it, and a column keeps its color as you scroll horizontally. A SQL `NULL`
+still renders dim (an absent value reads as absent) and a search match still takes the highlight
+band — both sit on top of the column color. The `Ctrl+O` console dump uses the same palette, so the
+printed table matches what was on screen.
+
 ## The optional viewport LIMIT
 
 By default there is no row cap — a query shows every row it returns, and how many rows come back

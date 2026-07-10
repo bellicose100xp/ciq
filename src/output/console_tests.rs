@@ -81,6 +81,31 @@ fn footer_singular_for_one_row() {
 }
 
 #[test]
+fn each_column_uses_its_pastel_hue() {
+    // The header + body carry each column's pastel hue (matching the TUI grid). Assert the raw
+    // ANSI carries column 0's blue and column 1's green on the header and a data cell.
+    let out = render_console(&two_col());
+    let blue = crate::theme::grid::header_column(0).fg.unwrap();
+    let green = crate::theme::grid::header_column(1).fg.unwrap();
+    let (br, bg, bb) = match blue {
+        ratatui::style::Color::Rgb(r, g, b) => (r, g, b),
+        _ => unreachable!(),
+    };
+    let (gr, gg, gb) = match green {
+        ratatui::style::Color::Rgb(r, g, b) => (r, g, b),
+        _ => unreachable!(),
+    };
+    assert!(
+        out.contains(&format!("\x1b[38;2;{br};{bg};{bb}m")),
+        "column 0's hue appears"
+    );
+    assert!(
+        out.contains(&format!("\x1b[38;2;{gr};{gg};{gb}m")),
+        "column 1's hue appears"
+    );
+}
+
+#[test]
 fn snapshot_console_two_col() {
     insta::assert_snapshot!(render_console(&two_col()));
 }
