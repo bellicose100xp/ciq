@@ -7,6 +7,14 @@ changes alike, patch `0.minor.Y` for fixes, refactors, polish, and docs.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-10
+
+### Fixed
+- **Windows build** — the release build for `x86_64-pc-windows-msvc` failed to link because
+  bundled DuckDB calls the Windows Restart Manager (`RmStartSession` and friends) without
+  `rstrtmgr.lib` on the link line. A build script now links it on Windows, so the Windows target
+  builds and ships. No effect on macOS or Linux.
+
 ## [0.2.0] - 2026-07-10
 
 ### Added
@@ -72,6 +80,7 @@ startup.
 - **Release flow** — cargo-dist shell installer (curl-based) for macOS and Linux, built by the
   `Release` workflow on a `vX.Y.Z` tag.
 
-[Unreleased]: https://github.com/bellicose100xp/ciq/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/bellicose100xp/ciq/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/bellicose100xp/ciq/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/bellicose100xp/ciq/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/bellicose100xp/ciq/releases/tag/v0.1.0

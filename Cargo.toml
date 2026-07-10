@@ -1,6 +1,6 @@
 [package]
 name = "ciq"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "CSV Interactive Query — type DuckDB SQL, watch an aligned grid update live (jiq for CSV)"
 license = "MIT"
