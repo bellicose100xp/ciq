@@ -130,6 +130,76 @@ fn error_messages_are_user_facing() {
 }
 
 #[test]
+fn every_error_variant_has_a_user_facing_message() {
+    // One assertion per variant so each `message()` arm is exercised (the composer surfaces these
+    // verbatim on the status line when a Power -> Simple toggle refuses).
+    assert_eq!(
+        SimplifyError::MultiStatement.message(),
+        "multiple statements"
+    );
+    assert_eq!(
+        SimplifyError::NotASelect.message(),
+        "not a SELECT statement"
+    );
+    assert_eq!(
+        SimplifyError::ContainsCte.message(),
+        "contains a CTE / WITH clause"
+    );
+    assert_eq!(SimplifyError::ContainsJoin.message(), "contains a JOIN");
+    assert_eq!(
+        SimplifyError::ContainsSubquery.message(),
+        "contains a subquery"
+    );
+    assert_eq!(
+        SimplifyError::ContainsHaving.message(),
+        "contains a HAVING clause"
+    );
+    assert_eq!(SimplifyError::NonTTable.message(), "FROM target is not `t`");
+    assert_eq!(
+        SimplifyError::Other("x".to_string()).message(),
+        "x",
+        "Other passes its message through"
+    );
+}
+
+#[test]
+fn set_operation_is_rejected() {
+    for sql in [
+        "SELECT * FROM t UNION SELECT * FROM t",
+        "SELECT * FROM t EXCEPT SELECT 1",
+        "SELECT * FROM t INTERSECT SELECT 1",
+    ] {
+        let err = try_simplify_from_sql(sql).unwrap_err();
+        match err {
+            SimplifyError::Other(msg) => assert_eq!(msg, "set operation", "for {sql:?}"),
+            other => panic!("expected Other(\"set operation\") for {sql:?}, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn from_t_with_trailing_alias_is_rejected_as_non_t() {
+    // `FROM t x` (an alias) is a shape Simple mode doesn't model — the tail after `t` is not a
+    // known clause keyword.
+    let err = try_simplify_from_sql("SELECT * FROM t alias").unwrap_err();
+    assert!(matches!(err, SimplifyError::NonTTable), "got {err:?}");
+}
+
+#[test]
+fn empty_projection_is_rejected() {
+    // `SELECT FROM t` has an empty SELECT body — not a valid projection.
+    let err = try_simplify_from_sql("SELECT FROM t").unwrap_err();
+    assert!(matches!(err, SimplifyError::NotASelect), "got {err:?}");
+}
+
+#[test]
+fn distinct_only_projection_is_rejected() {
+    // `SELECT DISTINCT FROM t` strips to an empty projection after removing the keyword.
+    let err = try_simplify_from_sql("SELECT DISTINCT FROM t").unwrap_err();
+    assert!(matches!(err, SimplifyError::NotASelect), "got {err:?}");
+}
+
+#[test]
 fn out_of_order_where_after_order_does_not_panic_returns_other_error() {
     // Regression: pre-fix this slice-panicked because `body_start = tokens[where].end` (later)
     // was greater than `body_end = tokens[order].start` (earlier).

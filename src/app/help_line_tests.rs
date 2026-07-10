@@ -13,7 +13,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 
-use crate::app::help_line::{get_context_hints, mode_label, render_line};
+use crate::app::help_line::{get_context_hints, mode_badge_style, mode_label, render_line};
 use crate::app::{App, Key, KeyEvent, KeyMods};
 use crate::engine::InterruptHandle;
 use crate::schema::{ColumnMeta, ColumnType, Schema};
@@ -355,6 +355,135 @@ fn facet_popup_hints() {
     );
     // No mode badge when a facet popup is open (the query bar is not the focused editing surface).
     assert_eq!(mode_label(&app), None);
+}
+
+/// An App with a two-row result on screen and focus handed to the results pane — the shared
+/// setup for the save-popup and confirmed-search contexts below.
+fn results_focused_with_result() -> (
+    App,
+    std::sync::mpsc::Receiver<crate::query::worker::types::QueryRequest>,
+) {
+    use crate::engine::types::{Cell, Column, Table};
+    use crate::query::worker::types::{ProcessedResult, QueryResponse, RequestKind};
+    use crate::schema::ColumnType;
+
+    let (tx, rx) = channel();
+    let mut app = App::new(tx, InterruptHandle::noop());
+    app.force_power_mode_for_tests("");
+    app.set_schema(test_schema());
+    app.on_loaded("ready");
+    for c in "SELECT * FROM t".chars() {
+        app.on_key(KeyEvent::char(c), 0);
+    }
+    app.tick(150);
+    let id = app.latest_request_id();
+    let table = Table::new(vec![Column::new(
+        "status",
+        ColumnType::Text,
+        vec![Cell::Text("open".into()), Cell::Text("closed".into())],
+    )]);
+    let schema = table.schema();
+    app.on_response(QueryResponse::ProcessedSuccess {
+        result: ProcessedResult::new(table, schema, 0),
+        request_id: id,
+        kind: RequestKind::Main,
+    });
+    if app.autocomplete().is_open() {
+        app.on_key(KeyEvent::plain(Key::Esc), 0);
+    }
+    app.on_key(KeyEvent::plain(Key::Down), 0); // focus the results pane
+    assert_eq!(app.focus(), crate::app::Focus::Results);
+    (app, rx)
+}
+
+#[test]
+fn save_popup_hints() {
+    let (mut app, _rx) = results_focused_with_result();
+    app.on_key(KeyEvent::new(Key::Char('w'), KeyMods::CTRL), 0); // Ctrl+W opens the save popup
+    assert!(app.is_save_open(), "Ctrl+W opened the save popup");
+    let hints = get_context_hints(&app);
+    // The popup's own bottom border teaches Enter/Esc; the main legend shows only quit.
+    assert!(
+        !has_key(&hints, "Enter") && !has_key(&hints, "Esc"),
+        "save popup save/cancel are intuitive (own border): {hints:?}"
+    );
+    assert!(
+        has_key(&hints, "Ctrl+C"),
+        "save popup quit chord: {hints:?}"
+    );
+    assert!(
+        !has_key(&hints, "f") && !has_key(&hints, "Ctrl+W"),
+        "the save branch fired, not the results-pane branch: {hints:?}"
+    );
+    assert_eq!(mode_label(&app), None);
+}
+
+#[test]
+fn confirmed_search_results_hints() {
+    let (mut app, _rx) = results_focused_with_result();
+    // A stale autocomplete popup from the earlier query would intercept the hint routing ahead of
+    // the results branch — dismiss it before opening search.
+    if app.autocomplete().is_open() {
+        app.on_key(KeyEvent::plain(Key::Esc), 0);
+    }
+    app.on_key(KeyEvent::new(Key::Char('f'), KeyMods::CTRL), 0); // Ctrl+F opens search
+    for c in "open".chars() {
+        app.on_key(KeyEvent::char(c), 0);
+    }
+    app.on_key(KeyEvent::plain(Key::Enter), 0); // confirm the filter
+    assert!(app.search().is_confirmed(), "search confirmed");
+    assert!(
+        !app.autocomplete().is_open(),
+        "no popup should shadow the confirmed-search results branch"
+    );
+    let hints = get_context_hints(&app);
+    // The confirmed-search results branch adds match navigation + the chords that act on it.
+    assert!(has_key(&hints, "n/N"), "match navigation chord: {hints:?}");
+    assert!(has_key(&hints, "Ctrl+F"), "re-edit search chord: {hints:?}");
+    assert!(has_key(&hints, "Esc"), "clear-search chord: {hints:?}");
+    assert!(has_key(&hints, "f"), "facet chord still present: {hints:?}");
+    assert!(has_key(&hints, "Ctrl+C"), "quit chord: {hints:?}");
+    assert_eq!(mode_label(&app), None);
+}
+
+#[test]
+fn mode_badge_style_maps_each_editor_mode() {
+    use crate::app::editor::EditorMode;
+    use crate::app::editor::char_search::{SearchDirection, SearchType};
+    use crate::app::editor::mode::TextObjectScope;
+    use crate::theme;
+
+    let mut app = loaded_app();
+    // Insert (the default on focus) and Normal take their own accents; the intermediate
+    // machine states (operator-pending, text-object-pending, char-search-pending) share the
+    // operator / char-search accents. One assertion per arm of `mode_badge_style`.
+    app.input_editor_mut().set_mode(EditorMode::Insert);
+    assert_eq!(mode_badge_style(&app), theme::app::mode_insert());
+
+    app.input_editor_mut().set_mode(EditorMode::Normal);
+    assert_eq!(mode_badge_style(&app), theme::app::mode_normal());
+
+    app.input_editor_mut().set_mode(EditorMode::Operator('d'));
+    assert_eq!(mode_badge_style(&app), theme::app::mode_operator());
+
+    app.input_editor_mut()
+        .set_mode(EditorMode::TextObject('d', TextObjectScope::Inner));
+    assert_eq!(mode_badge_style(&app), theme::app::mode_operator());
+
+    app.input_editor_mut().set_mode(EditorMode::CharSearch(
+        SearchDirection::Forward,
+        SearchType::Find,
+    ));
+    assert_eq!(mode_badge_style(&app), theme::app::mode_char_search());
+
+    app.input_editor_mut()
+        .set_mode(EditorMode::OperatorCharSearch(
+            'd',
+            0,
+            SearchDirection::Forward,
+            SearchType::Find,
+        ));
+    assert_eq!(mode_badge_style(&app), theme::app::mode_char_search());
 }
 
 // --- render (snapshot) ---
