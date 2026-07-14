@@ -7,6 +7,8 @@ changes alike, patch `0.minor.Y` for fixes, refactors, polish, and docs.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-14
+
 ### Added
 - **Per-column colors** — each grid column paints in its own pastel hue, rotating through an
   eight-color palette, so adjacent columns read as distinct bands when you scan a wide result. The
@@ -89,7 +91,8 @@ startup.
 - **Release flow** — cargo-dist shell installer (curl-based) for macOS and Linux, built by the
   `Release` workflow on a `vX.Y.Z` tag.
 
-[Unreleased]: https://github.com/bellicose100xp/ciq/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/bellicose100xp/ciq/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/bellicose100xp/ciq/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/bellicose100xp/ciq/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/bellicose100xp/ciq/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/bellicose100xp/ciq/releases/tag/v0.1.0
