@@ -1,24 +1,23 @@
-//! The `[theme]` config section — a minimal palette-mode stub (`dev/PLAN.md` §0/Q5, §6.8).
+//! The `[theme]` config section (`dev/PLAN.md` §0/Q5, §6.8).
 //!
-//! ciq centralizes every color in [`crate::theme`]; this section is the *config* surface that a
-//! future polarity pass reads, deliberately kept minimal for Phase 5. Today it carries only the
-//! light/dark mode hint (`auto` = let the terminal decide, the §4.7 human-validated default) and a
-//! free-form per-surface override map that `theme.rs` can consult once the polarity work lands.
-//! Parsing it now means the schema is forward-stable: a user's `[theme]` block is accepted (not a
-//! parse error) before the renderer wires every key.
+//! ciq centralizes every color in [`crate::theme`]; this section is the *config* surface for it.
+//! `mode` picks the palette polarity: `auto` (the default) asks the terminal for its background
+//! color at startup and falls back to dark, while `light` / `dark` pin it
+//! ([`crate::theme::polarity::resolve`]). `overrides` is a free-form per-surface map kept for
+//! forward compatibility; nothing reads it yet, but a user's `[theme.overrides]` block is accepted
+//! rather than rejected.
 
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-/// Light/dark adaptation mode. `Auto` defers to the terminal (the current behavior — colors are
-/// chosen for legibility in both); `Light`/`Dark` pin the polarity when the user knows their
-/// terminal. The renderer consults this once the polarity pass lands; for now it is parsed and
-/// stored so the `[theme]` block is forward-compatible.
+/// Light/dark adaptation mode. `Auto` queries the terminal background (OSC 11, then
+/// `COLORFGBG`) and falls back to dark; `Light`/`Dark` pin the polarity when the user knows their
+/// terminal or it does not answer the query.
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeMode {
-    /// Let the terminal/theme decide (the default — legible in light and dark).
+    /// Detect from the terminal's reported background (the default); dark when it does not answer.
     #[default]
     Auto,
     /// Pin to a light-terminal palette.
@@ -29,8 +28,8 @@ pub enum ThemeMode {
 
 /// The `[theme]` section: the polarity mode plus a forward-compat override map.
 ///
-/// `overrides` is a `surface.role = "Color"` map (e.g. `grid.header = "Cyan"`) the renderer can
-/// resolve later; unknown surfaces/roles inside that map are simply ignored (forward-compat), and
+/// `overrides` is a `surface.role = "Color"` map (e.g. `grid.header = "Cyan"`) reserved for a
+/// later pass; unknown surfaces/roles inside that map are simply ignored (forward-compat), and
 /// the values are validated where they are consumed, not here — this section stays a pure data
 /// carrier. `deny_unknown_fields` (matching the other sections) rejects an unknown *top-level*
 /// `[theme]` key — e.g. a `mod` typo — without touching the deliberately open `[theme.overrides]`
@@ -40,8 +39,8 @@ pub enum ThemeMode {
 pub struct ThemeConfig {
     /// Light/dark adaptation mode.
     pub mode: ThemeMode,
-    /// Free-form per-surface color overrides (`"grid.header" = "Cyan"`). Consulted by the
-    /// renderer once the polarity pass lands; ordered (`BTreeMap`) so any future emit is stable.
+    /// Free-form per-surface color overrides (`"grid.header" = "Cyan"`). Reserved, not yet read;
+    /// ordered (`BTreeMap`) so any future emit is stable.
     pub overrides: BTreeMap<String, String>,
 }
 

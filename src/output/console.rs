@@ -54,7 +54,7 @@ pub fn render_console(rows: &Table) -> String {
     if cols.is_empty() {
         return String::new();
     }
-    let muted_color = ansi_fg(theme::base::TEXT_MUTED);
+    let muted_color = ansi_fg(theme::base::pal().text_muted);
 
     // Width per column: the widest of the header label and every cell (char count, the grid's
     // deterministic width proxy).

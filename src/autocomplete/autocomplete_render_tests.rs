@@ -227,7 +227,7 @@ fn hovered_row_carries_the_hover_band_and_selected_has_the_accent_bar() {
     );
     assert_eq!(
         buf[(1, 1)].style().bg,
-        crate::theme::popup::selected_band(crate::theme::autocomplete::ACCENT).bg,
+        crate::theme::popup::selected_band(crate::theme::autocomplete::accent()).bg,
         "selected row sits on the elevated selection band"
     );
     assert_eq!(

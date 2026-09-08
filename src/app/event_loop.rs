@@ -9,6 +9,9 @@
 //! `TestBackend` cannot exercise and an agent cannot self-validate:
 //!
 //! - raw-mode enter/leave + alternate screen + mouse + bracketed-paste enable (§4.7 row 2/3),
+//! - the OSC 11 background-color query that picks the light or dark palette (§4.7 row 1 — the
+//!   reply parse and the palette choice are pure, in `theme::polarity`; only the write + bounded
+//!   stdin read live here),
 //! - the real `crossterm` event poll and the decode of a `crossterm::event::Event` into the
 //!   neutral [`KeyEvent`](super::KeyEvent) the core understands (§4.7 row 2),
 //! - reading the wall clock to feed the debouncer real time (the determinism seam — see the
@@ -46,10 +49,12 @@ use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 
+use crate::config::ThemeMode;
 use crate::engine::{CsvOpts, DuckdbEngine, EngineConfig, InterruptHandle, QueryEngine};
 use crate::query::worker::spawn_worker;
 use crate::query::worker::types::{QueryRequest, QueryResponse};
 use crate::schema::Schema;
+use crate::theme::polarity::{self, Polarity};
 
 use super::{App, Key, KeyEvent, KeyMods, MouseEvent};
 
@@ -98,6 +103,16 @@ pub fn run(path: PathBuf, opts: CsvOpts) -> std::io::Result<()> {
     // and `[ai]` are wired below. Reading it here (before the loader thread) lets the engine config
     // move into that thread alongside `opts`.
     let cfg = crate::config::load_config().config;
+
+    // Pick the palette before the first draw. `[theme] mode = auto` asks the terminal for its
+    // background (OSC 11) and falls back to dark; `light` / `dark` skip the query entirely.
+    let theme_mode = cfg.theme().mode();
+    let detected = match theme_mode {
+        ThemeMode::Auto => detect_terminal_polarity(),
+        ThemeMode::Light | ThemeMode::Dark => None,
+    };
+    crate::theme::base::set_polarity(polarity::resolve(theme_mode, detected));
+
     let engine_cfg = EngineConfig {
         threads: cfg.general().threads(),
         memory_limit: cfg.general().memory_limit().map(str::to_string),
@@ -333,6 +348,76 @@ fn translate_mouse(me: event::MouseEvent) -> Option<MouseEvent> {
 
 fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
+}
+
+/// Ask the terminal which polarity it is: the OSC 11 background reply first, then the
+/// `COLORFGBG` convention. `None` when neither answers, which `polarity::resolve` treats as dark.
+fn detect_terminal_polarity() -> Option<Polarity> {
+    query_terminal_background()
+        .map(polarity::from_background)
+        .or_else(|| {
+            std::env::var("COLORFGBG")
+                .ok()
+                .and_then(|v| polarity::from_colorfgbg(&v))
+        })
+}
+
+/// Longest single wait for the OSC 11 reply, and how many waits are allowed while a reply is
+/// arriving in pieces. A terminal that answers does so in a few milliseconds; one that never
+/// answers costs a single wait at startup.
+const OSC11_WAIT_MS: i32 = 40;
+const OSC11_MAX_WAITS: usize = 4;
+
+/// Write the OSC 11 query and read the reply off stdin with a bounded `poll(2)`. Runs in raw mode
+/// (the terminal is already set up) and only when stdin is a real terminal, so a piped stdin is
+/// never consumed. Bytes are read straight from fd 0 so nothing lingers in a Rust-side buffer
+/// that crossterm's reader would never see.
+#[cfg(unix)]
+fn query_terminal_background() -> Option<(u8, u8, u8)> {
+    use std::io::{IsTerminal, Write};
+
+    if !std::io::stdin().is_terminal() {
+        return None;
+    }
+    let mut out = stdout();
+    out.write_all(polarity::OSC11_QUERY).ok()?;
+    out.flush().ok()?;
+
+    let mut reply = Vec::new();
+    let mut chunk = [0u8; 64];
+    for _ in 0..OSC11_MAX_WAITS {
+        let mut fds = libc::pollfd {
+            fd: libc::STDIN_FILENO,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: `fds` is a valid, exclusively borrowed pollfd for the duration of the call.
+        let ready = unsafe { libc::poll(&mut fds, 1, OSC11_WAIT_MS) };
+        if ready <= 0 {
+            return None;
+        }
+        // SAFETY: `chunk` is a valid writable buffer of the stated length for the call's duration.
+        let n = unsafe {
+            libc::read(
+                libc::STDIN_FILENO,
+                chunk.as_mut_ptr().cast::<libc::c_void>(),
+                chunk.len(),
+            )
+        };
+        if n <= 0 {
+            return None;
+        }
+        reply.extend_from_slice(&chunk[..n as usize]);
+        if let Some(rgb) = polarity::parse_osc11(&reply) {
+            return Some(rgb);
+        }
+    }
+    None
+}
+
+#[cfg(not(unix))]
+fn query_terminal_background() -> Option<(u8, u8, u8)> {
+    None
 }
 
 fn setup_terminal() -> std::io::Result<Terminal<CrosstermBackend<Stdout>>> {

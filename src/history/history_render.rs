@@ -104,7 +104,7 @@ fn row_line(entry: &str, width: u16, is_cursor: bool, hovered: bool) -> Line<'st
         return Line::from(vec![
             Span::styled(
                 theme::popup::BAR,
-                theme::popup::selected_bar(theme::history::ACCENT),
+                theme::popup::selected_bar(theme::history::accent()),
             ),
             Span::styled(text, theme::history::selected()),
         ]);

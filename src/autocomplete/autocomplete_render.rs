@@ -145,7 +145,7 @@ fn row_line(s: &Suggestion, width: u16, selected: bool, hovered: bool) -> Line<'
         Line::from(vec![
             Span::styled(
                 theme::popup::BAR,
-                theme::popup::selected_bar(theme::autocomplete::ACCENT),
+                theme::popup::selected_bar(theme::autocomplete::accent()),
             ),
             Span::styled(content, theme::autocomplete::selected()),
         ])

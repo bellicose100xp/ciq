@@ -3,8 +3,8 @@
 //!
 //! One [`Config`] parsed from `~/.config/ciq/config.toml` (XDG), with five sections:
 //!  - `[general]` — default `LIMIT N`, DuckDB threads + memory cap ([`GeneralConfig`]);
-//!  - `[theme]` — light/dark mode + a forward-compat override map ([`ThemeConfig`], a stub
-//!    `theme.rs` reads once the polarity pass lands);
+//!  - `[theme]` — light/dark mode + a forward-compat override map ([`ThemeConfig`], whose mode
+//!    `theme::polarity` resolves at startup);
 //!  - `[ai]` — NL->SQL provider/model + the **env var** naming the API key, never the key itself
 //!    ([`AiConfig`]; the provider is wired in P5.1);
 //!  - `[history]` — persistence on/off, entry cap, file path ([`HistoryConfig`]);

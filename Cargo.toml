@@ -45,6 +45,12 @@ serde = { version = "1.0", features = ["derive"] }
 # of the escape bytes to the real terminal is the §4.7 human-validated residue.
 base64 = "0.22"
 
+# `poll(2)` + `read(2)` on stdin for the startup OSC 11 background-color query (light/dark theme
+# auto-detection). Unix only; the pure reply parser lives in `theme::polarity`, this is just the
+# bounded wait at the terminal edge (`app/event_loop.rs`).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 # Snapshot testing (render buffers, generated SQL, schema goldens).
 insta = "1.40"

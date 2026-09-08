@@ -41,6 +41,10 @@ still renders dim (an absent value reads as absent) and a search match still tak
 band — both sit on top of the column color. The `Ctrl+O` console dump uses the same palette, so the
 printed table matches what was on screen.
 
+On a light terminal the same eight hues appear in deeper shades that stay legible on white. ciq
+detects the terminal background at startup; see [`[theme]`](../configuration.md#theme) to pin the
+palette if yours is not detected.
+
 ## The optional viewport LIMIT
 
 By default there is no row cap — a query shows every row it returns, and how many rows come back

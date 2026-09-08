@@ -52,13 +52,23 @@ Engine-wide defaults.
 
 ## `[theme]`
 
-Color polarity. ciq centralizes all colors internally; this section is the config surface a future
-polarity pass reads.
+Color polarity. ciq ships two palettes with the same hue families: the galaxy dark palette, and a
+deeper light palette whose foregrounds hold at least 3:1 contrast against a white background. One
+is chosen at startup and used for the whole session.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `mode` | `auto` \| `light` \| `dark` | `auto` | Light/dark adaptation. `auto` lets the terminal decide; `light` / `dark` pin the polarity. |
-| `overrides` | table of `string` -> `string` | empty | Forward-compatible per-surface color overrides (e.g. `"grid.header" = "Cyan"`). Unknown keys are ignored. |
+| `mode` | `auto` \| `light` \| `dark` | `auto` | Which palette to use. `auto` asks the terminal for its background color (the OSC 11 query, then the `COLORFGBG` variable) and picks the palette whose polarity matches, falling back to dark when the terminal does not answer. `light` / `dark` skip the query and pin the palette. |
+| `overrides` | table of `string` -> `string` | empty | Reserved per-surface color overrides (e.g. `"grid.header" = "Cyan"`). Accepted but not yet read. |
+
+Most terminals answer the background query (iTerm2, Terminal.app, Ghostty, kitty, WezTerm,
+Alacritty, GNOME Terminal, Windows Terminal is the exception). If yours does not, or you switch
+your terminal theme with ciq open, pin the mode:
+
+```toml
+[theme]
+mode = "light"
+```
 
 ## `[ai]`
 

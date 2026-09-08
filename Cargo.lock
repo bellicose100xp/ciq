@@ -474,6 +474,7 @@ dependencies = [
  "duckdb",
  "env_logger",
  "insta",
+ "libc",
  "log",
  "proptest",
  "ratatui",

@@ -349,9 +349,9 @@ fn render_query_box(app: &App, frame: &mut Frame, area: Rect) -> Rect {
     // applies) we leave the keys in the muted slate by passing the unfocused color, matching the
     // border. When focused with no error, the key color is the mode color; with an error, red.
     let accent = if !focused {
-        theme::base::BORDER_UNFOCUSED
+        theme::base::pal().border_unfocused
     } else if has_error {
-        theme::base::BORDER_ERROR
+        theme::base::pal().border_error
     } else {
         theme::border::mode_color(mode)
     };

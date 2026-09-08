@@ -7,6 +7,15 @@ changes alike, patch `0.minor.Y` for fixes, refactors, polish, and docs.
 
 ## [Unreleased]
 
+### Added
+- **Light-terminal palette** — ciq now carries a second palette for light backgrounds, with the
+  same hue families as the dark one deepened so every column color, accent, and hint holds at least
+  3:1 contrast against white. Popup surfaces and the focused-pane tint invert with it, so they read
+  as light elevations instead of dark islands. The palette is picked once at startup: `[theme]
+  mode = "auto"` (the default) asks the terminal for its background color and falls back to dark
+  when it does not answer; `"light"` / `"dark"` pin it. The `[theme] mode` key was previously
+  parsed and ignored.
+
 ## [0.3.0] - 2026-07-14
 
 ### Added

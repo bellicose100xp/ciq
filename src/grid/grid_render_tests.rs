@@ -25,7 +25,7 @@ fn render_to_string(table: &Table, view: GridView, w: u16, h: u16, v_row_offset:
                 &frame,
                 GridPaint {
                     v_row_offset,
-                    accent: theme::base::CYAN,
+                    accent: theme::base::pal().cyan,
                     current_match_row: None,
                     ..Default::default()
                 },
@@ -79,7 +79,7 @@ fn render_does_not_panic_on_zero_height() {
                 Rect::new(0, 0, 80, 0),
                 &frame,
                 GridPaint {
-                    accent: theme::base::CYAN,
+                    accent: theme::base::pal().cyan,
                     current_match_row: None,
                     ..Default::default()
                 },
@@ -372,7 +372,7 @@ fn header_labels_take_their_column_hues() {
                 Rect::new(0, 0, 80, 24),
                 &frame,
                 GridPaint {
-                    accent: theme::base::CYAN,
+                    accent: theme::base::pal().cyan,
                     current_match_row: None,
                     ..Default::default()
                 },
@@ -599,7 +599,7 @@ fn render_grid_paints_needle_matches_into_the_buffer() {
                 Rect::new(0, 0, 80, 10),
                 &frame,
                 GridPaint {
-                    accent: theme::base::CYAN,
+                    accent: theme::base::pal().cyan,
                     search_needle: "ada",
                     current_match_row: None,
                     ..Default::default()
@@ -637,7 +637,7 @@ fn hovered_row_carries_the_hover_background() {
                 &frame,
                 GridPaint {
                     hovered_row: Some(1),
-                    accent: theme::base::CYAN,
+                    accent: theme::base::pal().cyan,
                     current_match_row: None,
                     ..Default::default()
                 },
@@ -658,7 +658,7 @@ fn hovered_row_carries_the_hover_background() {
     );
     assert_eq!(
         bar_cell.style().fg,
-        theme::grid::hover_bar(theme::base::CYAN).fg,
+        theme::grid::hover_bar(theme::base::pal().cyan).fg,
         "the bar takes the pane accent color"
     );
     assert_eq!(
@@ -689,7 +689,7 @@ fn hovered_row_respects_the_scroll_offset() {
                 GridPaint {
                     v_row_offset: 1,
                     hovered_row: Some(2),
-                    accent: theme::base::CYAN,
+                    accent: theme::base::pal().cyan,
                     current_match_row: None,
                     ..Default::default()
                 },

@@ -166,7 +166,7 @@ fn row_line(
         Line::from(vec![
             Span::styled(
                 theme::popup::BAR,
-                theme::popup::selected_bar(theme::palette::ACCENT),
+                theme::popup::selected_bar(theme::palette::accent()),
             ),
             Span::styled(content, theme::palette::selected()),
         ])

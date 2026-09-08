@@ -960,7 +960,7 @@ fn query_box_border_takes_vim_mode_color_in_normal_mode() {
     let qbox_corner = buf.cell((0, 7)).unwrap();
     assert_eq!(
         qbox_corner.fg,
-        theme::base::YELLOW,
+        theme::base::pal().yellow,
         "Normal-mode query-box border uses the yellow mode color"
     );
 }
@@ -991,7 +991,7 @@ fn query_box_border_turns_red_on_query_pipeline_error() {
     let qbox_corner = buf.cell((0, 7)).unwrap();
     assert_eq!(
         qbox_corner.fg,
-        theme::base::RED,
+        theme::base::pal().red,
         "query-box border turns red when has_query_error is true"
     );
 }
@@ -1013,11 +1013,14 @@ fn results_pane_border_is_green_on_a_successful_rowful_result() {
     let corner = buf.cell((0, 0)).unwrap();
     assert_eq!(
         corner.fg,
-        theme::base::GREEN,
+        theme::base::pal().green,
         "successful result with rows -> green results-pane border"
     );
     // Row counter on the top-right also takes the green accent (jiq harmony).
-    let counter_present = buf.content().iter().any(|c| c.fg == theme::base::GREEN);
+    let counter_present = buf
+        .content()
+        .iter()
+        .any(|c| c.fg == theme::base::pal().green);
     assert!(
         counter_present,
         "row counter / border share the green state accent"
@@ -1048,7 +1051,7 @@ fn results_pane_border_is_red_when_result_is_stale() {
     let corner = buf.cell((0, 0)).unwrap();
     assert_eq!(
         corner.fg,
-        theme::base::RED,
+        theme::base::pal().red,
         "stale result → red results-pane border"
     );
 }
@@ -1065,7 +1068,7 @@ fn results_pane_border_is_cyan_while_pending() {
     let corner = buf.cell((0, 0)).unwrap();
     assert_eq!(
         corner.fg,
-        theme::base::CYAN,
+        theme::base::pal().cyan,
         "pending (no result) -> cyan results-pane border"
     );
 }
@@ -1109,7 +1112,7 @@ fn status_line_is_red_on_a_query_error() {
     let red_cells = (0..60)
         .filter(|&x| {
             let cell = buf.cell((x, row)).unwrap();
-            cell.symbol() != " " && cell.fg == theme::base::RED
+            cell.symbol() != " " && cell.fg == theme::base::pal().red
         })
         .count();
     assert!(
@@ -1147,7 +1150,7 @@ fn focused_simple_pane_row_has_accent_bar_and_tinted_background() {
     );
 
     // The left accent bar glyph is present, in the cyan accent foreground.
-    let cyan = theme::base::CYAN;
+    let cyan = theme::base::pal().cyan;
     let bar_cells = buf
         .content()
         .iter()
