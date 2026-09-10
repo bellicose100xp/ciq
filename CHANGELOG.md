@@ -7,6 +7,8 @@ changes alike, patch `0.minor.Y` for fixes, refactors, polish, and docs.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-10
+
 ### Added
 - **Light-terminal palette** — ciq now carries a second palette for light backgrounds, with the
   same hue families as the dark one deepened so every column color, accent, and hint holds at least
@@ -160,7 +162,8 @@ startup.
 - **Release flow** — cargo-dist shell installer (curl-based) for macOS and Linux, built by the
   `Release` workflow on a `vX.Y.Z` tag.
 
-[Unreleased]: https://github.com/bellicose100xp/ciq/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/bellicose100xp/ciq/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/bellicose100xp/ciq/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/bellicose100xp/ciq/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/bellicose100xp/ciq/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/bellicose100xp/ciq/compare/v0.1.0...v0.2.0
