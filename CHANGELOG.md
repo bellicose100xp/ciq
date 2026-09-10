@@ -15,6 +15,66 @@ changes alike, patch `0.minor.Y` for fixes, refactors, polish, and docs.
   mode = "auto"` (the default) asks the terminal for its background color and falls back to dark
   when it does not answer; `"light"` / `"dark"` pin it. The `[theme] mode` key was previously
   parsed and ignored.
+- **The AI feature now really calls a model.** Until now the AI surface was wired end to end but its
+  provider was a stub that answered "not built into this binary", so nothing but the mock ever
+  replied. ciq now ships a blocking HTTP client speaking the Anthropic Messages API, with two
+  providers behind `[ai] provider`. `"anthropic"` calls the first-party API and reads its key from
+  the environment variable `api_key_env` names. `"bedrock"` calls Claude in Amazon Bedrock through
+  `InvokeModel` on the regional `bedrock-runtime` endpoint, authenticating with a bearer token from
+  that same variable
+  (default `AWS_BEARER_TOKEN_BEDROCK`) or, when it is unset, signing the request with AWS SigV4
+  using static credentials resolved the way the AWS SDK default chain resolves them: the AWS
+  environment variables, then static keys in the named profile of `~/.aws/credentials` and
+  `~/.aws/config`, then that profile's `credential_process` command, whose JSON output is read
+  fresh on every request. A profile that needs SSO or role assumption is reported as unsupported
+  with a message naming the mechanism, so you know to refresh credentials rather than guessing at
+  a network problem. The region comes from `[ai] region`, `AWS_REGION`, `AWS_DEFAULT_REGION`, the
+  profile's `region`, or `us-east-1`. No secret is stored in the config: the key is read from the
+  environment on every request, so one exported after launch is picked up without a restart.
+- **The AI chat is open by default and shares the keyboard.** It appears at the bottom right of the
+  results pane above the query box (jiq's placement, about 70% wide and 40% tall) as soon as the
+  CSV loads, without stealing the keyboard: SQL typing goes to the bar until you click the chat or
+  press `Ctrl+G`. Clicks move focus rather than closing the chat, so you can click where you want
+  to type, and the input line shows a block cursor whenever the chat has the keyboard.
+  `[ai] open_on_start = false` restores the closed-on-launch behavior. A failing query pops the chat
+  up if it is hidden, so the fixes are always on screen.
+- **Two chords with one job each.** `Ctrl+A` shows or hides the chat and nothing else. `Ctrl+G`
+  moves the keyboard between the query bar and the chat, opening it if hidden; `Esc` from the chat
+  goes back to the bar with the chat still visible. Before, `Ctrl+A` focused a visible chat on one
+  press and closed it on the next, which made it easy to lose the box while trying to type in it.
+- **The AI box matches jiq's.** Prose and SQL wrap to the box width instead of being cut off, each
+  suggestion is a numbered block with its note on a dimmed line, exchanges are separated by a blank
+  line, the top border names the provider and model, and the bottom border carries the shortcut
+  legend for the current focus. Applying a suggestion now keeps you in the five-pane Simple mode
+  when the query fits the panes, switching to SQL mode only for a CTE, join, subquery, or `HAVING`.
+- **The AI popup is now a conversation** (`Ctrl+A`). The one-shot ask box became a chat: you type a
+  question, the model answers with a line or two of plain prose plus zero or more pickable SQL
+  suggestions, and the next question goes out with the prior turns attached, so "now only the EU
+  region, and sort descending" refines the answer you just got instead of starting over. The
+  transcript survives closing the popup, so reopening with `Ctrl+A` resumes the same thread and
+  `Ctrl+L` starts a new one. A question can be answered with prose alone (ask what a column probably
+  contains) and an empty suggestion list is a normal reply. `Enter` sends the typed line, or applies
+  the suggestion under the cursor when the line is blank; `Alt+1` through `Alt+5` apply that row of
+  the most recent answer; `Alt+Up` / `Alt+Down` (or `Alt+J` / `Alt+K`) walk every suggestion in the
+  whole transcript, so you can scroll back and apply an older one; `Up` / `Down`, `PageUp` /
+  `PageDown` and the wheel scroll the conversation. Applying a suggestion drops its SQL into the bar
+  through the normal dispatch path and leaves the chat open, so the conversation continues against
+  the new result. Suggestions are labelled `fix` or `optimize` and colored by kind, and each is put
+  through the same read-only single-`SELECT` guard as a typed query *before* it is drawn, so an
+  unsafe or multi-statement suggestion is never even offered. A failing query appends a turn
+  reporting the error and asking for fixes, opening the chat if it is hidden, but never while
+  another request is in flight; a successful query says nothing.
+- **The `[ai]` config section grew** to cover the live providers: `provider` gained `"bedrock"`,
+  and `region`, `profile`, `effort`, `max_tokens`, `request_timeout_secs`, `extra_instructions`, and
+  `max_context_length` are new. `max_context_length` is the per-request character budget, spent on
+  the conversation turns sent with a message as well as the result sample or error text inside it.
+  The default model is now Claude Fable 5.1 (`claude-fable-5-1`, or
+  `global.anthropic.claude-fable-5-1` on Bedrock, whose ids take a routing prefix) at
+  `effort = "low"`: thinking is always on for that
+  family, so effort is the lever that decides how long and how expensively it thinks, and writing
+  one SQL suggestion against a schema it was already handed does not need deep reasoning. Unknown
+  keys in the section are still rejected, which is what turns `api_key = "sk-…"` into a parse error
+  instead of a secret sitting in a plaintext config.
 
 ## [0.3.0] - 2026-07-14
 
@@ -90,7 +150,7 @@ startup.
 - **Instant facets** (`f`) — an on-demand distribution summary or top-K histogram for the focused
   column.
 - **Query history** (`Ctrl+R`) — a searchable, on-disk ring of prior queries with fuzzy recall.
-- **AI natural-language-to-SQL** (`Ctrl+G`) — describe a query in plain English against the live
+- **AI natural-language-to-SQL** (`Ctrl+A`) — describe a query in plain English against the live
   schema (requires a configured provider).
 - **Output modes** — dump a result to CSV, TSV, JSON, or Markdown.
 - **Mouse support** — wheel and trackpad scrolling, click-to-focus, click-to-position the cursor,

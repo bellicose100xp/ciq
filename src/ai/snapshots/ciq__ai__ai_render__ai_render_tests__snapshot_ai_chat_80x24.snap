@@ -1,0 +1,28 @@
+---
+source: src/ai/ai_render_tests.rs
+expression: screen
+---
+"                                                                                "
+"          ┌ AI · bedrock · global.anthropic.claude-fable-5-1 ──────────────────┐"
+"          │you: only EU rows                                                   │"
+"          │ai:  filter on the region column                                    │"
+"          │ [1] fix      SELECT * FROM t WHERE region='EU'                     │"
+"          │              adds the filter                                       │"
+"          │ [2] optimize SELECT id FROM t                                      │"
+"          │              projects less                                         │"
+"          │                                                                    │"
+"          │                                                                    │"
+"          │                                                                    │"
+"          │>                                                                   │"
+"          └ Enter send • Alt+1-5 apply • Alt+↑↓ select • Ctrl+L new • Esc back─┘"
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "

@@ -159,15 +159,20 @@ src/config/ai_config.rs
 src/config/history_config.rs
 src/config/theme_config.rs
 
-# Phase 5 (present now): AI NL->SQL (P5.1) — the pure prompt builder (schema-grounded model prompt:
-# table name + every column + its ColumnType) and the pure AI popup state machine (editing /
-# pending / success / error transitions, UTF-8-safe input). A wrong prompt loses the schema
-# grounding the model needs; a wrong popup transition desyncs the request lifecycle — both
-# data-in/data-out, so they earn the hard floor. The provider (real HTTP escape hatch + mock), the
-# AI thread bridge, and `ai_render` (the TestBackend popup blit) are seams left off the floor
-# (the provider's `complete` is the network edge; the bridge is thread+channel plumbing; the blit
-# is snapshot-covered like the other *_render files).
+# Phase 5 (present now): the AI chat (P5.1) — every pure piece of the conversation: the shared
+# prompt pieces (schema grounding + fence unwrapping), the system/question/failure prompt builders,
+# the transcript with its send-budget trimming, the tolerant reply parser + the read-only re-check,
+# and the popup state machine (input / send / answer / error, the suggestion cursor, scrolling). A
+# wrong prompt loses the schema grounding the model needs; a wrong budget cut sends a dangling turn;
+# a wrong parse offers a bad query; a wrong transition desyncs the request lifecycle — all
+# data-in/data-out, so they earn the hard floor. The providers (HTTP + SigV4 + credential files),
+# the AI thread bridge, and `ai_render` (the TestBackend popup blit) are seams left off the floor
+# (the network/clock/process edge; thread+channel plumbing; the blit is snapshot-covered like the
+# other *_render files).
 src/ai/prompt.rs
+src/ai/chat_prompt.rs
+src/ai/chat.rs
+src/ai/suggestion.rs
 src/ai/ai_state.rs
 
 # Phase 5 (present now): query history (P5.2) — the pure ring state machine (add/dedupe-to-newest-

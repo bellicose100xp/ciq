@@ -15,7 +15,7 @@ covers what the capability does, how to use it, and the exact keys or flags invo
 - [Column palette](features/column-palette.md) — pick and reorder columns without writing a `SELECT` list.
 - [Instant facets](features/facets.md) — the distribution of any column on demand.
 - [Output modes](features/output-modes.md) — dump a query result to CSV, TSV, JSON, or Markdown.
-- [AI: natural language to SQL](features/ai-nl-to-sql.md) — describe the query in plain English.
+- [AI chat](features/ai-nl-to-sql.md) — ask about your data in plain English and pick from the queries the model proposes; follow-ups refine the last answer.
 - [Query history](features/query-history.md) — recall prior queries, in-session and on disk.
 - [CSV ingest and overrides](features/csv-ingest.md) — how the file is parsed and how to override the dialect.
 - [Row search](features/search.md) — `Ctrl+F` filters the grid to rows matching the typed text, with in-place highlights.

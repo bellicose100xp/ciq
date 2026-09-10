@@ -47,7 +47,7 @@ polarity, or the on-screen feel. Confirm by hand (light + dark terminal):
 4. **Hints follow the open popup.** Open each popup and confirm the box bottom border shows that
    popup's keys: autocomplete (`Tab accept`, `Up/Down select`, `Esc close`); `Ctrl+P` palette
    (`Space toggle`, `Left/Right reorder`, `Enter apply`); `Ctrl+R` history (`Enter recall`);
-   `Ctrl+A` AI (`Enter generate`); `f` facet in the results pane (`Esc close`). NOTE on tmux:
+   `Ctrl+A` AI (`Enter send`, `Esc back`, `Ctrl+A close`); `f` facet in the results pane (`Esc close`). NOTE on tmux:
    `Ctrl+A` is sometimes the screen-style tmux prefix; if your tmux config uses it, rebind tmux's
    prefix or use the mouse to open the AI popup.
 4a. **Simple-mode bar (no popup) shows pane-nav and Tab=\t.** With no popup open and the query bar
@@ -280,42 +280,87 @@ reverse-video color, the real `Ctrl+R` chord, and color polarity. Confirm by han
 6. **Color polarity.** Repeat 1-3 in a light and a dark terminal — confirm the popup border, the
    highlighted row, and the dimmed title/no-matches line are all legible in both (the §4.7 check).
 
-## Phase 5 — AI NL→SQL popup (P5.1)
+## Phase 5 — AI chat (`Ctrl+A` show/hide, `Ctrl+G` ask)
 
-The headless suite proves the pure prompt builder (schema grounding), the popup state machine, the
-popup blit (TestBackend snapshot), the AI thread round-trip (with the mock provider — no network),
-and that a generated query flows through the existing read-only guard + dispatch path (a `DROP`/
-multi-statement reply is rejected). What a real terminal must confirm is the §4.7 residue — the
-real `Ctrl+G` chord, true-terminal glyphs/placement, the magenta popup border, and color polarity.
-**This requires a configured provider** (see below); without one the chord is a no-op, which is
-itself worth confirming. **NL→SQL answer quality is a RECOMMENDED spot-check, NOT a blocking gate**
-(model output is non-deterministic and out of ciq's control). Confirm by hand:
+The headless suite proves the pure prompt builders (schema grounding, the reply contract, the
+turn-budget trim), the conversation and popup state machines, the popup layout (TestBackend
+snapshots), the AI thread round-trip (mock provider, no network), the SigV4 signer and the AWS
+credential/region resolution against fixed inputs, the tolerant reply-JSON parser, and that
+AI-produced SQL flows through the existing read-only guard + dispatch path (a `DROP`/multi-statement
+reply is rejected, and an unsafe suggestion is filtered out before it is ever offered). What a real
+terminal must confirm is the §4.7 residue: the real `Ctrl+A` chord, true-terminal glyphs/placement,
+the purple popup border, the role-label and per-kind row colors, and color polarity. On top of that,
+now that the HTTP client is compiled in, a live request must actually complete against a real
+provider, and the conversation must actually behave like one across turns. **This requires a
+configured provider** (see below); without one the chord is a no-op, which is itself worth
+confirming. **Answer quality is a RECOMMENDED spot-check, NOT a blocking gate** (model output is
+non-deterministic and out of ciq's control). Confirm by hand:
 
-1. **Chord is a no-op when unconfigured.** With no `[ai]` block (or `enabled = false`), press
-   `Ctrl+G` — confirm nothing happens (the feature is off, no popup).
-2. **Popup opens (configured).** With `[ai] enabled = true`, `provider = "anthropic"`, and the API
-   key exported in the env var named by `[ai] api_key_env` (default `ANTHROPIC_API_KEY` — never put
-   the key in the config file), press `Ctrl+G`. A bordered "ask AI" popup appears under the query
-   bar with a `> ` prompt. Type a request (e.g. `rows where status is active`) and confirm the text
-   lands in the popup, NOT in the query bar.
-3. **Esc closes, does not quit; Ctrl-C quits.** With the popup open, `Esc` closes it and the app
-   stays running; `Ctrl+C` from the popup quits.
-4. **Generate (RECOMMENDED quality spot-check).** Press `Enter`. Confirm the popup shows
-   `generating…`, then either drops a `SELECT …` into the query bar (popup closes, the grid updates
-   through the normal debounce path) or shows an `error: …` line (popup stays open to retry).
-   *Recommended, not blocking:* eyeball whether the generated SQL is a reasonable answer to the
-   request — but a poor answer is a model-quality issue, not a ciq bug.
-5. **Read-only guard still applies.** If the model ever returns non-SELECT SQL, confirm the status
-   line shows `read-only SELECT queries only` and the table is unchanged (the AI cannot smuggle DML
-   past the existing guard — this is enforced headlessly, but worth seeing once live).
-6. **Color polarity.** Repeat 2 in a light and a dark terminal — confirm the magenta popup border,
-   the prompt text, the `generating…`/success/error lines are all legible in both (the §4.7 check).
-
-**Note (current build):** the real provider's HTTP client is not compiled into this binary (no
-network dependency yet — see `src/ai/provider.rs`), so step 4 will surface a clear "the live HTTP
-provider … is not built into this binary" message rather than a real completion. The chord/popup/
-guard/polarity checks (1-3, 5, 6) are fully exercisable now; the live-completion quality check (4)
-applies once the HTTP body is wired.
+1. **The chord is a no-op when unconfigured.** With no `[ai]` block (or `enabled = false`), press
+   `Ctrl+A` and confirm nothing happens (the feature is off, no popup).
+2. **Configure a provider.** In `~/.config/ciq/config.toml`, either the first-party API:
+   `[ai]` with `enabled = true`, `provider = "anthropic"`, and the key exported in the env var
+   `api_key_env` names (default `ANTHROPIC_API_KEY` — never put the key in the config file); or
+   Bedrock: `enabled = true`, `provider = "bedrock"`, `region = "us-east-1"`. On Bedrock, export a
+   bearer token in `AWS_BEARER_TOKEN_BEDROCK`, or leave it unset and let ciq sign with SigV4 from
+   static AWS credentials (env vars, or a `~/.aws/credentials` profile). Relaunch ciq.
+3. **The chat opens.** Press `Ctrl+A` (if it is already open from `open_on_start`, press `Ctrl+G`
+   instead). A bordered popup titled `AI · <provider> · <model>` appears at the bottom right above
+   the query bar, its bottom border reading `Enter send • Alt+1-5 apply • Alt+↑↓ select • Ctrl+L new
+   • Esc back • Ctrl+A close`, with a `> ` prompt and a **block cursor** on its bottom row and the
+   dimmed hint "ask about your data, or describe the query you want" above it. Type a question (e.g.
+   `top 5 regions by total amount`) and confirm the text lands in the popup, NOT in the query bar,
+   and the cursor moves with it.
+   NOTE on tmux: `Ctrl+A` is sometimes the screen-style tmux prefix; if your tmux config uses it,
+   rebind tmux's prefix or use the mouse to reach the popup.
+4. **Ctrl+A hides, Esc and Ctrl+G go back, Ctrl-C quits.** `Ctrl+A` hides the popup; `Ctrl+A` again
+   brings it back with the keyboard in it. Press `Esc`: the popup stays visible, its border dims, the
+   legend changes to `Ctrl+G ask • Alt+1-5 apply • Ctrl+A close`, and typing goes to the query bar.
+   `Ctrl+G` puts the keyboard back in the chat; `Ctrl+G` again returns it to the bar. With the chat
+   unfocused, `Ctrl+A` hides it without focusing it first. `Ctrl+C` from the popup quits.
+5. **An answer is prose plus numbered rows (the HTTP path).** Focus the chat (`Ctrl+G`), type the question,
+   press `Enter`. Confirm your question appears as a `you:` turn, the prompt row shows `thinking…`,
+   and then an `ai:` turn lands carrying a line or two of plain prose, with zero or more
+   `[n] <kind> <sql>  <note>` rows beneath it. A misconfiguration must surface as a readable
+   `error: …` line with the popup left open and the transcript intact — check at least one: unset the
+   key env var and confirm the message names the variable to set; on Bedrock, point `profile` at an
+   SSO-only profile and confirm the message names the unsupported mechanism rather than reading as a
+   network failure. *Recommended, not blocking:* eyeball whether the prose and SQL answer the
+   question.
+6. **Applying a row.** Press `Alt+1`. Confirm row 1's SQL lands in the query bar, the mode flips to
+   Power with a status line saying so, the grid updates through the normal debounce path, and **the
+   popup stays open**. Then `Alt+Down` / `Alt+Up` (and `Alt+J` / `Alt+K`) move the cursor band over
+   the suggestion rows, and `Enter` on a blank input line applies the cursor row.
+7. **A follow-up refines the previous answer.** With that answer on screen, type a refinement that
+   only makes sense in context (e.g. `now only the EU region, and sort ascending`) and press `Enter`.
+   Confirm the new SQL builds on the previous query rather than starting from scratch, and that it is
+   a complete query, not a fragment.
+8. **A prose-only answer is normal.** Ask something that needs no query (e.g. `what does the status
+   column probably contain?`). Confirm the `ai:` turn is prose with no `[n]` rows under it and no
+   error line.
+9. **The transcript survives hiding, and `Ctrl+L` resets.** Press `Ctrl+A` twice (hide, show):
+   confirm the whole conversation is still there and the input line is empty. Press `Ctrl+L` and
+   confirm every turn is gone and the empty-state hint is back.
+10. **A failing query speaks up.** With the chat open, break the query in the bar (e.g.
+    `SELECT nope FROM t`) and let it run. Confirm a `you:` turn reading `the query failed: …` appears
+    on its own, followed by an `ai:` answer with at least one `fix` row that repairs the query. Then
+    hide the chat with `Ctrl+A`, break the query again, and confirm the chat pops back up (unfocused,
+    dim border, your typing still in the bar) carrying the new failure turn. A *successful* query
+    must never add a turn.
+11. **Scrolling a long conversation.** After several turns, use `Up` / `Down` and
+    `PageUp` / `PageDown` and confirm the transcript scrolls a row / five rows and the input line
+    stays pinned to the bottom. Roll the wheel over the popup and confirm the transcript scrolls
+    (not the grid). Scroll back to an older answer, walk the cursor onto one of its rows with
+    `Alt+Up`, press `Enter`, and confirm that older suggestion applies.
+12. **Read-only guard still applies.** If the model ever returns non-SELECT SQL, confirm the status
+    line shows `read-only SELECT queries only` and the table is unchanged (enforced headlessly, but
+    worth seeing once live).
+13. **Row and label colors.** Confirm a `fix` row reads in the error hue and an `optimize` row in the
+    success hue, the `you:` label is cyan and `ai:` purple, and the cursor row takes the shared popup
+    selection band plus its left accent bar.
+14. **Color polarity.** Repeat 3, 5, and 13 in a light and a dark terminal — confirm the purple popup
+    border, the prompt text, the role labels, the `thinking…` / error lines, and both suggestion hues
+    are legible in both (the §4.7 check).
 
 ## Post-5 input UX — multiline query box + visible cursor (tui-textarea)
 
@@ -527,11 +572,11 @@ Launch: `./target/release/ciq tests/fixtures/showcase.csv`
    1000 rows, so the bars are even; `status` shows its NULL count).
 7. **Value completion.** Type `SELECT * FROM t WHERE region = '` → popup lists EU/NA/APAC/LATAM/MEA;
    pick one → inserts a quoted literal (`'EU'`). Same for `WHERE status = '` and `WHERE CreatedBy = '`.
-8. **Identifier quoting (Q3).** Open the palette (`Ctrl+K`) or autocomplete and select the awkward
+8. **Identifier quoting (Q3).** Open the palette (`Ctrl+P`) or autocomplete and select the awkward
    columns → `Total ($)` inserts as `"Total ($)"`, `order` as `"order"`, `CreatedBy` keeps its case.
-9. **Palette / history / AI against real data.** `Ctrl+K` to project a subset of the 14 columns;
-   `Ctrl+R` to recall a prior query; `Ctrl+G` for NL→SQL (a configured provider answers; otherwise the
-   popup shows a clear "not configured" message — the chord/popup itself still works).
+9. **Palette / history / AI against real data.** `Ctrl+P` to project a subset of the 14 columns;
+   `Ctrl+R` to recall a prior query; `Ctrl+A` to ask the AI chat about the data and apply one of its
+   queries (needs a configured provider — with none, the chord is a no-op).
 10. **Output modes (headless, from a shell).** Confirm byte-level correctness:
     - `./target/release/ciq -q "SELECT id, status, amount FROM t WHERE id IN (17,23,29)" --output json tests/fixtures/showcase.csv` → NULLs are JSON `null`, not `""`.
     - `./target/release/ciq -q "SELECT notes FROM t WHERE id = 50" --output csv tests/fixtures/showcase.csv` → doubled-quote round-trips (`"he said ""ship it"" today"`).

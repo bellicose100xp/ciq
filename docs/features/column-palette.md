@@ -13,7 +13,7 @@ them, filter the list by name, and it generates the underlying SQL into the quer
 
 ## How to use it
 
-- Press **Ctrl+K** to open the palette (it needs a loaded schema; it is a no-op while the file is
+- Press **Ctrl+P** from the SELECT pane to open the palette (it needs a loaded schema; it is a no-op while the file is
   still loading).
 - The popup lists every column with a checkbox and its type badge.
 - **Space** toggles the column under the cursor. Selected columns are projected in the order you

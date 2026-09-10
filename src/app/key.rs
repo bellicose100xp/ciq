@@ -26,6 +26,11 @@ impl KeyMods {
         alt: false,
         shift: false,
     };
+    pub const ALT: KeyMods = KeyMods {
+        ctrl: false,
+        alt: true,
+        shift: false,
+    };
 }
 
 /// A neutral key (crossterm-free). `Paste` carries an already-decoded bracketed-paste payload —

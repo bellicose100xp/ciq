@@ -45,6 +45,16 @@ serde = { version = "1.0", features = ["derive"] }
 # of the escape bytes to the real terminal is the §4.7 human-validated residue.
 base64 = "0.22"
 
+# AI providers (Anthropic Messages API direct, and Claude in Amazon Bedrock at the same shape).
+# `ureq` is a *blocking* HTTP client with rustls, matching ciq's no-tokio worker-thread model;
+# every request runs on its own AI thread so the UI never blocks. `serde_json` builds the request
+# body and reads the reply. `hmac` + `sha2` sign Bedrock requests with AWS SigV4 (the signer is a
+# pure function over an injected timestamp, so it stays under the determinism rule).
+ureq = { version = "3", features = ["json"] }
+serde_json = "1"
+hmac = "0.12"
+sha2 = "0.10"
+
 # `poll(2)` + `read(2)` on stdin for the startup OSC 11 background-color query (light/dark theme
 # auto-detection). Unix only; the pure reply parser lives in `theme::polarity`, this is just the
 # bounded wait at the terminal edge (`app/event_loop.rs`).

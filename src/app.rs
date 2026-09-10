@@ -143,7 +143,7 @@ pub struct App {
     debouncer: Debouncer,
     dispatcher: Dispatcher,
     /// The latest accepted successful result, if any (None until the first query lands).
-    result: Option<ProcessedResult>,
+    pub(crate) result: Option<ProcessedResult>,
     /// Whether the most recently *dispatched* query had ciq's viewport `LIMIT` wrap applied (the
     /// user supplied no `LIMIT` of their own). When the landed result's row count reaches that cap,
     /// the grid is truncated and a banner is shown (P5.3). Recomputed on each dispatch; carried to
@@ -158,7 +158,7 @@ pub struct App {
     /// error-keeps-last-result-dimmed behavior). Cleared when the next successful response lands.
     /// Pane-validation errors (e.g. a non-numeric LIMIT in Simple mode) do NOT flip this — they
     /// never reach the engine, so the prior dispatched result keeps its NORMAL polarity.
-    result_is_stale: bool,
+    pub(crate) result_is_stale: bool,
     /// Vertical row scroll offset into the result body.
     v_row_offset: usize,
     /// Horizontal column scroll offset (column-granular). Driven by keyboard ←/→ — predictable,
@@ -172,7 +172,7 @@ pub struct App {
     /// `h_char_offset` snapped together at column boundaries.
     h_char_offset: u16,
     /// The status-line text shown at the bottom.
-    status: String,
+    pub(crate) status: String,
     /// Whether the user edited the query while still `Loading`, so we must fire once `Ready`.
     pending_query_on_ready: bool,
     /// The loaded table schema — the candidate source for autocomplete. `None` until the engine
@@ -222,23 +222,38 @@ pub struct App {
     /// AI thread (see [`ai_app`](crate::ai::ai_app)).
     pub(crate) ai: AiState,
     /// The request channel to the AI thread — `Some` only when the `[ai]` feature is active and the
-    /// thread was spawned. The App sends a built prompt; the thread calls `Provider::complete` and
+    /// thread was spawned. The App sends the built request; the thread calls `Provider::chat` and
     /// sends the result back on a channel the event loop drains. `None` keeps the AI popup
     /// unavailable (the chord is a no-op).
     pub(crate) ai_tx: Option<Sender<crate::ai::ai_app::AiJob>>,
     /// Monotonic AI-request sequence id (P5.1): bumped on each submit so a reply from a superseded
     /// request is discarded (stale-discard, like the query worker's `request_id`).
     pub(crate) ai_seq: u64,
+    /// The last main-lane query error as shown to the user, cleared by the next success. The AI chat
+    /// reports this rather than the status line, which later notices overwrite.
+    pub(crate) last_error: Option<String>,
+    /// The raw query text of the most recent main-lane dispatch. A failure report pairs the error
+    /// with this, since the bar may already hold the next edit by the time the error lands.
+    pub(crate) last_dispatched_sql: Option<String>,
+    /// `[ai] open_on_start`: show the chat (unfocused) as soon as the CSV loads.
+    pub(crate) ai_open_on_start: bool,
+    /// The provider label for the chat's title (`bedrock · global.anthropic.claude-fable-5-1`).
+    pub(crate) ai_label: String,
+    /// The user's `[ai] extra_instructions`, appended to every AI prompt after the built-in rules.
+    pub(crate) ai_extra_instructions: Option<String>,
+    /// The `[ai] max_context_length` budget: how many characters of conversation history plus
+    /// result sample / error text one AI request may carry.
+    pub(crate) ai_max_context_chars: usize,
     /// The optional interactive viewport row cap (`[general] row_limit`): the `LIMIT N` a bare
     /// `SELECT` is wrapped to, and the cap the truncation banner compares against. `None` (the
     /// default) means uncapped — every row a query returns is shown; limiting is a user choice.
     /// The event loop installs a configured cap via [`configure_general`](Self::configure_general).
-    viewport_row_limit: Option<usize>,
+    pub(crate) viewport_row_limit: Option<usize>,
     /// The on-screen [`Rect`](ratatui::layout::Rect) of each mouse-routable surface, recorded by the
     /// render layer every frame ([`app_render`]) and read by [`on_mouse`](Self::on_mouse) to resolve
     /// a click/scroll to the surface under the pointer. A [`std::cell::Cell`] so the `&self` render
     /// path can update it without a `&mut` borrow (it is plain `Copy` geometry, not logic).
-    layout_regions: std::cell::Cell<LayoutRegions>,
+    pub(crate) layout_regions: std::cell::Cell<LayoutRegions>,
     /// The row the pointer is resting on (a grid body row or a popup row), set by `Move` events
     /// and read by the render layer to paint the hover highlight. `None` when the pointer is off
     /// every hoverable row (jiq's exactly-one-hover-at-a-time invariant).
@@ -302,6 +317,12 @@ impl App {
             ai: AiState::new(),
             ai_tx: None,
             ai_seq: 0,
+            last_error: None,
+            last_dispatched_sql: None,
+            ai_open_on_start: false,
+            ai_label: String::new(),
+            ai_extra_instructions: None,
+            ai_max_context_chars: crate::config::ai_config::DEFAULT_MAX_CONTEXT_CHARS as usize,
             viewport_row_limit: None,
             layout_regions: std::cell::Cell::new(LayoutRegions::default()),
             hover: None,
@@ -477,6 +498,16 @@ impl App {
     }
 
     /// The AI NL->SQL popup state (for the render layer and tests).
+    /// The provider label shown in the chat's title.
+    pub fn ai_label(&self) -> &str {
+        &self.ai_label
+    }
+
+    /// Name the provider in the chat's title (the shell passes `Provider::label()`).
+    pub fn set_ai_label(&mut self, label: impl Into<String>) {
+        self.ai_label = label.into();
+    }
+
     pub fn ai(&self) -> &crate::ai::AiState {
         &self.ai
     }
@@ -585,8 +616,17 @@ impl App {
         if self.save.is_open() {
             return self.handle_save_key(&ev);
         }
-        if self.ai.is_open() {
+        if self.ai.is_focused() {
             return self.handle_ai_key(&ev, now_ms);
+        }
+        // The chat can stay visible while the keyboard is elsewhere: the Alt+<n> shortcuts still
+        // apply the latest answer's rows (jiq's behavior), so the user can type SQL and pick a
+        // suggestion without switching focus. Ctrl+G (below) hands the keyboard over.
+        if self.ai.is_open()
+            && let Some(idx) = crate::ai::ai_app::alt_digit(&ev)
+        {
+            self.apply_suggestion(idx, now_ms);
+            return false;
         }
         if self.history_open {
             return self.handle_history_key(&ev, now_ms);
@@ -630,11 +670,15 @@ impl App {
             self.open_history();
             return false;
         }
-        // Ctrl+A opens the AI NL->SQL popup (the "ask" chord, P5.1). No-op when the AI feature is
-        // inactive (no provider configured) or while loading. (Ctrl+G is intentionally unbound,
-        // reserved for a future binding.)
+        // Ctrl+A shows or hides the AI chat; Ctrl+G puts the keyboard in it to ask a question
+        // (opening it if hidden). Both are no-ops when the AI feature is inactive (no provider
+        // configured) or while loading.
         if ev.mods.ctrl && matches!(ev.key, Key::Char('a') | Key::Char('A')) {
             self.open_ai();
+            return false;
+        }
+        if ev.mods.ctrl && matches!(ev.key, Key::Char('g') | Key::Char('G')) {
+            self.focus_ai();
             return false;
         }
         // Ctrl+Q toggles between Simple (5 panes) and Power (free-form SQL) query modes. Simple ->
@@ -1015,6 +1059,7 @@ impl App {
                     // COUNT query. Never set on the uncapped default.
                     self.last_query_ciq_capped =
                         self.viewport_row_limit.is_some() && applies_viewport_limit(&raw);
+                    self.last_dispatched_sql = Some(raw.clone());
                     // Record the raw user query (not the LIMIT-wrapped SQL) in history — this is
                     // the felt "I ran this" moment, and only a query that passed the read-only
                     // single-statement guard reaches here (§7.6).
@@ -1142,6 +1187,7 @@ impl App {
                 // A successful response replaces the grid and clears any prior stale-dim — the
                 // render layer goes back to NORMAL polarity for the new rows.
                 self.result_is_stale = false;
+                self.last_error = None;
                 self.v_row_offset = 0;
                 // An active Ctrl+F filter re-applies to the new rows (the needle outlives the
                 // result it was typed against).
@@ -1156,6 +1202,7 @@ impl App {
                     Some(schema) => enhance_with_schema(&message, schema),
                     None => enhance(&message),
                 };
+                self.last_error = Some(self.status.clone());
                 // Keep the last-good grid in place but mark it stale so the render layer dims it
                 // (jiq's error-keeps-last-result-dimmed behavior). The error rides the status line.
                 if self.result.is_some() {
@@ -1214,6 +1261,7 @@ impl App {
     pub fn on_loaded(&mut self, status: impl Into<String>) -> bool {
         self.phase = AppPhase::Ready;
         self.status = status.into();
+        self.open_ai_on_load();
         if self.pending_query_on_ready {
             self.pending_query_on_ready = false;
             self.debouncer.mark_executed();

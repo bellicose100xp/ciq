@@ -6,6 +6,7 @@ use std::sync::mpsc::channel;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
 
 use crate::app::{App, Focus, Key, KeyEvent};
@@ -1179,4 +1180,58 @@ fn focused_simple_pane_row_has_accent_bar_and_tinted_background() {
         power_tint, 0,
         "Power mode has no per-pane focus band, so no tint or accent bar"
     );
+}
+
+// --- the AI chat popup's geometry (jiq's: bottom-right, above the bar) ---
+
+fn ai_rect(pane_w: u16, pane_h: u16) -> (Rect, Rect, Rect) {
+    let results = Rect::new(0, 1, pane_w, pane_h);
+    let bar = Rect::new(0, 1 + pane_h, pane_w, 3);
+    (super::ai_popup_rect(bar, results), bar, results)
+}
+
+#[test]
+fn ai_popup_hugs_the_right_edge_and_sits_on_the_bar() {
+    let (r, bar, results) = ai_rect(100, 30);
+    assert_eq!(
+        r.x + r.width,
+        results.x + results.width,
+        "right-aligned to the pane"
+    );
+    assert_eq!(
+        r.y + r.height,
+        bar.y,
+        "its bottom edge is the row above the bar"
+    );
+    assert!(r.x > results.x, "it does not start at the left edge");
+}
+
+#[test]
+fn ai_popup_takes_its_share_of_the_pane() {
+    let (r, _, _) = ai_rect(100, 30);
+    assert_eq!(r.width, 70, "70% of the pane width");
+    assert_eq!(r.height, 12, "40% of 30 rows");
+    let (r, _, _) = ai_rect(200, 60);
+    assert_eq!(r.width, 140);
+    assert_eq!(r.height, 24, "a taller terminal shows more conversation");
+}
+
+#[test]
+fn ai_popup_never_shrinks_below_its_minimums() {
+    let (r, _, _) = ai_rect(50, 20);
+    assert_eq!(r.width, 40, "70% of 50 is 35, floored to the minimum width");
+    assert_eq!(
+        r.height,
+        crate::ai::ai_render::POPUP_ROWS + 2,
+        "40% of 20 is 8, floored to the chat's minimum rows plus border"
+    );
+}
+
+#[test]
+fn ai_popup_clamps_to_a_tiny_pane() {
+    let (r, _, results) = ai_rect(30, 5);
+    assert_eq!(r.width, 30, "narrower pane than the minimum: fill it");
+    assert_eq!(r.height, 5, "shorter pane than the minimum: fill it");
+    assert_eq!(r.x, results.x);
+    assert_eq!(r.y, results.y, "never overflows the top of the pane");
 }

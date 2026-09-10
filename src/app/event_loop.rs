@@ -167,10 +167,13 @@ pub fn run(path: PathBuf, opts: CsvOpts) -> std::io::Result<()> {
 
     // Wire the AI NL->SQL feature (P5.1) when `[ai]` is active. A provider is built from the
     // config (the API key is read from the env var it names, never the file); the AI thread owns
-    // it and blocks on `Provider::complete` off the UI thread. When inactive, no thread is spawned
+    // it and blocks on `Provider::chat` off the UI thread. When inactive, no thread is spawned
     // and the `Ctrl+A` chord is a no-op. The result receiver is drained in the event loop below.
-    let ai_bridge =
-        crate::ai::provider::provider_from_config(cfg.ai()).map(crate::ai::ai_app::spawn_ai_thread);
+    app.configure_ai(cfg.ai());
+    let ai_bridge = crate::ai::provider::provider_from_config(cfg.ai()).map(|provider| {
+        app.set_ai_label(provider.label());
+        crate::ai::ai_app::spawn_ai_thread(provider)
+    });
     let ai_result_rx = if let Some(bridge) = &ai_bridge {
         app.set_ai_channel(bridge.request_tx.clone());
         Some(&bridge.result_rx)
@@ -243,7 +246,11 @@ fn event_loop(
         loop {
             match response_rx.try_recv() {
                 Ok(resp) => {
-                    app.on_response(resp);
+                    // Routes the response to the grid and, for an accepted main-lane error, lets the
+                    // chat offer fixes. `now_ms` is the documented wall-clock seam.
+                    #[allow(clippy::disallowed_methods)]
+                    let now_ms = start.elapsed().as_millis() as u64;
+                    app.on_response_with_ai(resp, now_ms);
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => break,

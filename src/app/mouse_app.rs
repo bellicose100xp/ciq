@@ -163,9 +163,15 @@ impl App {
             self.close_history();
             return;
         }
-        if self.ai.is_open() && !on_popup(&target, PopupKind::Ai) {
-            self.ai.close();
-            return;
+        // The chat stays visible either way; a click decides who owns the keyboard. Inside the box
+        // the chat takes it (so you can click the input line and type); outside, the click goes on
+        // to place the bar cursor or focus the grid as it would with no popup up.
+        if self.ai.is_open() {
+            if on_popup(&target, PopupKind::Ai) {
+                self.ai.focus();
+            } else {
+                self.ai.blur();
+            }
         }
         if self.save.is_open() && !on_popup(&target, PopupKind::Save) {
             self.close_save();
@@ -259,7 +265,18 @@ impl App {
                         self.history.select_next();
                     }
                 }
-                PopupKind::Facet | PopupKind::Ai | PopupKind::Save => {}
+                // The chat transcript scrolls with the wheel; the facet/save boxes have nothing to
+                // scroll.
+                PopupKind::Ai => {
+                    let (width, height) = self.ai_transcript_size();
+                    let total = crate::ai::ai_render::row_count(&self.ai, width);
+                    if up {
+                        self.ai.scroll_up(1, height, total);
+                    } else {
+                        self.ai.scroll_down(1, height, total);
+                    }
+                }
+                PopupKind::Facet | PopupKind::Save => {}
             }
         }
     }
@@ -300,6 +317,8 @@ impl App {
             // The history popup scrolls through its own state (`adjust_scroll_to_selection`), not
             // the shared scroll_window helper — read the offset it rendered with.
             PopupKind::History => (self.history.scroll_offset(), self.history.filtered_count()),
+            // The chat transcript mixes prose rows with suggestion rows, so a click resolves through
+            // the renderer's own row map rather than this list-index math.
             PopupKind::Facet | PopupKind::Ai | PopupKind::Save => return None,
         };
         let abs = start + row;
@@ -329,6 +348,17 @@ impl App {
         let Some(row) = row else {
             return;
         };
+        // The chat resolves its own rows (prose and suggestions interleave), so it is handled before
+        // the flat-list index gate below, which has no meaning for it.
+        if kind == PopupKind::Ai {
+            if !drag && let Some(idx) = self.ai_suggestion_at_row(row) {
+                self.ai.select(idx);
+                if let Some(sql) = self.ai.take_selected() {
+                    self.apply_ai_sql_from_click(&sql, now_ms);
+                }
+            }
+            return;
+        }
         let Some(abs) = self.popup_abs_index(kind, row) else {
             return;
         };
@@ -372,7 +402,10 @@ impl App {
                     self.recall_selected_history(now_ms);
                 }
             }
-            PopupKind::Facet | PopupKind::Ai | PopupKind::Save => {}
+            PopupKind::Facet | PopupKind::Save => {}
+            // Unreachable: an AI click is resolved before the `popup_abs_index` gate above, since the
+            // chat has no flat list index to fold a scroll offset into.
+            PopupKind::Ai => {}
         }
     }
 }

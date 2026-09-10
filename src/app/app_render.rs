@@ -161,13 +161,16 @@ fn active_popup_kind(app: &App) -> Option<PopupKind> {
     None
 }
 
-/// The on-screen rect for the popup of `kind`. Sizing is per-kind: AI is a fixed 2-row prompt
-/// box; history/palette/autocomplete size to the filtered count (so a narrowed list doesn't
-/// leave a blank lower band); facet uses [`FACET_POPUP_ROWS`]. The anchoring is uniform via
-/// [`popup_above_bar`].
+/// The on-screen rect for the popup of `kind`. Sizing is per-kind: the AI chat takes jiq's
+/// right-anchored share of the pane ([`ai_popup_rect`]); history/palette/autocomplete size to the
+/// filtered count (so a narrowed list doesn't leave a blank lower band); facet uses
+/// [`FACET_POPUP_ROWS`]. The list popups anchor uniformly via [`popup_above_bar`].
 fn popup_rect_for(app: &App, kind: PopupKind, bar: Rect, results: Rect) -> Rect {
+    if kind == PopupKind::Ai {
+        return ai_popup_rect(bar, results);
+    }
     let rows = match kind {
-        PopupKind::Ai => 2,
+        PopupKind::Ai => crate::ai::ai_render::popup_rows_for(app.ai()),
         PopupKind::Save => crate::save::save_render::SAVE_POPUP_ROWS,
         PopupKind::History => {
             (app.history().filtered_count().max(1) as u16).min(MAX_VISIBLE_HISTORY as u16)
@@ -191,6 +194,39 @@ fn popup_rect_for(app: &App, kind: PopupKind, bar: Rect, results: Rect) -> Rect 
     popup_above_bar(bar, results, rows, min_width)
 }
 
+/// The AI chat's rectangle: jiq's geometry, not the small list-popup box. It hugs the **right** edge
+/// of the results pane with its bottom just above the query `bar`, takes
+/// [`AI_POPUP_WIDTH_PERCENT`] of the pane's width (at least [`AI_POPUP_MIN_WIDTH`]) and
+/// [`AI_POPUP_HEIGHT_PERCENT`] of its height (at least the chat's minimum rows plus its border), and
+/// is clamped to the pane so a small terminal still gets a box rather than an overflow. A
+/// conversation needs the room: transcript rows are full sentences plus SQL, and the left edge is
+/// where the grid's leading columns live.
+fn ai_popup_rect(bar: Rect, results: Rect) -> Rect {
+    let pane_w = results.width.max(1);
+    let pane_h = results.height.max(1);
+    let width = (pane_w * AI_POPUP_WIDTH_PERCENT / 100)
+        .max(AI_POPUP_MIN_WIDTH)
+        .min(pane_w);
+    let min_height = crate::ai::ai_render::POPUP_ROWS + 2;
+    let height = (pane_h * AI_POPUP_HEIGHT_PERCENT / 100)
+        .max(min_height)
+        .min(pane_h);
+    let x = results.x + (pane_w - width);
+    let y = bar.y.saturating_sub(height).max(results.y);
+    Rect {
+        x,
+        y,
+        width,
+        height,
+    }
+}
+
+/// The AI chat's share of the results pane, matching jiq's assistant popup.
+const AI_POPUP_WIDTH_PERCENT: u16 = 70;
+const AI_POPUP_HEIGHT_PERCENT: u16 = 40;
+/// Narrower than this and a transcript row cannot hold a short SQL statement.
+const AI_POPUP_MIN_WIDTH: u16 = 40;
+
 /// The screen rectangle for a popup of `content_rows` content rows + a border, anchored so its
 /// **bottom** edge sits just above the query `bar` and it grows upward into the `results` pane.
 /// Height is clamped to the available results height; the box never overflows the top of the pane.
@@ -210,14 +246,14 @@ fn popup_above_bar(bar: Rect, results: Rect, content_rows: u16, min_width: u16) 
     }
 }
 
-/// Overlay the AI NL->SQL popup just above the query bar, over the results pane, when open (P5.1).
-/// A short fixed-height box (the prompt line + a status line). No-op when the popup is closed.
+/// Overlay the AI chat popup at the bottom-right of the results pane, just above the query bar, when
+/// open (P5.1). No-op when the popup is closed.
 fn render_ai_popup(app: &App, frame: &mut Frame, bar: Rect, results: Rect) {
     if !app.is_ai_open() {
         return;
     }
     let area = popup_rect_for(app, PopupKind::Ai, bar, results);
-    render_ai(app.ai(), frame, area);
+    render_ai(app.ai(), app.ai_label(), frame, area);
 }
 
 /// Overlay the save-to-CSV popup just above the query bar, over the results pane, when open

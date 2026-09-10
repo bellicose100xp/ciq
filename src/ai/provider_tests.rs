@@ -1,4 +1,4 @@
-//! Tests for the AI provider trait, `MockProvider`, and the configuration-aware `RealProvider`.
+//! Tests for the AI provider trait, `MockProvider`, and the configuration-aware `HttpProvider`.
 //!
 //! No network: the mock returns canned SQL/errors; the real provider is exercised only for its
 //! config + env-var resolution and its `NotConfigured` returns (it never makes a request here).
@@ -65,7 +65,7 @@ fn errors_render_actionable_messages() {
     );
 }
 
-// --- RealProvider config/env resolution ---
+// --- the config-driven factory ---
 
 fn anthropic_cfg(model: Option<&str>, key_env: Option<&str>) -> AiConfig {
     AiConfig {
@@ -73,67 +73,62 @@ fn anthropic_cfg(model: Option<&str>, key_env: Option<&str>) -> AiConfig {
         provider: AiProviderType::Anthropic,
         model: model.map(str::to_string),
         api_key_env: key_env.map(str::to_string),
+        ..AiConfig::default()
     }
 }
 
 #[test]
-fn real_provider_resolves_model_default() {
-    let cfg = anthropic_cfg(None, None);
-    let p = RealProvider::from_config(&cfg);
-    // Defaulted model id (a current Claude id from the [ai] config defaults).
-    assert_eq!(p.model(), cfg.model());
+fn mock_labels_itself() {
+    assert_eq!(MockProvider::returning("SELECT 1").label(), "mock");
 }
-
-#[test]
-fn real_provider_unset_key_env_yields_not_configured() {
-    // A deterministic, almost-certainly-unset env var name — no $HOME, no real key.
-    let cfg = anthropic_cfg(Some("claude-x"), Some("CIQ_TEST_UNSET_AI_KEY_PROVIDER"));
-    // SAFETY: single-threaded test suite (`--test-threads=1`); we only ensure the var is absent.
-    unsafe { std::env::remove_var("CIQ_TEST_UNSET_AI_KEY_PROVIDER") };
-    let p = RealProvider::from_config(&cfg);
-    assert!(!p.has_key(), "no key in the unset env var");
-    let err = p.complete("show me everything").unwrap_err();
-    match err {
-        AiError::NotConfigured(msg) => {
-            assert!(
-                msg.contains("CIQ_TEST_UNSET_AI_KEY_PROVIDER"),
-                "message names the env var to set: {msg}"
-            );
-        }
-        other => panic!("expected NotConfigured, got {other:?}"),
-    }
-}
-
-#[test]
-fn real_provider_with_key_is_not_built_but_clear() {
-    // SAFETY: single-threaded test suite; set then remove our own scoped var.
-    unsafe { std::env::set_var("CIQ_TEST_SET_AI_KEY_PROVIDER", "sk-fake-not-used") };
-    let cfg = anthropic_cfg(Some("claude-x"), Some("CIQ_TEST_SET_AI_KEY_PROVIDER"));
-    let p = RealProvider::from_config(&cfg);
-    assert!(p.has_key(), "key resolved from the set env var");
-    // With a key present it still returns a clear NotConfigured (the HTTP client is not built in).
-    // It never hits the network — the message says so.
-    let err = p.complete("q").unwrap_err();
-    match err {
-        AiError::NotConfigured(msg) => assert!(
-            msg.contains("not built"),
-            "message explains the HTTP client is not built: {msg}"
-        ),
-        other => panic!("expected NotConfigured, got {other:?}"),
-    }
-    unsafe { std::env::remove_var("CIQ_TEST_SET_AI_KEY_PROVIDER") };
-}
-
-// --- provider_from_config gate ---
 
 #[test]
 fn provider_from_config_none_when_inactive() {
-    let cfg = AiConfig::default(); // provider = None, disabled
-    assert!(provider_from_config(&cfg).is_none());
+    // provider = "none" and disabled.
+    assert!(provider_from_config(&AiConfig::default()).is_none());
+    // A provider chosen but the master switch off.
+    assert!(
+        provider_from_config(&AiConfig {
+            enabled: false,
+            provider: AiProviderType::Anthropic,
+            ..AiConfig::default()
+        })
+        .is_none()
+    );
+    // Enabled but no provider chosen.
+    assert!(
+        provider_from_config(&AiConfig {
+            enabled: true,
+            provider: AiProviderType::None,
+            ..AiConfig::default()
+        })
+        .is_none()
+    );
 }
 
 #[test]
-fn provider_from_config_some_when_active() {
-    let cfg = anthropic_cfg(None, None);
-    assert!(provider_from_config(&cfg).is_some());
+fn provider_from_config_builds_each_active_provider() {
+    let anthropic = provider_from_config(&anthropic_cfg(Some("claude-x"), None))
+        .expect("an active anthropic config yields a provider");
+    assert_eq!(anthropic.label(), "anthropic · claude-x");
+
+    let bedrock = provider_from_config(&AiConfig {
+        enabled: true,
+        provider: AiProviderType::Bedrock,
+        model: Some("anthropic.claude-fable-5-1".to_string()),
+        ..AiConfig::default()
+    })
+    .expect("an active bedrock config yields a provider");
+    assert_eq!(bedrock.label(), "bedrock · anthropic.claude-fable-5-1");
+}
+
+#[test]
+fn a_built_provider_is_shareable_across_threads() {
+    // The AI dispatcher clones the provider onto a thread per job, so it must be Send + Sync.
+    let p = provider_from_config(&anthropic_cfg(None, None)).expect("provider");
+    let clone = p.clone();
+    let label = std::thread::spawn(move || clone.label())
+        .join()
+        .expect("the provider crosses a thread boundary");
+    assert_eq!(label, p.label());
 }

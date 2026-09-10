@@ -3,12 +3,12 @@ source: src/ai/ai_render_tests.rs
 expression: screen
 ---
 "                                                                                "
-"┌ ask AI (Enter to generate, Esc to close) ────┐                                "
-"│> all rows                                    │                                "
-"│SELECT * FROM t                               │                                "
-"└──────────────────────────────────────────────┘                                "
-"                                                                                "
-"                                                                                "
+"          ┌ AI · bedrock · global.anthropic.claude-fable-5-1 ──────────────────┐"
+"          │you: top 10 by amount                                               │"
+"          │                                                                    │"
+"          │                                                                    │"
+"          │thinking…                                                           │"
+"          └ Enter send • Alt+1-5 apply • Alt+↑↓ select • Ctrl+L new • Esc back─┘"
 "                                                                                "
 "                                                                                "
 "                                                                                "

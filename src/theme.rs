@@ -521,12 +521,38 @@ pub mod history {
 /// AI NL->SQL popup colors and styles.
 pub mod ai {
     use super::base as p;
-    use ratatui::style::{Modifier, Style};
+    use ratatui::style::{Color, Modifier, Style};
 
     /// AI popup border — purple to mark it as the AI surface (still bright, distinct from the
     /// other focused popups).
     pub fn border() -> Style {
         Style::default().fg(p::pal().purple).bg(p::pal().bg)
+    }
+
+    /// The chat's border while it is visible but the keyboard is elsewhere — the same muted slate
+    /// the unfocused query box and results pane use, so one glance shows where typing goes.
+    pub fn border_unfocused() -> Style {
+        Style::default()
+            .fg(p::pal().border_unfocused)
+            .bg(p::pal().bg)
+    }
+
+    /// The chat's accent — purple, shared by the border, the title, and the bottom hint keys.
+    pub fn accent() -> Color {
+        p::pal().purple
+    }
+
+    /// The top-border title (`AI · provider · model`), in the accent.
+    pub fn title() -> Style {
+        Style::default()
+            .fg(p::pal().purple)
+            .bg(p::pal().bg)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// A suggestion's one-line note under its SQL — muted so the query stays the focal point.
+    pub fn note() -> Style {
+        Style::default().fg(p::pal().text_muted).bg(p::pal().bg)
     }
 
     pub fn input() -> Style {
@@ -554,6 +580,53 @@ pub mod ai {
 
     pub fn hint() -> Style {
         Style::default().fg(p::pal().text_muted).bg(p::pal().bg)
+    }
+
+    /// The accent for a suggestion kind: a fix is the error hue (something is wrong), an optimize is
+    /// the success hue (a query that works, ready to run).
+    pub fn kind_color(kind: crate::ai::suggestion::SuggestionKind) -> Color {
+        use crate::ai::suggestion::SuggestionKind;
+        match kind {
+            SuggestionKind::Fix => p::pal().error,
+            SuggestionKind::Optimize => p::pal().success,
+        }
+    }
+
+    /// A non-cursor suggestion row: its kind's hue on the opaque popup surface.
+    pub fn kind_style(kind: crate::ai::suggestion::SuggestionKind) -> Style {
+        Style::default().fg(kind_color(kind)).bg(p::pal().bg)
+    }
+
+    /// A plain popup row on the opaque surface (the row's left gutter).
+    pub fn item() -> Style {
+        super::popup::item()
+    }
+
+    /// The cursor row: the shared popup selection band in the AI accent.
+    pub fn selected() -> Style {
+        super::popup::selected_band(p::pal().purple)
+    }
+
+    /// The row under the mouse pointer — the same faint band as the other list popups.
+    pub fn hovered_bg() -> Style {
+        super::popup::hovered(p::pal().text)
+    }
+
+    /// The `you:` label on a transcript row — the cyan accent, so the user's own turns are easy to
+    /// pick out while scanning back through a conversation.
+    pub fn user_label() -> Style {
+        Style::default()
+            .fg(p::pal().cyan)
+            .bg(p::pal().bg)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    /// The `ai:` label on a transcript row — the popup's purple accent.
+    pub fn assistant_label() -> Style {
+        Style::default()
+            .fg(p::pal().purple)
+            .bg(p::pal().bg)
+            .add_modifier(Modifier::BOLD)
     }
 }
 

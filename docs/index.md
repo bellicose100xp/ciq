@@ -25,8 +25,10 @@ What you get on top of live SQL:
 - **Column palette** — pick, reorder, and filter columns without hand-writing a `SELECT` list.
 - **Instant facets** — the distribution (top values + counts, or min/max/distinct) of any column
   on demand.
-- **AI NL to SQL** — describe what you want in plain language; the model is grounded on your
-  table's schema and its reply runs through the same read-only guard as a typed query.
+- **AI chat** — ask about your data in plain language and pick from the queries the model proposes.
+  It is a conversation, so a follow-up like "now only the EU region" refines the last answer. Every
+  query it writes is grounded on your table's schema and runs through the same read-only guard as a
+  typed query.
 - **Query history** — recall any prior query, in-session and persisted across runs.
 - **Output modes** — dump a query result to CSV, TSV, JSON, or Markdown for scripting.
 

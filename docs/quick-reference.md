@@ -40,9 +40,10 @@ The table is always named `t`. Inside the session:
 
 | Key | Action |
 |---|---|
-| `Ctrl+K` | Open the column palette (needs a loaded schema). |
+| `Ctrl+P` | Open the column palette from the SELECT pane (needs a loaded schema). |
 | `Ctrl+R` | Open the query-history popup (seeds its filter with the bar text). |
-| `Ctrl+G` | Open the AI natural-language popup (needs the AI feature configured + a schema). |
+| `Ctrl+A` | Show or hide the AI chat. Opening it by hand gives it the keyboard. It is open by default on load, unfocused, at the bottom right, and a failing query pops it up if it is hidden. |
+| `Ctrl+G` | Put the keyboard in the AI chat to ask a question (opening it if hidden); press again to hand the keyboard back to the query bar. |
 | `Ctrl+F` | Open the row-filter search bar (needs a result on screen); on a confirmed search, re-enter editing. |
 | `Ctrl+O` | Quit and print the displayed result to the terminal (an aligned, colored table in your scrollback). |
 | `Ctrl+W` | Open the save-to-CSV popup for the displayed result (writes RFC-4180 CSV to a file). |
@@ -104,7 +105,7 @@ Once confirmed, `n` / `N` (or `Enter`) step through matching rows — the curren
 | `Tab` / `Enter` | Accept the selected candidate and dismiss. |
 | `Esc` | Dismiss the popup (does not quit). |
 
-### Column palette (Ctrl+K)
+### Column palette (Ctrl+P)
 
 | Key | Action |
 |---|---|
@@ -126,14 +127,20 @@ Once confirmed, `n` / `N` (or `Enter`) step through matching rows — the curren
 | `Backspace` | Remove a character from the filter. |
 | `Esc` | Close the popup. |
 
-### AI popup (Ctrl+G)
+### AI chat (Ctrl+A to show or hide, Ctrl+G to ask)
 
 | Key | Action |
 |---|---|
-| printable character | Append to the prompt. |
-| `Backspace` | Delete the character before the cursor. |
-| `Enter` | Submit the prompt to the model. |
-| `Esc` | Close the popup. |
+| printable character | Append to the line being typed. |
+| `Backspace` | Delete the last character. |
+| `Enter` | Send the typed line. With the line blank and the cursor on a suggestion, apply that suggestion instead. |
+| `Alt+1` … `Alt+5` | Apply that numbered row of the most recent answer. |
+| `Alt+Up` / `Alt+Down` | Move the cursor over every suggestion in the transcript. `Alt+K` / `Alt+J` too. |
+| `Up` / `Down` | Scroll the transcript one row. |
+| `PageUp` / `PageDown` | Scroll the transcript five rows. |
+| `Ctrl+L` | Start a new conversation (drops every turn). |
+| `Esc` / `Ctrl+G` | Hand the keyboard back to the query bar, leaving the chat visible. |
+| `Ctrl+A` | Hide the popup, keeping the transcript. |
 
 ## Mouse
 
@@ -144,6 +151,7 @@ interactions; use the output modes to copy data out).
 |---|---|---|
 | Wheel up / down | results grid (or anywhere outside a popup) | Scroll the grid three rows per notch. |
 | Wheel up / down | open list popup (autocomplete / palette / history) | Move that popup's selection. |
+| Wheel up / down | open AI chat | Scroll the transcript. |
 | Trackpad swipe left / right | results grid | Smooth character-granular horizontal scroll. |
 | Click | results grid | Focus the grid. |
 | Click | a query pane / the query bar | Focus it and place the cursor at the clicked character (Insert mode). |
@@ -152,5 +160,8 @@ interactions; use the output modes to copy data out).
 | Click | palette row | Move the cursor onto that column. |
 | Double-click | palette row | Toggle that column (like Space). |
 | Click | history row | Recall that query into the bar and run it. |
+| Click | AI chat suggestion row | Apply that query (like `Alt+<n>`); the chat stays open. |
+| Click | AI chat input line or prose | Give the chat the keyboard. |
+| Click | query bar or grid while the chat is open | Move the keyboard there; the chat stays visible with a muted border. |
 | Click | outside an open facet / history / AI popup | Dismiss the popup. |
 | Hover | grid row or popup row | Highlight the row under the pointer (grid rows also get a bright left accent bar that follows the pointer). |

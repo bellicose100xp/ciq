@@ -45,7 +45,7 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
     if app.is_save_open() {
         return hints!["Ctrl+C" => "quit"];
     }
-    if app.is_ai_open() {
+    if app.ai().is_focused() {
         return hints!["Ctrl+C" => "quit"];
     }
     if app.is_history_open() {

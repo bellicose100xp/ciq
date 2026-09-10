@@ -14,12 +14,16 @@
 //! ## The flow
 //!
 //! ```text
-//! Ctrl+A opens the AI popup
-//!   -> user types a natural-language request, Enter submits
-//!   -> build_prompt(nl, &schema)  (PURE — embeds table name + every column name + ColumnType)
-//!   -> Provider::complete(prompt) on the AI thread (blocking HTTP, or the MockProvider in tests)
-//!   -> returned SQL is dropped into the query bar AND scheduled through the normal path:
-//!        prepare_interactive (read-only single-statement guard) -> Dispatcher::dispatch -> worker -> grid
+//! Ctrl+A opens the AI chat
+//!   -> user types a question, Enter sends it
+//!   -> build_system_prompt(&schema, extra) + the prior turns + build_question(...)  (all PURE)
+//!   -> Provider::chat(system, turns) on an AI thread (blocking HTTP, or the MockProvider in tests)
+//!   -> the reply is parsed into prose + pickable suggestions and appended to the transcript
+//!   -> Alt+<n> (or Enter on a navigated row) drops that SQL into the query bar and schedules it
+//!        through the normal path: prepare_interactive -> Dispatcher::dispatch -> worker -> grid
+//!
+//! A FAILING query also appends a turn on its own, asking for fixes. A successful query stays quiet.
+//! The transcript survives closing the popup, so follow-ups keep their context; Ctrl+L starts over.
 //! ```
 //!
 //! A non-SELECT or multi-statement model response is **rejected by the existing preprocess guard**
@@ -40,9 +44,19 @@
 pub mod ai_app;
 pub mod ai_render;
 pub mod ai_state;
+pub mod aws_creds;
+pub mod chat;
+pub mod chat_prompt;
+pub mod http;
 pub mod prompt;
 pub mod provider;
+pub mod sigv4;
+pub mod suggestion;
 
 pub use ai_state::{AiPhase, AiState};
-pub use prompt::{build_prompt, build_repair_prompt};
-pub use provider::{AiError, AiProvider, MockProvider, Provider, RealProvider};
+pub use chat::{Conversation, Role, Turn};
+pub use chat_prompt::{QueryContext, build_failure_turn, build_question, build_system_prompt};
+pub use http::HttpProvider;
+pub use prompt::{schema_section, strip_code_fences};
+pub use provider::{AiError, AiProvider, MockProvider, Provider};
+pub use suggestion::{ChatReply, ParseOutcome, Suggestion, SuggestionKind, parse_reply};

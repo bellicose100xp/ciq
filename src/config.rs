@@ -40,7 +40,7 @@ pub mod general;
 pub mod history_config;
 pub mod theme_config;
 
-pub use ai_config::{AiConfig, AiProviderType};
+pub use ai_config::{AiConfig, AiEffort, AiProviderType};
 pub use general::GeneralConfig;
 pub use history_config::HistoryConfig;
 pub use theme_config::{ThemeConfig, ThemeMode};

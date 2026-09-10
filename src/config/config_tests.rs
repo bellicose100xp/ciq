@@ -1,7 +1,7 @@
 //! Tests for the full config schema (`config.rs`) — exhaustive over in-memory TOML, no `$HOME`,
 //! no filesystem. Drives [`load_config_str`]; never [`load_config`] (which would read the env).
 
-use super::ai_config::{DEFAULT_API_KEY_ENV, DEFAULT_MODEL};
+use super::ai_config::{DEFAULT_ANTHROPIC_MODEL, DEFAULT_API_KEY_ENV};
 use super::general::GeneralConfig;
 use super::history_config::DEFAULT_MAX_ENTRIES;
 use super::{AiProviderType, Config, ThemeMode, load_config_str};
@@ -29,7 +29,7 @@ fn default_accessors_fold_in_built_ins() {
     assert_eq!(c.general().memory_limit(), None);
     assert_eq!(c.theme().mode(), ThemeMode::Auto);
     assert!(!c.ai().is_active());
-    assert_eq!(c.ai().model(), DEFAULT_MODEL);
+    assert_eq!(c.ai().model(), DEFAULT_ANTHROPIC_MODEL);
     assert_eq!(c.ai().api_key_env(), DEFAULT_API_KEY_ENV);
     assert!(c.history().enabled());
     assert_eq!(c.history().max_entries(), DEFAULT_MAX_ENTRIES);
@@ -240,4 +240,123 @@ fn all_sections_together() {
     assert!(c.ai().is_active());
     assert_eq!(c.history().max_entries(), 200);
     assert_eq!(c.csv().to_opts().delimiter, Some('\t'));
+}
+
+// --- [ai]: the request settings fold their defaults and clamp their zeros ---
+
+#[test]
+fn ai_bedrock_defaults_differ_from_anthropic_defaults() {
+    use super::ai_config::{DEFAULT_BEDROCK_MODEL, DEFAULT_BEDROCK_TOKEN_ENV};
+    let c = cfg("[ai]\nenabled = true\nprovider = \"bedrock\"\n");
+    assert_eq!(c.ai().provider, AiProviderType::Bedrock);
+    assert_eq!(c.ai().model(), DEFAULT_BEDROCK_MODEL);
+    assert_eq!(c.ai().api_key_env(), DEFAULT_BEDROCK_TOKEN_ENV);
+    // Explicit values win over the per-provider defaults.
+    let c = cfg(
+        "[ai]\nprovider = \"bedrock\"\nmodel = \"us.anthropic.claude-sonnet-5\"\napi_key_env = \"MY_TOKEN\"\nregion = \"eu-west-1\"\nprofile = \"work\"\n",
+    );
+    assert_eq!(c.ai().model(), "us.anthropic.claude-sonnet-5");
+    assert_eq!(c.ai().api_key_env(), "MY_TOKEN");
+    assert_eq!(c.ai().region.as_deref(), Some("eu-west-1"));
+    assert_eq!(c.ai().profile.as_deref(), Some("work"));
+}
+
+#[test]
+fn ai_effort_parses_every_level_and_maps_to_the_wire() {
+    use super::AiEffort;
+    for (text, level, wire) in [
+        ("off", AiEffort::Off, None),
+        ("low", AiEffort::Low, Some("low")),
+        ("medium", AiEffort::Medium, Some("medium")),
+        ("high", AiEffort::High, Some("high")),
+        ("xhigh", AiEffort::Xhigh, Some("xhigh")),
+        ("max", AiEffort::Max, Some("max")),
+    ] {
+        let c = cfg(&format!("[ai]\neffort = \"{text}\"\n"));
+        assert_eq!(c.ai().effort(), level, "{text}");
+        assert_eq!(level.as_wire(), wire, "{text}");
+    }
+    assert_eq!(cfg("").ai().effort(), AiEffort::Low, "low is the default");
+    let r = load_config_str("[ai]\neffort = \"turbo\"\n");
+    assert!(r.warning.is_some(), "an unknown effort level is rejected");
+}
+
+#[test]
+fn ai_max_tokens_folds_default_and_treats_zero_as_unset() {
+    use super::ai_config::DEFAULT_MAX_TOKENS;
+    assert_eq!(cfg("").ai().max_tokens(), DEFAULT_MAX_TOKENS);
+    assert_eq!(cfg("[ai]\nmax_tokens = 512\n").ai().max_tokens(), 512);
+    assert_eq!(
+        cfg("[ai]\nmax_tokens = 0\n").ai().max_tokens(),
+        DEFAULT_MAX_TOKENS,
+        "zero would ask for an empty reply, so it falls back"
+    );
+}
+
+#[test]
+fn ai_request_timeout_folds_default_and_zero_disables() {
+    use super::ai_config::DEFAULT_REQUEST_TIMEOUT_SECS;
+    assert_eq!(
+        cfg("").ai().request_timeout(),
+        Some(std::time::Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS))
+    );
+    assert_eq!(
+        cfg("[ai]\nrequest_timeout_secs = 5\n")
+            .ai()
+            .request_timeout(),
+        Some(std::time::Duration::from_secs(5))
+    );
+    assert_eq!(
+        cfg("[ai]\nrequest_timeout_secs = 0\n")
+            .ai()
+            .request_timeout(),
+        None,
+        "zero means no timeout"
+    );
+}
+
+#[test]
+fn ai_max_context_length_folds_default_and_treats_zero_as_unset() {
+    use super::ai_config::DEFAULT_MAX_CONTEXT_CHARS;
+    assert_eq!(
+        cfg("").ai().max_context_chars(),
+        DEFAULT_MAX_CONTEXT_CHARS as usize
+    );
+    assert_eq!(
+        cfg("[ai]\nmax_context_length = 1234\n")
+            .ai()
+            .max_context_chars(),
+        1234
+    );
+    assert_eq!(
+        cfg("[ai]\nmax_context_length = 0\n")
+            .ai()
+            .max_context_chars(),
+        DEFAULT_MAX_CONTEXT_CHARS as usize
+    );
+}
+
+#[test]
+fn ai_extra_instructions_are_trimmed_and_blank_means_none() {
+    assert_eq!(cfg("").ai().extra_instructions(), None);
+    assert_eq!(
+        cfg("[ai]\nextra_instructions = \"  prefer CTEs  \"\n")
+            .ai()
+            .extra_instructions(),
+        Some("prefer CTEs")
+    );
+    assert_eq!(
+        cfg("[ai]\nextra_instructions = \"   \"\n")
+            .ai()
+            .extra_instructions(),
+        None,
+        "whitespace-only is the same as unset"
+    );
+}
+
+#[test]
+fn ai_open_on_start_defaults_to_true_and_can_be_turned_off() {
+    assert!(cfg("").ai().open_on_start());
+    assert!(cfg("[ai]\nopen_on_start = true\n").ai().open_on_start());
+    assert!(!cfg("[ai]\nopen_on_start = false\n").ai().open_on_start());
 }
