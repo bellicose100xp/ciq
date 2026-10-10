@@ -47,20 +47,29 @@ The table is always named `t`. Inside the session:
 | `Ctrl+F` | Open the row-filter search bar (needs a result on screen); on a confirmed search, re-enter editing. |
 | `Ctrl+O` | Quit and print the displayed result to the terminal (an aligned, colored table in your scrollback). |
 | `Ctrl+W` | Open the save-to-CSV popup for the displayed result (writes RFC-4180 CSV to a file). |
-| `Esc` | Quit (when no popup is open; closes the focused popup otherwise). |
+| `Esc` | Close the focused popup; with none open, drop the query box into vim Normal mode. |
 | `Ctrl+C` | Quit (from anywhere, including any open popup). |
 
-### Query bar (focus: query bar)
+### Query box (focus: query bar)
+
+The query box is a vim-style editor in both modes; see [Vim editing](features/vim-editing.md)
+for the full Normal-mode table. Simple mode shows five clause panes (`SELECT`, `WHERE`, `GROUP
+BY`, `ORDER BY`, `LIMIT`); Power mode shows one free-form SQL textarea. `Ctrl+Q` toggles them.
 
 | Key | Action |
 |---|---|
-| printable character | Insert the character. |
-| `Backspace` | Delete the character before the cursor. |
-| `Delete` | Delete the character at the cursor. |
-| `Left` / `Right` | Move the cursor one character. |
-| `Home` / `End` | Move the cursor to the start / end of the query. |
-| (paste) | Insert a bracketed-paste payload at the cursor. |
-| `Down` | Move focus to the results grid. |
+| printable character | Insert the character (Insert mode). |
+| `Backspace` / `Delete` | Delete the character before / at the cursor. |
+| `Left` / `Right` / `Home` / `End` | Move the cursor. |
+| `Enter` | Power: insert a newline. Simple: no-op (a pane is one line). |
+| `Up` / `Down` | Power: move a line; `Down` on the last line moves focus to the results grid. Simple: no-op in Insert mode. |
+| `Alt+Up` / `Alt+Down` (`Alt+K` / `Alt+J`) | Simple: focus the previous / next pane, bounded at `SELECT` and `LIMIT`. |
+| `Tab` | Accept the autocomplete suggestion; with the popup closed, insert a tab. |
+| (paste) | Insert the bracketed-paste payload at the cursor; newlines become spaces in a pane. |
+| `Esc` | Drop to vim Normal mode. |
+| `j` / `k`, `gg` / `G` (Normal) | Power: move between lines. Simple: move between panes, carrying the mode. |
+| `yy`, `p`, `dd`, `dw`, `ciw`, … (Normal) | The vim editing set; the register is shared across the panes. |
+| `/` (Normal) | Open the row search. |
 
 ### Results grid (focus: results)
 

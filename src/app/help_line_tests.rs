@@ -662,3 +662,30 @@ fn autocomplete_popup_help_line_carries_only_quit() {
     assert!(pair_for(&hints, "Esc").is_none(), "no Esc hint: {hints:?}");
     assert!(has_key(&hints, "Ctrl+C"), "quit chord: {hints:?}");
 }
+
+#[test]
+fn simple_mode_normal_hints_name_the_pane_motion() {
+    use crate::app::editor::EditorMode;
+    let (tx, _rx) = channel();
+    let mut app = App::new(tx, InterruptHandle::noop());
+    app.on_loaded("ready");
+    app.input_editor_mut().set_mode(EditorMode::Normal);
+    let hints = get_context_hints(&app);
+    assert_eq!(
+        hints.first(),
+        Some(&("j/k", "panes")),
+        "Simple Normal leads with the pane motion: {hints:?}"
+    );
+    assert!(has_key(&hints, "Ctrl+R"), "{hints:?}");
+    assert!(has_key(&hints, "Ctrl+C"), "{hints:?}");
+}
+
+#[test]
+fn power_mode_normal_hints_omit_the_pane_motion() {
+    let app = query_bar_normal_no_popup();
+    let hints = get_context_hints(&app);
+    assert!(
+        !has_key(&hints, "j/k"),
+        "no panes to walk in Power mode: {hints:?}"
+    );
+}

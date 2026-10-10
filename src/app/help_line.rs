@@ -130,13 +130,18 @@ pub fn get_context_hints(app: &App) -> Vec<(&'static str, &'static str)> {
         hints
     } else {
         // Vim Normal mode: hjkl/i are obvious to anyone using vim mode; only the feature chords
-        // (and quit) show. The TOP-border badge already announces NORMAL.
-        hints![
+        // (and quit) show. The TOP-border badge already announces NORMAL. In Simple mode `j`/`k`
+        // step between the panes, which a vim user would not guess, so that one motion is named.
+        let mut hints = hints![
             "Ctrl+R" => "history",
             "Ctrl+T" => "results",
             "Ctrl+Q" => "SQL mode",
             "Ctrl+C" => "quit",
-        ]
+        ];
+        if app.query_form().mode() == QueryMode::Simple {
+            hints.insert(0, ("j/k", "panes"));
+        }
+        hints
     }
 }
 

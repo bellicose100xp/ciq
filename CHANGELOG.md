@@ -7,6 +7,34 @@ changes alike, patch `0.minor.Y` for fixes, refactors, polish, and docs.
 
 ## [Unreleased]
 
+### Added
+- **Vim editing is the same in every query box.** The five Simple-mode clause panes now behave as
+  one editor with five lines: in Normal mode `j`/`k` (and `Up`/`Down`/`Enter`) step between panes,
+  `gg`/`G` jump to `SELECT`/`LIMIT`, and the mode and the yank register travel with the focus, so
+  moving panes keeps you in Normal mode and a `yy` in one pane pastes with `p` in another. The same
+  carry runs across the `Ctrl+Q` toggle. `Alt+J`/`Alt+K` keep the mode too.
+- **Yank and paste.** `yy`/`Y`, `y<motion>` (`yw`, `y$`, `yf<c>`, …), and `y` with a text object
+  (`yiw`, `yi"`, `ya(`, …) fill a register and copy it to the system clipboard through OSC 52;
+  `p`/`P` paste it after/at the cursor. Every `d`/`c` edit fills the register too, so `dw` then
+  `p` moves a word. The register holds text: a yanked line pastes inline.
+- **`/` in Normal mode opens the row search**, as it does in jiq.
+- A bracketed paste while a query box is in Normal mode now inserts the text, as vim does; it
+  was silently dropped.
+- A new [Vim editing](docs/features/vim-editing.md) page documents the full key set; the quick
+  reference and the live-grid page no longer say `Esc` quits.
+
+### Fixed
+- A Simple-mode pane could grow a hidden second row: `Enter`, `o`/`O`, a pasted newline, or a
+  multi-line clause coming back from Power mode put text on a line the one-row pane never showed.
+  Panes are now single-line editors: `Enter` is a no-op, `o`/`O` act as `A`/`I`, and newlines
+  arriving from a paste, a register, or the simplifier are flattened to spaces.
+- `cc` on a multi-line Power query removed the row like `dd`; it now empties the line and leaves
+  the cursor on it in Insert mode.
+- The autocomplete popup re-opened after `Esc` and kept capturing `Enter`, `Up`, `Down`, and `Tab`
+  in Normal mode. It is now an Insert-mode surface and stays closed in Normal mode.
+- A focused `GROUP BY` or `ORDER BY` pane drew its text flush against the label; the label column
+  now leaves a gutter after the accent bar.
+
 ## [0.4.0] - 2026-09-10
 
 ### Added

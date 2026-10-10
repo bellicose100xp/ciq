@@ -9,12 +9,19 @@
 //! scheduling a debounced query through the **same** dispatch path a typed query uses.
 
 use crate::app::App;
-use crate::app::editor::Editor;
-use crate::app::{AppPhase, Focus, Key, KeyEvent, QueryMode};
+use crate::app::editor::{Editor, EditorMode, LineExit};
+use crate::app::{AppPhase, Focus, Key, KeyEvent, QueryMode, SimplePane};
 use crate::autocomplete::insertion::insert_suggestion;
 use crate::theme::border::ResultState;
 
 impl App {
+    /// Take the text the last vim yank left for the system clipboard, if any. The event loop calls
+    /// this after every key and writes it through the OSC 52 seam; the headless core never writes
+    /// to the terminal itself.
+    pub fn take_clipboard_text(&mut self) -> Option<String> {
+        self.clipboard_pending.take()
+    }
+
     /// Whether the displayed result is stale (kept on screen dimmed after a query-pipeline
     /// error). Read by the render layer to apply [`crate::theme::grid::stale_modifier`] to the
     /// grid header + body (and by the row counter, which honors the same dim). `false` when
@@ -97,7 +104,9 @@ impl App {
     /// Pane navigation (Simple mode):
     ///  - `Alt+J` / `Alt+Down` → focus next pane, BOUNDED at LIMIT (no wrap; no-op at boundary).
     ///  - `Alt+K` / `Alt+Up` → focus previous pane, BOUNDED at SELECT (no-op at boundary).
-    ///  - Plain `Up` / `Down` in the bar are no-ops in Simple mode (Power keeps move_up/down).
+    ///  - Plain `Up` / `Down` in the bar are no-ops in Simple **Insert** mode (Power keeps
+    ///    move_up/down). In vim Normal mode `j`/`k`/`Up`/`Down`/`Enter` and `gg`/`G` treat the
+    ///    panes as lines; see [`leave_line`](Self::leave_line).
     ///  - `Shift+Tab` is unbound here (popup closed); when the popup is OPEN it drives
     ///    autocomplete `select_prev`, handled upstream in `handle_popup_key`.
     ///
@@ -159,10 +168,26 @@ impl App {
         // Everything else in Insert mode is the text-editing path below (typing, Enter=newline,
         // autocomplete) — unchanged, so the live-query + completion wiring is untouched.
         if !self.editor().mode().is_insert() || matches!(ev.key, Key::Esc) {
-            let changed = self.input_editor_mut().on_vim_key(&ev);
+            // `/` in Normal mode opens the row search, as it does in jiq; it is the one Normal key
+            // that acts outside the editor, so it never reaches the dispatch.
+            if self.editor().mode() == EditorMode::Normal
+                && matches!(ev.key, Key::Char('/'))
+                && !ev.mods.ctrl
+                && !ev.mods.alt
+            {
+                self.open_search();
+                return;
+            }
+            let outcome = self.input_editor_mut().on_vim_key(&ev);
+            if outcome.yanked {
+                self.clipboard_pending = Some(self.editor().yank_text());
+            }
+            if let Some(exit) = outcome.line_exit {
+                self.leave_line(exit);
+            }
             // A vim edit changed the cursor context (and possibly the text) — recompute the popup.
             self.refresh_autocomplete();
-            if changed {
+            if outcome.changed {
                 self.schedule(now_ms);
             }
             return;
@@ -187,9 +212,8 @@ impl App {
                 QueryMode::Simple => {} // no-op (Alt+K / Alt+Up own pane nav)
                 QueryMode::Power => self.input_editor_mut().move_up(),
             },
-            // Enter (and Shift+Enter) insert a newline in Power; in Simple, panes are single-line
-            // so the textarea swallows it as a no-op (its single-line nature is enforced by
-            // construction).
+            // Enter (and Shift+Enter) insert a newline in Power; a Simple pane is a single-line
+            // editor, so there it is a no-op.
             Key::Enter => self.input_editor_mut().insert_newline(),
             Key::Paste(ref s) => self.input_editor_mut().insert_str(s),
             // Down: in Power, walk a line down (and from the last line hand off to results). In
@@ -199,7 +223,7 @@ impl App {
                 QueryMode::Simple => {} // no-op (Alt+J / Alt+Down own pane nav)
                 QueryMode::Power => {
                     if self.editor().is_on_last_line() {
-                        self.focus = Focus::Results;
+                        self.leave_line(LineExit::Down);
                     } else {
                         self.input_editor_mut().move_down();
                     }
@@ -212,6 +236,27 @@ impl App {
         // Only (re)schedule a query when the text actually changed — pure cursor moves don't.
         if self.editor().text() != before {
             self.schedule(now_ms);
+        }
+    }
+
+    /// A vim vertical motion ran off the focused editor's edge. In Simple mode the five panes are
+    /// the lines: `j`/`k` step to the neighbouring pane (bounded, like `Alt+J`/`Alt+K`), `gg`/`G`
+    /// jump to SELECT/LIMIT, and the form carries the Normal mode across. In Power mode the bottom
+    /// edge hands focus to the results grid (the Insert-mode `Down` on the last line routes here
+    /// too, so the hand-off has one home); the other edges have nowhere to go.
+    fn leave_line(&mut self, exit: LineExit) {
+        match self.query_form.mode() {
+            QueryMode::Simple => match exit {
+                LineExit::Down => self.query_form.focus_next(),
+                LineExit::Up => self.query_form.focus_prev(),
+                LineExit::Top => self.query_form.focus(SimplePane::Select),
+                LineExit::Bottom => self.query_form.focus(SimplePane::Limit),
+            },
+            QueryMode::Power => {
+                if exit == LineExit::Down {
+                    self.focus = Focus::Results;
+                }
+            }
         }
     }
 }

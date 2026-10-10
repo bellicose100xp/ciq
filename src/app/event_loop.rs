@@ -303,6 +303,12 @@ fn event_loop(
         // Drive the debouncer once per turn with the current time.
         let now_ms = start.elapsed().as_millis() as u64;
         app.tick(now_ms);
+
+        // Whatever this turn left for the system clipboard (a vim yank today) goes out as one
+        // OSC 52 write, best-effort: a terminal that ignores it still has the in-app register.
+        if let Some(text) = app.take_clipboard_text() {
+            let _ = crate::clipboard::osc52::copy(&text);
+        }
     }
 }
 

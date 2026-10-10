@@ -10,6 +10,13 @@
 //! This module is the **state container** — it owns the five Simple panes, the Power editor, the
 //! current mode, the focused pane, and the most recent LIMIT-pane validation error. The App owns
 //! the routing and the dispatch loop; this struct is pure data + a few convenience accessors.
+//!
+//! The panes are [`Editor::single_line`] instances, so every pane has the full vim layer the Power
+//! textarea has but can never grow a second row. The form reads as **one editor with five lines**:
+//! a focus move carries the vim mode (Insert stays Insert, Normal stays Normal) and the yank
+//! register from the pane being left to the pane being entered, and the same carry runs across the
+//! Simple/Power toggle. A mouse click is the exception; the App resets the clicked pane to Insert
+//! because a click means "type here".
 
 use crate::app::editor::{Editor, EditorMode};
 
@@ -130,13 +137,8 @@ impl QueryForm {
     /// a user choice). The App seeds the LIMIT pane with a configured `[general] row_limit` via
     /// [`set_default_limit_seed`](Self::set_default_limit_seed).
     pub fn new() -> Self {
-        let panes = [
-            Editor::with_text("*"),
-            Editor::new(),
-            Editor::new(),
-            Editor::new(),
-            Editor::new(),
-        ];
+        let mut panes: [Editor; 5] = std::array::from_fn(|_| Editor::single_line());
+        panes[SimplePane::Select.index()].set_text("*");
         Self {
             mode: QueryMode::Simple,
             panes,
@@ -263,8 +265,8 @@ impl QueryForm {
         }
     }
 
-    /// Set focus to `pane` (the click-to-focus path). Resets the new pane's editor to Insert
-    /// mode so typing resumes immediately. No-op in Power mode.
+    /// Set focus to `pane` directly (the `gg`/`G` jumps and the click-to-focus path). No-op in
+    /// Power mode.
     pub fn focus(&mut self, pane: SimplePane) {
         if self.mode != QueryMode::Simple {
             return;
@@ -272,11 +274,16 @@ impl QueryForm {
         self.set_focus(pane);
     }
 
-    /// Internal: set the focused pane and reset its editor to Insert mode (the click/focus
-    /// invariant — typing resumes after a focus change).
+    /// Internal: move the focus, carrying the vim mode and the register from the pane being left
+    /// to the pane being entered so the five panes behave as one editor. A pending operator or
+    /// char-search state does not survive the move; it collapses to Normal.
     fn set_focus(&mut self, pane: SimplePane) {
+        let from = self.focused_pane;
         self.focused_pane = pane;
-        self.panes[pane.index()].set_mode(EditorMode::Insert);
+        if from == pane {
+            return;
+        }
+        VimState::of(&self.panes[from.index()]).apply(&mut self.panes[pane.index()]);
     }
 
     /// Compose the dispatched SQL from the current Simple pane texts (the composer's projection).
@@ -310,7 +317,9 @@ impl QueryForm {
                 // and stay in Simple mode so the user can fix the LIMIT pane.
                 match self.to_full_sql(default_limit) {
                     Ok(composed) => {
+                        let state = VimState::of(&self.panes[self.focused_pane.index()]);
                         self.power.set_text(composed);
+                        state.apply(&mut self.power);
                         self.mode = QueryMode::Power;
                         self.limit_error = None;
                         Ok(())
@@ -323,9 +332,11 @@ impl QueryForm {
             }
             QueryMode::Power => {
                 let parts = try_simplify_from_sql(&self.power.text())?;
+                let state = VimState::of(&self.power);
                 self.apply_parts(parts, default_limit);
                 self.mode = QueryMode::Simple;
                 self.focused_pane = SimplePane::Where;
+                state.apply(&mut self.panes[SimplePane::Where.index()]);
                 self.limit_error = None;
                 Ok(())
             }
@@ -352,7 +363,9 @@ impl QueryForm {
     /// Force the form into Power mode, putting `sql` into the Power editor (the AI-accept path:
     /// the AI returns full SQL, so on accept we switch to Power and put the SQL there).
     pub fn enter_power_with_sql(&mut self, sql: impl Into<String>) {
+        let state = VimState::of(self.focused_editor());
         self.power.set_text(sql);
+        state.apply(&mut self.power);
         self.mode = QueryMode::Power;
         self.limit_error = None;
     }
@@ -361,10 +374,42 @@ impl QueryForm {
     /// path: the palette emits a clean `SELECT … FROM t LIMIT n`, which the App distributes into
     /// the panes). Caller has already simplified the SQL into parts.
     pub fn enter_simple_with_parts(&mut self, parts: SimpleParts, default_limit: Option<usize>) {
+        let state = VimState::of(self.focused_editor());
         self.apply_parts(parts, default_limit);
         self.mode = QueryMode::Simple;
         self.focused_pane = SimplePane::Where;
+        state.apply(&mut self.panes[SimplePane::Where.index()]);
         self.limit_error = None;
+    }
+}
+
+/// The editing state the user perceives as the form's rather than any one editor's: the vim mode
+/// and the yank register. Lifted off the editor being left on every transition (focus move, mode
+/// toggle, AI accept, palette emit) and put on the editor being entered after any wholesale
+/// `set_text` there, whose own reset-to-Insert it overrides.
+struct VimState {
+    mode: EditorMode,
+    register: String,
+}
+
+impl VimState {
+    /// Insert stays Insert; Normal and every pending-key state (an unfinished `d`, `f`, `ci`)
+    /// settle to Normal, since the pending key belonged to the editor being left.
+    fn of(editor: &Editor) -> Self {
+        let mode = if editor.mode().is_insert() {
+            EditorMode::Insert
+        } else {
+            EditorMode::Normal
+        };
+        Self {
+            mode,
+            register: editor.yank_text(),
+        }
+    }
+
+    fn apply(self, to: &mut Editor) {
+        to.set_mode(self.mode);
+        to.set_yank_text(self.register);
     }
 }
 

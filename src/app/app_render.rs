@@ -556,10 +556,10 @@ fn render_simple_panes(app: &App, frame: &mut Frame, inner: Rect) {
 }
 
 /// Width of the left label column in a Simple-mode pane row (`SELECT  `, `WHERE   `, `GROUP BY`,
-/// `ORDER BY`, `LIMIT   `). 9 fits the longest label (`GROUP BY` / `ORDER BY` = 8) plus a single
-/// space gutter before the editor text. Kept `pub(crate)` so the mouse click→text-col mapping in
+/// `ORDER BY`, `LIMIT   `). 10 fits the longest label (`GROUP BY` / `ORDER BY` = 8) plus the
+/// focused pane's accent bar in column 0 plus a single space gutter before the editor text. Kept `pub(crate)` so the mouse click→text-col mapping in
 /// [`super::layout_regions::LayoutRegions::text_col`] subtracts the same offset.
-pub(crate) const SIMPLE_LABEL_WIDTH: u16 = 9;
+pub(crate) const SIMPLE_LABEL_WIDTH: u16 = 10;
 
 /// The results pane: a bordered box containing the aligned grid, a loading indicator, or an
 /// empty hint. The grid is re-laid-out against the actual inner viewport. The pane border is

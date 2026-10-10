@@ -1089,8 +1089,8 @@ fn search_bar_region_is_absent_when_the_bar_is_closed() {
 
 #[test]
 fn simple_mode_pane_click_maps_columns_past_the_label_gutter() {
-    // Simple mode reserves a 9-char label column (SIMPLE_LABEL_WIDTH) left of the editor text —
-    // the click→text-col mapping must subtract it (not the Power-mode 2-char prompt).
+    // Simple mode reserves a label column (SIMPLE_LABEL_WIDTH) left of the editor text — the
+    // click→text-col mapping must subtract it (not the Power-mode 2-char prompt).
     let (mut app, _rx) = simple_mode_app();
     // The WHERE pane is the default focus; type into it so there is text to land in.
     type_query(&mut app, "id > 5");
@@ -1099,10 +1099,11 @@ fn simple_mode_pane_click_maps_columns_past_the_label_gutter() {
     }
     render_and_record(&app);
     let bar = app.layout_regions().query_bar.expect("bar recorded");
-    // Click the WHERE pane (row index 1) at text column 2: screen x = bar.x + label(9) + 2.
+    // Click the WHERE pane (row index 1) at text column 2: screen x = bar.x + label width + 2.
+    let label_w = crate::app::app_render::SIMPLE_LABEL_WIDTH;
     app.on_mouse(
         MouseEvent::Click {
-            col: bar.x + 9 + 2,
+            col: bar.x + label_w + 2,
             row: bar.y + 1,
         },
         0,
@@ -1115,7 +1116,7 @@ fn simple_mode_pane_click_maps_columns_past_the_label_gutter() {
     assert_eq!(
         app.editor().cursor(),
         2,
-        "text col = screen col - label width (9), not - prompt width (2)"
+        "text col = screen col - label width, not - prompt width (2)"
     );
     // A click on the label gutter clamps to column 0.
     app.on_mouse(

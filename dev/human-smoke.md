@@ -412,6 +412,26 @@ color on a real terminal. Confirm by hand:
    args. Confirm the cursor/selection behaves like vim.
 6. **Casual typing still just works.** A fresh bar is in INSERT, so opening a file and typing a
    query needs no vim knowledge — the modal layer is opt-in via `Esc`.
+7. **Simple panes are lines.** In Simple mode (the launch default), press `Esc` in WHERE, then
+   `j`: the focus bar moves to GROUP BY and the top-border badge stays `NORMAL` (yellow). `k`
+   goes back, `G` lands on LIMIT, `gg` on SELECT; `j` on LIMIT and `k` on SELECT stay put. `Alt+J`
+   / `Alt+K` also keep the mode now. `i` then typing lands in the pane you moved to. Click a
+   different pane: that one lands in `INSERT`.
+8. **A pane never grows a row.** In a Simple pane in INSERT, press `Enter`: nothing happens, the
+   pane stays one row. Paste text containing a newline (e.g. two lines from an editor): it arrives
+   on one line with a space where each newline character was. In NORMAL, `o` and `O` put you in INSERT at the
+   end / start of the pane, no new row. Switch to Power (`Ctrl+Q`): there `Enter` and `o` do open
+   a line.
+9. **Yank and paste.** Type `region = 'EU'` in WHERE, `Esc`, `yy`: the border flashes nothing, the
+   text stays, and **your system clipboard now holds `region = 'EU'`** (paste into another app to
+   confirm the OSC 52 write landed; iTerm2 / kitty / WezTerm / Ghostty honor it, some terminals
+   need the clipboard setting enabled). Then `j`, `p`: GROUP BY reads `region = 'EU'`. `yiw`,
+   `yw`, `y$`, `yf'` yank the same spans `d` would delete; `dw` then `p` moves a word; `ci'` then
+   `p` brings the old literal back. `P` pastes at the cursor instead of after it.
+10. **`/` opens the search.** With a result on screen and the bar in NORMAL, press `/`: the
+    `Ctrl+F` search bar opens (focus moves to the grid); no `/` is typed into the query.
+11. **Normal-mode hints.** In Simple mode the bottom border in NORMAL leads with `j/k panes`; in
+    Power mode it does not.
 
 ## Post-5 input UX — mouse support (scroll, click-to-focus, click-to-position-cursor)
 

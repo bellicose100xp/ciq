@@ -3,22 +3,26 @@
 //! Ported from jiq's `src/editor/editor_events.rs`, but re-shaped onto ciq's clean
 //! [`Editor`](crate::app::Editor) boundary: where jiq scatters `app.input.textarea.*` calls across
 //! `App`-coupled handlers, ciq drives the editor through the small set of vim primitives the
-//! `Editor` exposes (motions, line/word deletes, char-column cut). The dispatch is therefore a
-//! free function over `&mut Editor` + a neutral [`KeyEvent`](crate::app::KeyEvent) — **headless and
-//! `App`-free**, so it is exercised directly against an `Editor` (North Star 2), exactly as jiq's
-//! `editor_events_tests.rs` drives `app.input`.
+//! `Editor` exposes (motions, line/word deletes, char-column cut and yank, paste). The dispatch is
+//! therefore a free function over `&mut Editor` + a neutral [`KeyEvent`](crate::app::KeyEvent) —
+//! **headless and `App`-free**, so it is exercised directly against an `Editor` (North Star 2),
+//! exactly as jiq's `editor_events_tests.rs` drives `app.input`.
 //!
 //! ## What this owns vs. what the App owns
 //!
 //! This function owns *Normal-and-deeper* mode handling (motions, operators, char-search, text
-//! objects, and the `i`/`a`/`o` transitions back to Insert). **Insert-mode** keys are still the
-//! App's existing query-bar routing ([`App::on_key_query_bar`](crate::app::App)) — typing, Enter
-//! (newline, the locked decision), Backspace, autocomplete — so the live-query and autocomplete
-//! wiring is unchanged. The App calls [`apply_vim_key`] only when the editor is **not** in Insert
-//! mode; the one cross-over is `Esc`, which the App routes here to drop Insert -> Normal.
+//! objects, the register, and the `i`/`a`/`o` transitions back to Insert). **Insert-mode** keys are
+//! still the App's existing query-bar routing ([`App::on_key_query_bar`](crate::app::App)) —
+//! typing, Enter (newline, the locked decision), Backspace, autocomplete — so the live-query and
+//! autocomplete wiring is unchanged. The App calls [`apply_vim_key`] only when the editor is
+//! **not** in Insert mode; the one cross-over is `Esc`, which the App routes here to drop
+//! Insert -> Normal.
 //!
-//! Returns `true` when the buffer text changed (so the App schedules a debounced query), `false`
-//! for pure motions / mode flips.
+//! The dispatch knows nothing about what surrounds the editor. Anything that reaches past the
+//! buffer comes back in the [`VimOutcome`]: a text change (the App schedules a debounced query), a
+//! yank (the App mirrors the register to the system clipboard), or a vertical motion that ran off
+//! the buffer's edge (a [`LineExit`], which the Simple-mode form turns into a pane move and the
+//! Power-mode bar into the results hand-off).
 
 use crate::app::Editor;
 use crate::app::editor::char_search::{
@@ -28,12 +32,61 @@ use crate::app::editor::mode::{EditorMode, TextObjectScope};
 use crate::app::editor::text_objects::TextObjectTarget;
 use crate::app::key::{Key, KeyEvent};
 
+/// The edge a vertical vim motion ran off: `j`/`Enter`/`Down` or `G` on the last line, `k`/`Up`
+/// or `gg` on the first. In a single-line editor every vertical motion is at an edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineExit {
+    Up,
+    Down,
+    Top,
+    Bottom,
+}
+
+/// What one vim key did, for the editor's owner to act on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VimOutcome {
+    /// The buffer text changed (the App schedules a debounced query).
+    pub changed: bool,
+    /// A `y` command filled the register (the App mirrors it to the system clipboard).
+    pub yanked: bool,
+    /// A vertical motion had nowhere to go inside this buffer.
+    pub line_exit: Option<LineExit>,
+}
+
+impl VimOutcome {
+    /// A pure motion or mode flip: nothing for the owner to do.
+    pub const NONE: VimOutcome = VimOutcome {
+        changed: false,
+        yanked: false,
+        line_exit: None,
+    };
+
+    pub fn changed(changed: bool) -> Self {
+        Self {
+            changed,
+            ..Self::NONE
+        }
+    }
+
+    pub fn yanked(yanked: bool) -> Self {
+        Self {
+            yanked,
+            ..Self::NONE
+        }
+    }
+
+    pub fn exit(exit: LineExit) -> Self {
+        Self {
+            line_exit: Some(exit),
+            ..Self::NONE
+        }
+    }
+}
+
 /// Route one key to the editor's current (non-Insert) vim mode. The caller guarantees the editor
 /// is not in Insert mode (Insert keys stay on the App's text-editing path). `Esc` from Insert is
 /// routed here by the App as well, to drop to Normal.
-///
-/// Returns `true` if the buffer text changed.
-pub fn apply_vim_key(editor: &mut Editor, ev: &KeyEvent) -> bool {
+pub fn apply_vim_key(editor: &mut Editor, ev: &KeyEvent) -> VimOutcome {
     match editor.mode() {
         EditorMode::Insert => handle_insert_escape(editor, ev),
         EditorMode::Normal => handle_normal(editor, ev),
@@ -49,15 +102,15 @@ pub fn apply_vim_key(editor: &mut Editor, ev: &KeyEvent) -> bool {
 /// The only Insert-mode key vim handles here: `Esc` drops to Normal (and steps the cursor left,
 /// matching vim's "cursor moves off the just-typed column"). Anything else is a no-op (the App's
 /// Insert routing handles real typing).
-fn handle_insert_escape(editor: &mut Editor, ev: &KeyEvent) -> bool {
+fn handle_insert_escape(editor: &mut Editor, ev: &KeyEvent) -> VimOutcome {
     if matches!(ev.key, Key::Esc) {
         editor.set_mode(EditorMode::Normal);
         editor.move_left();
     }
-    false
+    VimOutcome::NONE
 }
 
-fn handle_normal(editor: &mut Editor, ev: &KeyEvent) -> bool {
+fn handle_normal(editor: &mut Editor, ev: &KeyEvent) -> VimOutcome {
     // No Ctrl-modified chord is handled in Normal mode here: the App intercepts Ctrl+R (history),
     // Ctrl+P (palette), and Ctrl+A (AI) before the key ever reaches vim dispatch, so binding redo to
     // Ctrl+R here would be dead code. `u` (undo) is reachable; redo has no reachable binding (the
@@ -66,102 +119,122 @@ fn handle_normal(editor: &mut Editor, ev: &KeyEvent) -> bool {
         // Motions.
         Key::Char('h') | Key::Left => {
             editor.move_left();
-            false
+            VimOutcome::NONE
         }
         Key::Char('l') | Key::Right => {
             editor.move_right();
-            false
+            VimOutcome::NONE
         }
         Key::Char('0') | Key::Char('^') | Key::Home => {
             editor.move_home();
-            false
+            VimOutcome::NONE
         }
         Key::Char('$') | Key::End => {
             editor.move_end();
-            false
+            VimOutcome::NONE
         }
         Key::Char('w') => {
             editor.move_word_forward();
-            false
+            VimOutcome::NONE
         }
         Key::Char('b') => {
             editor.move_word_back();
-            false
+            VimOutcome::NONE
         }
         Key::Char('e') => {
             editor.move_word_end();
-            false
+            VimOutcome::NONE
         }
         // Vertical motions across a multiline query (j/k like the arrows). `Enter` is `j` in
-        // Normal mode (the locked newline decision only applies to Insert mode).
+        // Normal mode (the locked newline decision only applies to Insert mode). A motion with
+        // nowhere to go inside the buffer is reported instead of swallowed, so a form of stacked
+        // single-line panes can treat the panes as the lines; the same edge rule serves `gg`/`G`.
         Key::Char('j') | Key::Down | Key::Enter => {
+            if editor.is_on_last_line() {
+                return VimOutcome::exit(LineExit::Down);
+            }
             editor.move_down();
-            false
+            VimOutcome::NONE
         }
         Key::Char('k') | Key::Up => {
+            if editor.is_on_first_line() {
+                return VimOutcome::exit(LineExit::Up);
+            }
             editor.move_up();
-            false
+            VimOutcome::NONE
         }
         Key::Char('g') => {
             // `gg` -> top. A bare `g` arms the pending state; the App tracks the two-key `gg`
             // through the Operator('g') slot reused as a "pending g" marker.
             editor.set_mode(EditorMode::Operator('g'));
-            false
+            VimOutcome::NONE
         }
         Key::Char('G') => {
+            if editor.is_on_last_line() {
+                return VimOutcome::exit(LineExit::Bottom);
+            }
             editor.move_bottom();
-            false
+            VimOutcome::NONE
         }
 
         // Insert-mode entries.
         Key::Char('i') => {
             editor.set_mode(EditorMode::Insert);
-            false
+            VimOutcome::NONE
         }
         Key::Char('a') => {
             editor.move_right();
             editor.set_mode(EditorMode::Insert);
-            false
+            VimOutcome::NONE
         }
         Key::Char('I') => {
             editor.move_home();
             editor.set_mode(EditorMode::Insert);
-            false
+            VimOutcome::NONE
         }
         Key::Char('A') => {
             editor.move_end();
             editor.set_mode(EditorMode::Insert);
-            false
+            VimOutcome::NONE
         }
         Key::Char('o') => {
-            editor.open_line_below();
+            let changed = editor.open_line_below();
             editor.set_mode(EditorMode::Insert);
-            true
+            VimOutcome::changed(changed)
         }
         Key::Char('O') => {
-            editor.open_line_above();
+            let changed = editor.open_line_above();
             editor.set_mode(EditorMode::Insert);
-            true
+            VimOutcome::changed(changed)
         }
 
         // Single-key edits.
-        Key::Char('x') => editor.delete_char_in_line(),
-        Key::Char('X') => editor.backspace(),
-        Key::Char('D') => editor.delete_to_line_end(),
+        Key::Char('x') => VimOutcome::changed(editor.delete_char_in_line()),
+        Key::Char('X') => VimOutcome::changed(editor.backspace()),
+        Key::Char('D') => VimOutcome::changed(editor.delete_to_line_end()),
         Key::Char('C') => {
             let changed = editor.delete_to_line_end();
             editor.set_mode(EditorMode::Insert);
-            changed
+            VimOutcome::changed(changed)
         }
+
+        // The register: `Y` yanks the line (vim's `yy` alias), `p`/`P` paste after/at the cursor.
+        Key::Char('Y') => VimOutcome::yanked(editor.yank_whole_line()),
+        Key::Char('p') => VimOutcome::changed(editor.paste(true)),
+        Key::Char('P') => VimOutcome::changed(editor.paste(false)),
 
         // Operators (pending a motion / text object).
         Key::Char('d') => {
             editor.set_mode(EditorMode::Operator('d'));
-            false
+            VimOutcome::NONE
         }
         Key::Char('c') => {
             editor.set_mode(EditorMode::Operator('c'));
-            false
+            VimOutcome::NONE
+        }
+        Key::Char('y') => {
+            editor.set_mode(EditorMode::Operator('y'));
+            VimOutcome::NONE
         }
 
         // Char search (pending the target char).
@@ -170,68 +243,80 @@ fn handle_normal(editor: &mut Editor, ev: &KeyEvent) -> bool {
                 SearchDirection::Forward,
                 SearchType::Find,
             ));
-            false
+            VimOutcome::NONE
         }
         Key::Char('F') => {
             editor.set_mode(EditorMode::CharSearch(
                 SearchDirection::Backward,
                 SearchType::Find,
             ));
-            false
+            VimOutcome::NONE
         }
         Key::Char('t') => {
             editor.set_mode(EditorMode::CharSearch(
                 SearchDirection::Forward,
                 SearchType::Till,
             ));
-            false
+            VimOutcome::NONE
         }
         Key::Char('T') => {
             editor.set_mode(EditorMode::CharSearch(
                 SearchDirection::Backward,
                 SearchType::Till,
             ));
-            false
+            VimOutcome::NONE
         }
         Key::Char(';') => {
             editor.repeat_char_search(false);
-            false
+            VimOutcome::NONE
         }
         Key::Char(',') => {
             editor.repeat_char_search(true);
-            false
+            VimOutcome::NONE
         }
 
         // Undo.
-        Key::Char('u') => editor.undo(),
+        Key::Char('u') => VimOutcome::changed(editor.undo()),
+
+        // A bracketed paste inserts in Normal mode too, as vim does with a terminal paste.
+        Key::Paste(s) => {
+            editor.insert_str(s);
+            VimOutcome::changed(!s.is_empty())
+        }
 
         // Esc in Normal is a no-op (stays Normal — standard vim). Everything else is ignored.
-        _ => false,
+        _ => VimOutcome::NONE,
     }
 }
 
-fn handle_operator(editor: &mut Editor, operator: char, ev: &KeyEvent) -> bool {
+fn handle_operator(editor: &mut Editor, operator: char, ev: &KeyEvent) -> VimOutcome {
     // `gg` — a pending `g` (parked in Operator('g')) completes on a second `g`.
     if operator == 'g' {
         editor.set_mode(EditorMode::Normal);
-        if matches!(&ev.key, Key::Char('g')) {
-            editor.move_top();
+        if !matches!(&ev.key, Key::Char('g')) {
+            return VimOutcome::NONE;
         }
-        return false;
+        if editor.is_on_first_line() {
+            return VimOutcome::exit(LineExit::Top);
+        }
+        editor.move_top();
+        return VimOutcome::NONE;
     }
 
-    // `dd` / `cc` — the doubled operator deletes the whole line.
+    // `dd` / `cc` / `yy` — the doubled operator acts on the whole line: `dd` removes the row, `cc`
+    // empties it and types there, `yy` copies it.
     if matches!(&ev.key, Key::Char(c) if *c == operator) {
-        let changed = editor.delete_whole_line();
-        editor.set_mode(if operator == 'c' {
-            EditorMode::Insert
-        } else {
-            EditorMode::Normal
-        });
-        return changed;
+        let outcome = match operator {
+            'y' => VimOutcome::yanked(editor.yank_whole_line()),
+            'c' => VimOutcome::changed(editor.clear_line()),
+            _ => VimOutcome::changed(editor.delete_whole_line()),
+        };
+        editor.set_mode(mode_after(operator));
+        return outcome;
     }
 
-    // Operator + char-search (`df`, `ct`, …): arm the pending char-search, remembering the column.
+    // Operator + char-search (`df`, `ct`, `yt`, …): arm the pending char-search, remembering the
+    // column.
     if let Some((direction, search_type)) = char_search_from_key(&ev.key) {
         let start_col = editor.cursor_col();
         editor.set_mode(EditorMode::OperatorCharSearch(
@@ -240,24 +325,25 @@ fn handle_operator(editor: &mut Editor, operator: char, ev: &KeyEvent) -> bool {
             direction,
             search_type,
         ));
-        return false;
+        return VimOutcome::NONE;
     }
 
-    // Operator + text object (`diw`, `ci"`, …): arm the pending text-object state.
+    // Operator + text object (`diw`, `ci"`, `yi(`, …): arm the pending text-object state.
     match &ev.key {
         Key::Char('i') => {
             editor.set_mode(EditorMode::TextObject(operator, TextObjectScope::Inner));
-            return false;
+            return VimOutcome::NONE;
         }
         Key::Char('a') => {
             editor.set_mode(EditorMode::TextObject(operator, TextObjectScope::Around));
-            return false;
+            return VimOutcome::NONE;
         }
         _ => {}
     }
 
-    // Operator + motion (`dw`, `de`, `d$`, `c0`, …): select from the cursor across the motion and
-    // cut. `de` is inclusive of the char under the new cursor, so it advances one extra column.
+    // Operator + motion (`dw`, `de`, `d$`, `c0`, `yw`, …): span from the cursor across the motion
+    // and apply the operator. `de` is inclusive of the char under the new cursor, so it advances
+    // one extra column.
     let (start_row, start_col) = editor.row_col();
     let line_len = editor.current_line().chars().count();
     let motion_end = match &ev.key {
@@ -295,13 +381,14 @@ fn handle_operator(editor: &mut Editor, operator: char, ev: &KeyEvent) -> bool {
     match motion_end {
         Some(end) => {
             // tui-textarea's word motions (and Forward/Back) WRAP across line boundaries, so the
-            // cursor may now sit on a different row. `cut_col_range` operates on the *current* line,
-            // so reading a column off the wrong row would corrupt a neighbouring line. When the
-            // motion crossed lines, clamp it to the original line: a forward motion deletes to the
-            // line's end, a backward motion to its head (vim keeps these operators within the line).
+            // cursor may now sit on a different row. The column-range primitives operate on the
+            // *current* line, so reading a column off the wrong row would corrupt a neighbouring
+            // line. When the motion crossed lines, clamp it to the original line: a forward motion
+            // reaches the line's end, a backward motion its head (vim keeps these operators within
+            // the line).
             let (end_row, _) = editor.row_col();
             let (lo, hi) = if end_row != start_row {
-                // Re-home the cursor onto the original line so `cut_col_range` cuts the right row.
+                // Re-home the cursor onto the original line so the range lands on the right row.
                 editor.move_to_row_col(start_row, start_col);
                 if end_row > start_row {
                     (start_col, line_len) // forward wrap -> to end of the original line
@@ -313,18 +400,12 @@ fn handle_operator(editor: &mut Editor, operator: char, ev: &KeyEvent) -> bool {
             } else {
                 (end, start_col)
             };
-            let changed = editor.cut_col_range(lo, hi);
-            editor.set_mode(if operator == 'c' {
-                EditorMode::Insert
-            } else {
-                EditorMode::Normal
-            });
-            changed
+            operate(editor, operator, lo, hi)
         }
         None => {
             // An invalid motion cancels the operator (back to Normal, no edit).
             editor.set_mode(EditorMode::Normal);
-            false
+            VimOutcome::NONE
         }
     }
 }
@@ -334,7 +415,7 @@ fn handle_char_search(
     direction: SearchDirection,
     search_type: SearchType,
     ev: &KeyEvent,
-) -> bool {
+) -> VimOutcome {
     if let Key::Char(target) = ev.key {
         let found = editor.char_search(target, direction, search_type);
         if found {
@@ -346,7 +427,7 @@ fn handle_char_search(
         }
     }
     editor.set_mode(EditorMode::Normal);
-    false
+    VimOutcome::NONE
 }
 
 fn handle_operator_char_search(
@@ -356,30 +437,21 @@ fn handle_operator_char_search(
     direction: SearchDirection,
     search_type: SearchType,
     ev: &KeyEvent,
-) -> bool {
+) -> VimOutcome {
     let target = match ev.key {
         Key::Char(ch) => ch,
         _ => {
             editor.set_mode(EditorMode::Normal);
-            return false;
+            return VimOutcome::NONE;
         }
     };
 
     let line = editor.current_line();
-    let range = operator_char_range(&line, start_col, target, direction, search_type);
-    match range {
-        Some((lo, hi)) => {
-            let changed = editor.cut_col_range(lo, hi);
-            editor.set_mode(if operator == 'c' {
-                EditorMode::Insert
-            } else {
-                EditorMode::Normal
-            });
-            changed
-        }
+    match operator_char_range(&line, start_col, target, direction, search_type) {
+        Some((lo, hi)) => operate(editor, operator, lo, hi),
         None => {
             editor.set_mode(EditorMode::Normal);
-            false
+            VimOutcome::NONE
         }
     }
 }
@@ -389,20 +461,37 @@ fn handle_text_object(
     operator: char,
     scope: TextObjectScope,
     ev: &KeyEvent,
-) -> bool {
+) -> VimOutcome {
     if let Key::Char(target_char) = ev.key
         && let Some(target) = TextObjectTarget::from_char(target_char)
-        && editor.cut_text_object(target, scope)
+        && let Some((lo, hi)) = editor.text_object_bounds(target, scope)
     {
-        editor.set_mode(if operator == 'c' {
-            EditorMode::Insert
-        } else {
-            EditorMode::Normal
-        });
-        return true;
+        return operate(editor, operator, lo, hi);
     }
     editor.set_mode(EditorMode::Normal);
-    false
+    VimOutcome::NONE
+}
+
+/// Apply a completed operator to the `[lo, hi)` char span on the current line: `d` and `c` cut it
+/// into the register (`c` then enters Insert), `y` copies it and stays in Normal.
+fn operate(editor: &mut Editor, operator: char, lo: usize, hi: usize) -> VimOutcome {
+    if operator == 'y' {
+        let yanked = editor.yank_col_range(lo, hi);
+        editor.set_mode(EditorMode::Normal);
+        return VimOutcome::yanked(yanked);
+    }
+    let changed = editor.cut_col_range(lo, hi);
+    editor.set_mode(mode_after(operator));
+    VimOutcome::changed(changed)
+}
+
+/// The mode a completed operator leaves the editor in: `c` goes on to type, `d` and `y` stay put.
+fn mode_after(operator: char) -> EditorMode {
+    if operator == 'c' {
+        EditorMode::Insert
+    } else {
+        EditorMode::Normal
+    }
 }
 
 fn char_search_from_key(key: &Key) -> Option<(SearchDirection, SearchType)> {
@@ -415,8 +504,8 @@ fn char_search_from_key(key: &Key) -> Option<(SearchDirection, SearchType)> {
     }
 }
 
-/// The `(start, end)` char-column span (end exclusive) an operator + char-search (`df`/`ct`/…)
-/// deletes, from `cursor_col` to the target. Forward includes the cursor column; backward includes
+/// The `(start, end)` char-column span (end exclusive) an operator + char-search (`df`/`ct`/`yf`/…)
+/// covers, from `cursor_col` to the target. Forward includes the cursor column; backward includes
 /// the column the cursor sits on. `None` when the target isn't found in range.
 fn operator_char_range(
     text: &str,
@@ -454,3 +543,11 @@ fn operator_char_range(
 #[cfg(test)]
 #[path = "vim_tests.rs"]
 mod vim_tests;
+
+#[cfg(test)]
+#[path = "vim_register_tests.rs"]
+mod vim_register_tests;
+
+#[cfg(test)]
+#[path = "vim_line_exit_tests.rs"]
+mod vim_line_exit_tests;

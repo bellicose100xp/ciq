@@ -973,3 +973,5 @@ mod save_tests;
 mod search_tests;
 #[path = "app_tests/simple_mode_tests.rs"]
 mod simple_mode_tests;
+#[path = "app_tests/vim_app_tests.rs"]
+mod vim_app_tests;

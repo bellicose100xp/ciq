@@ -132,6 +132,9 @@ pub enum Focus {
 pub struct App {
     pub(crate) phase: AppPhase,
     focus: Focus,
+    /// Text a vim yank left for the system clipboard, waiting for the event loop (the only place
+    /// that may write the OSC 52 sequence) to drain it with [`Self::take_clipboard_text`].
+    pub(crate) clipboard_pending: Option<String>,
     /// The Simple/Power query form — five labeled clause panes (`SELECT` / `WHERE` / `GROUP BY` /
     /// `ORDER BY` / `LIMIT`) in Simple mode, or one full-SQL textarea in Power mode (toggle with
     /// `Ctrl+Q`). Default is **Simple**, with the cursor parked on `WHERE` and the other panes
@@ -290,6 +293,7 @@ impl App {
         Self {
             phase: AppPhase::Loading,
             focus: Focus::QueryBar,
+            clipboard_pending: None,
             query_form: QueryForm::new(),
             debouncer: Debouncer::new(),
             dispatcher: Dispatcher::new(request_tx, interrupt),

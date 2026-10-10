@@ -23,14 +23,14 @@ fn at_col(e: &mut Editor, col: usize) {
     }
 }
 
-/// Feed a plain printable key.
+/// Feed a plain printable key; returns whether the text changed.
 fn ch(e: &mut Editor, c: char) -> bool {
-    e.on_vim_key(&KeyEvent::char(c))
+    e.on_vim_key(&KeyEvent::char(c)).changed
 }
 
-/// Feed a plain non-char key.
+/// Feed a plain non-char key; returns whether the text changed.
 fn key(e: &mut Editor, k: Key) -> bool {
-    e.on_vim_key(&KeyEvent::plain(k))
+    e.on_vim_key(&KeyEvent::plain(k)).changed
 }
 
 // --- mode transitions ---
@@ -410,12 +410,15 @@ fn dd_on_the_last_line_removes_the_whole_row() {
 }
 
 #[test]
-fn cc_on_a_middle_line_removes_the_row_and_enters_insert() {
+fn cc_on_a_middle_line_empties_the_row_and_enters_insert_on_it() {
+    // `cc` is "change the line": the row stays so typing resumes on an empty line between its
+    // neighbours (vim), unlike `dd`, which removes the row.
     let mut e = normal("one\ntwo\nthree");
     ch(&mut e, 'j');
     ch(&mut e, 'c');
     ch(&mut e, 'c');
-    assert_eq!(e.text(), "one\nthree");
+    assert_eq!(e.text(), "one\n\nthree");
+    assert_eq!(e.row_col(), (1, 0));
     assert_eq!(e.mode(), EditorMode::Insert);
 }
 
@@ -699,8 +702,11 @@ fn ctrl_r_is_not_a_redo_in_vim_dispatch() {
     let mut e = normal("hello");
     ch(&mut e, 'x');
     ch(&mut e, 'u'); // back to "hello"
-    let changed = e.on_vim_key(&KeyEvent::new(Key::Char('r'), KeyMods::CTRL));
-    assert!(!changed, "Ctrl+R is not handled by vim dispatch (no redo)");
+    let outcome = e.on_vim_key(&KeyEvent::new(Key::Char('r'), KeyMods::CTRL));
+    assert!(
+        !outcome.changed,
+        "Ctrl+R is not handled by vim dispatch (no redo)"
+    );
     assert_eq!(e.text(), "hello", "Ctrl+R does not redo");
 }
 

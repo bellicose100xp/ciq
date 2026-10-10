@@ -34,7 +34,9 @@ impl App {
     /// candidate set is correct without the user having to type the clause keyword themselves.
     /// Power mode reads the editor directly.
     pub(crate) fn refresh_autocomplete(&mut self) {
-        if self.schema.is_none() {
+        // The popup is an Insert-mode surface: in vim Normal mode (and its pending states) the
+        // keys it would capture, Enter / Up / Down / Tab, are motions, so it stays closed there.
+        if self.schema.is_none() || !self.editor().mode().is_insert() {
             self.autocomplete.close();
             return;
         }

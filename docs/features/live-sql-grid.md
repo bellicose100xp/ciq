@@ -57,14 +57,17 @@ exports the full result. A query with your own `LIMIT` is never re-capped beyond
 
 | Context | Key | Action |
 |---|---|---|
-| Query bar | printable / Backspace / Delete | edit the query |
-| Query bar | Left / Right / Home / End | move the cursor |
-| Query bar | Down | move focus to the results grid |
-| Results | Up / Down | scroll one row (Up at the top returns focus to the bar) |
+| Query box | printable / Backspace / Delete | edit the query |
+| Query box | Left / Right / Home / End | move the cursor |
+| Query box | Esc | drop to vim Normal mode (see [Vim editing](vim-editing.md)) |
+| Query box | Ctrl+Q | toggle the five-pane Simple form and the free-form Power textarea |
+| Query box | Down (Power, last line) | move focus to the results grid |
+| Query box | Ctrl+T | toggle focus between the query box and the grid |
+| Results | Up / Down | scroll one row (Up at the top returns focus to the box) |
 | Results | PageUp / PageDown | scroll ten rows |
 | Results | Left / Right | scroll one column horizontally |
 | Results | Home | jump to the first row |
-| Anywhere | Esc or Ctrl+C | quit |
+| Anywhere | Ctrl+C | quit |
 
 ## Mouse
 

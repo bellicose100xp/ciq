@@ -353,3 +353,145 @@ fn focused_cursor_follows_focus_change() {
         "after focus change, still exactly ONE cursor cell"
     );
 }
+
+// ── Vim Normal mode treats the five panes as lines ──────────────────────────────────────────────
+
+fn esc(app: &mut App) {
+    app.on_key(KeyEvent::plain(Key::Esc), 0);
+}
+
+#[test]
+fn enter_in_a_simple_pane_never_adds_a_row() {
+    let (mut app, _rx) = app();
+    for c in "a > 1".chars() {
+        app.on_key(KeyEvent::char(c), 0);
+    }
+    app.on_key(KeyEvent::plain(Key::Enter), 0);
+    app.on_key(KeyEvent::plain(Key::Paste("\nAND b".into())), 0);
+    assert_eq!(app.query_form().text(SimplePane::Where), "a > 1 AND b");
+    assert_eq!(app.editor().line_count(), 1);
+}
+
+#[test]
+fn normal_j_and_k_walk_the_panes_and_stay_in_normal_mode() {
+    use crate::app::editor::EditorMode;
+    let (mut app, _rx) = app();
+    esc(&mut app);
+    assert_eq!(app.editor_mode(), EditorMode::Normal);
+    app.on_key(KeyEvent::char('j'), 0);
+    assert_eq!(app.query_form().focused_pane(), SimplePane::GroupBy);
+    assert_eq!(
+        app.editor_mode(),
+        EditorMode::Normal,
+        "the mode travels with the focus"
+    );
+    app.on_key(KeyEvent::char('j'), 0);
+    app.on_key(KeyEvent::char('j'), 0);
+    app.on_key(KeyEvent::char('j'), 0);
+    assert_eq!(
+        app.query_form().focused_pane(),
+        SimplePane::Limit,
+        "bounded at LIMIT"
+    );
+    assert_eq!(
+        app.focus(),
+        Focus::QueryBar,
+        "j on LIMIT does not leave the bar"
+    );
+    app.on_key(KeyEvent::char('k'), 0);
+    assert_eq!(app.query_form().focused_pane(), SimplePane::OrderBy);
+    assert_eq!(app.editor_mode(), EditorMode::Normal);
+}
+
+#[test]
+fn normal_enter_up_and_down_are_pane_motions() {
+    let (mut app, _rx) = app();
+    esc(&mut app);
+    app.on_key(KeyEvent::plain(Key::Enter), 0);
+    assert_eq!(app.query_form().focused_pane(), SimplePane::GroupBy);
+    app.on_key(KeyEvent::plain(Key::Down), 0);
+    assert_eq!(app.query_form().focused_pane(), SimplePane::OrderBy);
+    app.on_key(KeyEvent::plain(Key::Up), 0);
+    assert_eq!(app.query_form().focused_pane(), SimplePane::GroupBy);
+    assert_eq!(
+        app.query_form().text(SimplePane::Where),
+        "",
+        "Enter inserted nothing"
+    );
+}
+
+#[test]
+fn normal_gg_and_shift_g_jump_to_select_and_limit() {
+    use crate::app::editor::EditorMode;
+    let (mut app, _rx) = app();
+    esc(&mut app);
+    app.on_key(KeyEvent::char('G'), 0);
+    assert_eq!(app.query_form().focused_pane(), SimplePane::Limit);
+    app.on_key(KeyEvent::char('g'), 0);
+    app.on_key(KeyEvent::char('g'), 0);
+    assert_eq!(app.query_form().focused_pane(), SimplePane::Select);
+    assert_eq!(app.editor_mode(), EditorMode::Normal);
+}
+
+#[test]
+fn alt_j_in_normal_mode_keeps_normal_mode() {
+    use crate::app::editor::EditorMode;
+    let (mut app, _rx) = app();
+    esc(&mut app);
+    app.on_key(alt(Key::Char('j')), 0);
+    assert_eq!(app.query_form().focused_pane(), SimplePane::GroupBy);
+    assert_eq!(app.editor_mode(), EditorMode::Normal);
+}
+
+#[test]
+fn i_after_a_pane_move_types_into_the_new_pane() {
+    let (mut app, _rx) = app();
+    esc(&mut app);
+    app.on_key(KeyEvent::char('j'), 0);
+    app.on_key(KeyEvent::char('i'), 0);
+    for c in "region".chars() {
+        app.on_key(KeyEvent::char(c), 0);
+    }
+    assert_eq!(app.query_form().text(SimplePane::GroupBy), "region");
+    assert_eq!(app.query_form().text(SimplePane::Where), "");
+}
+
+#[test]
+fn yank_in_one_pane_pastes_in_another() {
+    let (mut app, _rx) = app();
+    for c in "region".chars() {
+        app.on_key(KeyEvent::char(c), 0);
+    }
+    esc(&mut app);
+    app.on_key(KeyEvent::char('y'), 0);
+    app.on_key(KeyEvent::char('y'), 0);
+    assert_eq!(
+        app.take_clipboard_text().as_deref(),
+        Some("region"),
+        "a yank queues the system-clipboard mirror"
+    );
+    app.on_key(KeyEvent::char('j'), 0); // -> GROUP BY, still Normal
+    app.on_key(KeyEvent::char('p'), 0);
+    assert_eq!(app.query_form().text(SimplePane::GroupBy), "region");
+    assert_eq!(app.query_form().text(SimplePane::Where), "region");
+    assert!(
+        app.take_clipboard_text().is_none(),
+        "a paste does not touch the clipboard"
+    );
+}
+
+#[test]
+fn o_in_a_pane_appends_instead_of_opening_a_row() {
+    use crate::app::editor::EditorMode;
+    let (mut app, _rx) = app();
+    for c in "ab".chars() {
+        app.on_key(KeyEvent::char(c), 0);
+    }
+    esc(&mut app);
+    app.on_key(KeyEvent::char('0'), 0);
+    app.on_key(KeyEvent::char('o'), 0);
+    assert_eq!(app.editor_mode(), EditorMode::Insert);
+    app.on_key(KeyEvent::char('c'), 0);
+    assert_eq!(app.query_form().text(SimplePane::Where), "abc");
+    assert_eq!(app.editor().line_count(), 1);
+}

@@ -1,7 +1,8 @@
 //! Headless tests for the [`QueryForm`] container — focus cycling, composer wiring, mode
 //! toggle (Simple <-> Power), and the LIMIT-pane error machinery.
 
-use super::{QueryForm, QueryMode, SimplePane};
+use super::{QueryForm, QueryMode, SimplePane, try_simplify_from_sql};
+use crate::app::editor::EditorMode;
 
 #[test]
 fn defaults_seed_select_star_and_empty_limit_focused_on_where() {
@@ -219,4 +220,131 @@ fn focus_next_is_a_noop_in_power_mode() {
     form.toggle_mode(Some(1000)).unwrap(); // -> Power
     form.focus_next();
     assert_eq!(form.mode(), QueryMode::Power);
+}
+
+// ── One editor with five lines: the mode and the register travel with the focus ─────────────────
+
+#[test]
+fn panes_are_single_line_editors_and_power_is_multiline() {
+    let form = QueryForm::new();
+    for pane in SimplePane::ALL {
+        assert!(
+            form.pane(pane).is_single_line(),
+            "{pane:?} pane is single-line"
+        );
+    }
+    assert!(!form.power().is_single_line());
+}
+
+#[test]
+fn a_pane_never_grows_a_second_row() {
+    let mut form = QueryForm::new();
+    form.focused_editor_mut().insert_str("a > 1\nAND b < 2");
+    form.focused_editor_mut().insert_newline();
+    assert_eq!(form.text(SimplePane::Where), "a > 1 AND b < 2");
+    assert_eq!(form.focused_editor().line_count(), 1);
+    form.set_text(SimplePane::OrderBy, "x\ny");
+    assert_eq!(form.text(SimplePane::OrderBy), "x y");
+}
+
+#[test]
+fn focus_next_carries_normal_mode_to_the_entered_pane() {
+    let mut form = QueryForm::new();
+    form.focused_editor_mut().set_mode(EditorMode::Normal);
+    form.focus_next();
+    assert_eq!(form.focused_pane(), SimplePane::GroupBy);
+    assert_eq!(form.focused_editor().mode(), EditorMode::Normal);
+    form.focus_prev();
+    assert_eq!(form.focused_editor().mode(), EditorMode::Normal);
+}
+
+#[test]
+fn focus_move_keeps_insert_when_the_leaving_pane_was_in_insert() {
+    let mut form = QueryForm::new();
+    form.focus(SimplePane::Limit);
+    assert_eq!(form.focused_editor().mode(), EditorMode::Insert);
+}
+
+#[test]
+fn a_pending_operator_does_not_survive_a_focus_move() {
+    let mut form = QueryForm::new();
+    form.focused_editor_mut()
+        .set_mode(EditorMode::Operator('d'));
+    form.focus_next();
+    assert_eq!(form.focused_editor().mode(), EditorMode::Normal);
+}
+
+#[test]
+fn focus_move_carries_the_register() {
+    let mut form = QueryForm::new();
+    form.focused_editor_mut().set_yank_text("region = 'EU'");
+    form.focus_next();
+    assert_eq!(form.focused_editor().yank_text(), "region = 'EU'");
+    form.focus(SimplePane::Select);
+    assert_eq!(form.pane(SimplePane::Select).yank_text(), "region = 'EU'");
+}
+
+#[test]
+fn refocusing_the_same_pane_changes_nothing() {
+    let mut form = QueryForm::new();
+    form.focused_editor_mut()
+        .set_mode(EditorMode::Operator('c'));
+    form.focus(SimplePane::Where);
+    assert_eq!(form.focused_editor().mode(), EditorMode::Operator('c'));
+}
+
+#[test]
+fn toggle_to_power_carries_mode_and_register() {
+    let mut form = QueryForm::new();
+    form.focused_editor_mut().set_mode(EditorMode::Normal);
+    form.focused_editor_mut().set_yank_text("amount");
+    form.toggle_mode(Some(1000)).unwrap();
+    assert_eq!(form.power().mode(), EditorMode::Normal);
+    assert_eq!(form.power().yank_text(), "amount");
+}
+
+#[test]
+fn toggle_to_simple_carries_mode_and_register_into_the_where_pane() {
+    let mut form = QueryForm::new();
+    form.toggle_mode(Some(1000)).unwrap(); // -> Power
+    form.power_mut().set_mode(EditorMode::Normal);
+    form.power_mut().set_yank_text("id");
+    form.toggle_mode(Some(1000)).unwrap(); // -> Simple
+    assert_eq!(form.focused_pane(), SimplePane::Where);
+    assert_eq!(form.focused_editor().mode(), EditorMode::Normal);
+    assert_eq!(form.focused_editor().yank_text(), "id");
+}
+
+#[test]
+fn enter_power_with_sql_carries_mode_and_register_from_the_focused_pane() {
+    let mut form = QueryForm::new();
+    form.focused_editor_mut().set_mode(EditorMode::Normal);
+    form.focused_editor_mut().set_yank_text("region");
+    form.enter_power_with_sql("SELECT 1");
+    assert_eq!(form.power().mode(), EditorMode::Normal);
+    assert_eq!(form.power().yank_text(), "region");
+}
+
+#[test]
+fn enter_simple_with_parts_carries_mode_and_register_into_where() {
+    let mut form = QueryForm::new();
+    form.toggle_mode(None).unwrap(); // -> Power
+    form.power_mut().set_mode(EditorMode::Normal);
+    form.power_mut().set_yank_text("id");
+    let parts = try_simplify_from_sql("SELECT id FROM t").unwrap();
+    form.enter_simple_with_parts(parts, None);
+    assert_eq!(form.focused_pane(), SimplePane::Where);
+    assert_eq!(form.focused_editor().mode(), EditorMode::Normal);
+    assert_eq!(form.focused_editor().yank_text(), "id");
+}
+
+#[test]
+fn toggle_to_simple_flattens_a_multiline_clause_into_its_pane() {
+    let mut form = QueryForm::new();
+    form.toggle_mode(Some(1000)).unwrap(); // -> Power
+    form.power_mut()
+        .set_text("SELECT *\nFROM t\nWHERE a = 1\n  AND b = 2\nLIMIT 5");
+    form.toggle_mode(Some(1000)).unwrap(); // -> Simple
+    assert_eq!(form.text(SimplePane::Where), "a = 1   AND b = 2");
+    assert_eq!(form.pane(SimplePane::Where).line_count(), 1);
 }

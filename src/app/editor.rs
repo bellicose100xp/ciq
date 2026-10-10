@@ -27,10 +27,24 @@
 //! (the mode machine, char-search column math, text-object bounds) lives in the [`mode`],
 //! [`char_search`], and [`text_objects`] submodules; the key dispatch is [`vim::apply_vim_key`],
 //! which drives the small set of vim primitives the `Editor` exposes below
-//! (`move_word_*`, `delete_whole_line`, `cut_col_range`, …). All of it is headless and `App`-free.
+//! (`move_word_*`, `delete_whole_line`, `cut_col_range`, `yank_col_range`, `paste`, …). All of it
+//! is headless and `App`-free. The register behind `y`/`p` is the textarea's yank buffer, exposed
+//! through [`yank_text`](Editor::yank_text) / [`set_yank_text`](Editor::set_yank_text) so an owner
+//! with several editors (the Simple-mode panes) can hand one register from pane to pane.
+//!
+//! ## Single-line editors
+//!
+//! The same type backs the five single-row Simple-mode clause panes. A [`single_line`] editor
+//! keeps the whole vim layer but can never grow a second row: Enter and `o`/`O` do not open a
+//! line, and any newline arriving through a paste, a wholesale set, or a register paste is
+//! flattened to a space. Vertical vim motions have nowhere to go inside it, so the dispatch reports
+//! them as a [`LineExit`] for the owning form to turn into a pane move.
 //!
 //! [`Insert`]: EditorMode::Insert
 //! [`Normal`]: EditorMode::Normal
+//! [`single_line`]: Editor::single_line
+
+use std::borrow::Cow;
 
 use ratatui::style::Style;
 use tui_textarea::{CursorMove, TextArea};
@@ -45,15 +59,18 @@ pub mod vim;
 pub use char_search::{CharSearchState, SearchDirection, SearchType};
 pub use mode::{EditorMode, TextObjectScope};
 pub use text_objects::TextObjectTarget;
+pub use vim::{LineExit, VimOutcome};
 
-/// A multiline text buffer + visible cursor, backed by [`tui_textarea::TextArea`], with a vim mode
-/// machine on top (`Insert` by default; `Esc` -> `Normal`).
+/// A text buffer + visible cursor, backed by [`tui_textarea::TextArea`], with a vim mode machine on
+/// top (`Insert` by default; `Esc` -> `Normal`). Multiline by default; see [`Editor::single_line`].
 pub struct Editor {
     textarea: TextArea<'static>,
     /// The current vim editing mode. `Insert` until `Esc`; see [`vim`].
     mode: EditorMode,
     /// The last `f`/`F`/`t`/`T` char-search, for `;` (repeat) and `,` (repeat reversed).
     last_char_search: Option<CharSearchState>,
+    /// Whether the buffer is pinned to one row (a Simple-mode clause pane).
+    single_line: bool,
 }
 
 impl Default for Editor {
@@ -63,6 +80,7 @@ impl Default for Editor {
 }
 
 impl Editor {
+    /// A multiline editor (the Power-mode SQL textarea).
     pub fn new() -> Self {
         let mut textarea = TextArea::default();
         style_textarea(&mut textarea);
@@ -70,7 +88,22 @@ impl Editor {
             textarea,
             mode: EditorMode::Insert,
             last_char_search: None,
+            single_line: false,
         }
+    }
+
+    /// An editor pinned to a single row (a Simple-mode clause pane): newlines never enter the
+    /// buffer, however they arrive.
+    pub fn single_line() -> Self {
+        Self {
+            single_line: true,
+            ..Self::new()
+        }
+    }
+
+    /// Whether this editor is pinned to one row.
+    pub fn is_single_line(&self) -> bool {
+        self.single_line
     }
 
     /// An editor pre-filled with `text`, cursor at the end.
@@ -141,6 +174,10 @@ impl Editor {
     /// convert here.
     pub fn set_text_with_byte_cursor(&mut self, text: impl Into<String>, byte_cursor: usize) {
         let text = text.into();
+        // Map the offset on the text that actually lands in the buffer (flattened in a single-line
+        // editor, char for char, so the offset still means the same character); `replace_all`
+        // then finds nothing left to flatten.
+        let text = self.normalize(&text);
         let (row, col) = row_col_of_byte(&text, byte_cursor);
         self.replace_all(&text);
         self.move_to_row_col(row, col);
@@ -152,17 +189,22 @@ impl Editor {
     }
 
     /// Insert a whole string at the cursor (the decoded-paste / multi-char path), advancing the
-    /// cursor past all inserted characters. Embedded newlines split into multiple lines.
+    /// cursor past all inserted characters. Embedded newlines split into multiple lines; in a
+    /// single-line editor they become spaces instead.
     pub fn insert_str(&mut self, s: &str) {
         if s.is_empty() {
             return;
         }
+        let s = self.normalize(s);
         self.textarea.insert_str(s);
     }
 
     /// Insert a newline at the cursor (the Enter / Shift+Enter key — newline universally, since
-    /// queries run live on debounce and there is no submit key).
+    /// queries run live on debounce and there is no submit key). A no-op in a single-line editor.
     pub fn insert_newline(&mut self) {
+        if self.single_line {
+            return;
+        }
         self.textarea.insert_newline();
     }
 
@@ -262,8 +304,9 @@ impl Editor {
     }
 
     /// Route one key through the vim mode machine. The App calls this for every non-Insert mode
-    /// key, plus `Esc` from Insert (to drop to Normal). Returns `true` if the buffer text changed.
-    pub fn on_vim_key(&mut self, ev: &crate::app::key::KeyEvent) -> bool {
+    /// key, plus `Esc` from Insert (to drop to Normal). The outcome says whether the text changed,
+    /// whether the register was filled, and whether a vertical motion ran off the buffer.
+    pub fn on_vim_key(&mut self, ev: &crate::app::key::KeyEvent) -> VimOutcome {
         vim::apply_vim_key(self, ev)
     }
 
@@ -317,17 +360,29 @@ impl Editor {
         self.textarea.move_cursor(CursorMove::Head);
     }
 
-    /// Open a new empty line below the cursor and move onto it (`o`).
-    pub fn open_line_below(&mut self) {
+    /// Open a new empty line below the cursor and move onto it (`o`). A single-line editor has no
+    /// row to open, so there `o` only parks the cursor at the line end (the `A` position). Returns
+    /// whether the buffer changed.
+    pub fn open_line_below(&mut self) -> bool {
         self.textarea.move_cursor(CursorMove::End);
+        if self.single_line {
+            return false;
+        }
         self.textarea.insert_newline();
+        true
     }
 
-    /// Open a new empty line above the cursor and move onto it (`O`).
-    pub fn open_line_above(&mut self) {
+    /// Open a new empty line above the cursor and move onto it (`O`). In a single-line editor it
+    /// only parks the cursor at the line start (the `I` position). Returns whether the buffer
+    /// changed.
+    pub fn open_line_above(&mut self) -> bool {
         self.textarea.move_cursor(CursorMove::Head);
+        if self.single_line {
+            return false;
+        }
         self.textarea.insert_newline();
         self.textarea.move_cursor(CursorMove::Up);
+        true
     }
 
     /// Delete from the cursor to the end of the **current** line (`D` / `d$` / `C`), never crossing
@@ -340,15 +395,37 @@ impl Editor {
         self.cut_col_range(col, line_len)
     }
 
-    /// Delete the cursor's whole line (`dd` / `cc`) — vim line-wise: the line's text *and* its
-    /// joining newline, removing the row entirely. On a single-line buffer this clears the line
-    /// (the row remains, now empty). Returns whether anything was removed.
+    /// Delete the cursor's whole line (`dd`) — vim line-wise: the line's text *and* its joining
+    /// newline, removing the row entirely. On a one-row buffer this clears the line (the row
+    /// remains, now empty). The register receives the line's text without the newline, so a
+    /// following `p` pastes it inline (ciq's register is text-only; see [`paste`](Self::paste)).
+    /// Returns whether anything was removed.
     pub fn delete_whole_line(&mut self) -> bool {
         if self.textarea.lines().len() <= 1 {
-            // Single line: just clear its text (no newline to remove).
-            let len = self.current_line().chars().count();
-            return self.cut_col_range(0, len);
+            return self.clear_line();
         }
+        let line = self.current_line();
+        let removed = self.cut_row();
+        if removed {
+            self.textarea.set_yank_text(line);
+        }
+        removed
+    }
+
+    /// Clear the cursor's line (`cc`): the text goes, the row stays so Insert resumes on an empty
+    /// line, as vim has it. The register receives the cleared text. Returns whether anything was
+    /// removed.
+    pub fn clear_line(&mut self) -> bool {
+        let line = self.current_line();
+        let removed = self.cut_col_range(0, line.chars().count());
+        if removed {
+            self.textarea.set_yank_text(line);
+        }
+        removed
+    }
+
+    /// Remove the cursor's row and its joining newline from a buffer with two or more rows.
+    fn cut_row(&mut self) -> bool {
         let (row, _) = self.textarea.cursor();
         let last = self.textarea.lines().len() - 1;
         self.textarea.cancel_selection();
@@ -369,6 +446,45 @@ impl Editor {
             self.textarea.move_cursor(CursorMove::Head);
         }
         self.textarea.cut()
+    }
+
+    /// Copy the cursor's whole line into the register (`yy` / `Y`), leaving the buffer and cursor
+    /// untouched. Returns whether anything was yanked (an empty line yields nothing).
+    pub fn yank_whole_line(&mut self) -> bool {
+        let line = self.current_line();
+        if line.is_empty() {
+            return false;
+        }
+        self.textarea.set_yank_text(line);
+        true
+    }
+
+    /// The register: the text the last yank or cut left behind, which `p`/`P` paste. Empty until
+    /// something is yanked or cut.
+    pub fn yank_text(&self) -> String {
+        self.textarea.yank_text()
+    }
+
+    /// Replace the register (used to hand one register across the Simple-mode panes).
+    pub fn set_yank_text(&mut self, text: impl Into<String>) {
+        self.textarea.set_yank_text(text);
+    }
+
+    /// Paste the register at the cursor (`P`, `after == false`) or after the cursor's character
+    /// (`p`, `after == true`), as text: a line yanked with `yy` lands inline, not as a new row. The
+    /// cursor ends on the last pasted character, as in vim. Returns whether anything was inserted
+    /// (an empty register pastes nothing).
+    pub fn paste(&mut self, after: bool) -> bool {
+        let text = self.textarea.yank_text();
+        if text.is_empty() {
+            return false;
+        }
+        if after && self.cursor_col() < self.current_line().chars().count() {
+            self.move_right();
+        }
+        self.insert_str(&text);
+        self.move_left();
+        true
     }
 
     /// Move the cursor `target` char-search and return whether the target was found. Translates the
@@ -409,30 +525,50 @@ impl Editor {
     /// the clamp keeps the primitive line-safe regardless of caller). Leaves the cursor at `start`.
     /// Returns whether anything was removed.
     pub fn cut_col_range(&mut self, start: usize, end: usize) -> bool {
+        self.select_col_range(start, end).is_some() && self.textarea.cut()
+    }
+
+    /// Copy the `[start, end)` char-column span on the current line into the register (`yw`, `y$`,
+    /// `yiw`, …) without changing the text. Bounds are clamped to the line like
+    /// [`cut_col_range`](Self::cut_col_range). Leaves the cursor at `start`, where vim parks it
+    /// after a yank. Returns whether anything was yanked.
+    pub fn yank_col_range(&mut self, start: usize, end: usize) -> bool {
+        let Some(start) = self.select_col_range(start, end) else {
+            return false;
+        };
+        self.textarea.copy();
+        self.set_cursor_col(start);
+        true
+    }
+
+    /// Select the `[start, end)` char-column span on the current line, both bounds clamped to the
+    /// line's char count so the selection never crosses the joining newline (`CursorMove::Forward`
+    /// wraps at end-of-line). Returns the clamped `start`, or `None` for an empty span (nothing
+    /// selected). The cut and yank primitives share this so they can never disagree on the clamp.
+    fn select_col_range(&mut self, start: usize, end: usize) -> Option<usize> {
         let line_len = self.current_line().chars().count();
         let start = start.min(line_len);
         let end = end.min(line_len);
         if start >= end {
-            return false;
+            return None;
         }
         self.textarea.cancel_selection();
         self.set_cursor_col(start);
         self.textarea.start_selection();
-        for _ in start..end {
-            self.textarea.move_cursor(CursorMove::Forward);
-        }
-        self.textarea.cut()
+        self.set_cursor_col(end);
+        Some(start)
     }
 
-    /// Cut the text object (`diw`, `ci"`, `da(`, …) around the cursor. Returns whether one was
-    /// found and removed. Translates the pure bounds from [`text_objects`] into a char-column cut.
-    pub fn cut_text_object(&mut self, target: TextObjectTarget, scope: TextObjectScope) -> bool {
+    /// The `[start, end)` char-column span of the text object (`iw`, `i"`, `a(`, …) around the
+    /// cursor on the current line, or `None` when there is none. The operator then cuts or yanks
+    /// it through the column-range primitives.
+    pub fn text_object_bounds(
+        &self,
+        target: TextObjectTarget,
+        scope: TextObjectScope,
+    ) -> Option<(usize, usize)> {
         let line = self.current_line();
-        let cursor_col = self.cursor_col();
-        match text_objects::find_text_object_bounds(&line, cursor_col, target, scope) {
-            Some((start, end)) => self.cut_col_range(start, end),
-            None => false,
-        }
+        text_objects::find_text_object_bounds(&line, self.cursor_col(), target, scope)
     }
 
     /// Undo the last edit (`u`). Returns whether the buffer changed. (There is no `redo`: vim's
@@ -442,12 +578,11 @@ impl Editor {
         self.textarea.undo()
     }
 
-    /// Move the cursor to char column `col` within its current line (clamped by the textarea).
+    /// Move the cursor to char column `col` within its current line (clamped by the textarea). A
+    /// `Jump` keeps an open selection, so this also extends one.
     fn set_cursor_col(&mut self, col: usize) {
-        self.textarea.move_cursor(CursorMove::Head);
-        for _ in 0..col {
-            self.textarea.move_cursor(CursorMove::Forward);
-        }
+        let (row, _) = self.textarea.cursor();
+        self.move_to_row_col(row, col);
     }
 
     /// Move the cursor to char column `col` on the **current line** (clamped to the line end by the
@@ -483,15 +618,29 @@ impl Editor {
         self.replace_all("");
     }
 
-    /// Replace the textarea's contents with `text` (split on `\n` into lines), preserving the
-    /// cursor/line styles and the current mode's cursor color. The cursor lands at the start;
-    /// callers reposition it as needed.
+    /// Replace the textarea's contents with `text` (split on `\n` into lines, or flattened to one
+    /// line in a single-line editor), preserving the cursor/line styles, the current mode's cursor
+    /// color, and the register. The cursor lands at the start; callers reposition it as needed.
     fn replace_all(&mut self, text: &str) {
+        let text = self.normalize(text);
         let lines: Vec<String> = text.split('\n').map(str::to_owned).collect();
         let mut textarea = TextArea::new(lines);
         style_textarea(&mut textarea);
         textarea.set_cursor_style(cursor_style_for(self.mode));
+        textarea.set_yank_text(self.textarea.yank_text());
         self.textarea = textarea;
+    }
+
+    /// Text as it may enter this buffer: borrowed unchanged for a multiline editor (or when there
+    /// is nothing to flatten), each newline character turned into a space for a single-line one.
+    /// One char per char (a CRLF becomes two spaces), so a byte offset into the source still
+    /// points at the same character afterwards.
+    fn normalize<'a>(&self, text: &'a str) -> Cow<'a, str> {
+        if self.single_line && text.contains(['\n', '\r']) {
+            Cow::Owned(text.replace(['\n', '\r'], " "))
+        } else {
+            Cow::Borrowed(text)
+        }
     }
 
     /// Move the textarea cursor to `(row, col)` (char indices), clamped to the buffer.
