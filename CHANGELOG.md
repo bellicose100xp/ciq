@@ -7,6 +7,8 @@ changes alike, patch `0.minor.Y` for fixes, refactors, polish, and docs.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-10
+
 ### Added
 - **Vim editing is the same in every query box.** The five Simple-mode clause panes now behave as
   one editor with five lines: in Normal mode `j`/`k` (and `Up`/`Down`/`Enter`) step between panes,
@@ -190,7 +192,8 @@ startup.
 - **Release flow** — cargo-dist shell installer (curl-based) for macOS and Linux, built by the
   `Release` workflow on a `vX.Y.Z` tag.
 
-[Unreleased]: https://github.com/bellicose100xp/ciq/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/bellicose100xp/ciq/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/bellicose100xp/ciq/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/bellicose100xp/ciq/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/bellicose100xp/ciq/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/bellicose100xp/ciq/compare/v0.2.0...v0.2.1
