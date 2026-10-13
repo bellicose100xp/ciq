@@ -18,7 +18,7 @@ use serde::Deserialize;
 use super::csv_opts::{ColumnTypeOverride, CsvOpts};
 
 /// The `[csv]` config section. Every key optional; an absent key stays `None` in the projected
-/// [`CsvOpts`] (defer to sniffed / DuckDB). Mirrors the CLI flags one-for-one (§6.6 / R5).
+/// [`CsvOpts`] (defer to DuckDB). Mirrors the CLI flags one-for-one (§6.6 / R5).
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct CsvConfig {

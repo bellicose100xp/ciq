@@ -13,14 +13,26 @@ piece is overridable from the CLI or config when the auto-detection guesses wron
 
 ## Auto-detection
 
-By default ciq sniffs the file's leading bytes for the delimiter (comma, semicolon, tab, or pipe;
-ambiguous cases default to comma), the quote character, and whether the first row is a header.
-DuckDB then does the thorough type-inference pass over the whole file, so columns come back typed
-(`BIGINT`, `DOUBLE`, `DATE`, `VARCHAR`, ...) rather than all-string.
+By default ciq hands the file to DuckDB's CSV sniffer with no hints at all. DuckDB picks the
+delimiter (comma, semicolon, tab, pipe, and more), the quote and escape characters, and whether the
+first row is a header by trying every combination against a sample of the file and keeping the one
+that parses most consistently. It then does the type-inference pass over the whole file, so columns
+come back typed (`BIGINT`, `DOUBLE`, `DATE`, `VARCHAR`, ...) rather than all-string.
+
+ciq does no sniffing of its own. A guess made from the first few lines and passed to DuckDB as a
+fixed delimiter would only shrink its search space, and a wrong guess turns a file DuckDB reads fine
+into a load error. The file extension plays no part either: a `.tsv` is read by its contents.
+
+Two cases DuckDB cannot settle from the data, and where the flags below are the answer:
+
+- **An all-text file** gives no type contrast between the first row and the rest, so DuckDB has to
+  guess whether that row is a header. `--header` or `--no-header` settles it.
+- **A file where two delimiters split every line equally well** (say, exactly one comma and one tab
+  per line) is a genuine tie. `--delim` settles it.
 
 ## Overriding the dialect and types
 
-Every detail is overridable, and the precedence is **CLI flag > config file > sniffed value**:
+Every detail is overridable, and the precedence is **CLI flag > config file > DuckDB's detection**:
 
 | Flag | Effect |
 |---|---|

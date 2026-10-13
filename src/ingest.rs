@@ -1,21 +1,22 @@
-//! CSV ingest — dialect detection, override options, and the `read_csv(...)` SQL builder.
+//! CSV ingest — override options and the `read_csv(...)` SQL builder.
 //!
 //! ciq parses the CSV exactly once at load (the parse-once north star, §6.6). What DuckDB
-//! parses it *as* — delimiter, quote, header, per-column types — is governed by three layers,
-//! merged with a fixed precedence:
+//! parses it *as* — delimiter, quote, header, per-column types — is governed by two override
+//! layers, merged with a fixed precedence, over DuckDB's own sniffer:
 //!
 //! ```text
-//!   CLI flags  >  [csv] config section  >  sniffed defaults  >  full auto-detect
+//!   CLI flags  >  [csv] config section  >  DuckDB auto-detect
 //! ```
 //!
 //! Each layer is a [`CsvOpts`] (every field `Option`, `None` = "defer to the layer below").
-//! [`csv_opts::merge`] folds the three into one effective `CsvOpts`; [`csv_opts::to_read_csv_sql`]
+//! [`csv_opts::merge`] folds the two into one effective `CsvOpts`; [`csv_opts::to_read_csv_sql`]
 //! turns that into the exact `read_csv('<path>', ...)` (or `read_csv_auto`) call the engine runs.
+//! Dialect detection itself is DuckDB's job alone: ciq passes a `delim`/`quote`/`header` only when
+//! a user set it, so the sniffer's full search space stays open otherwise (see [`merge`]).
 //!
-//! Everything here is **pure and headless**: the sniffer is a function over fixture bytes, the
-//! merge is a function over three structs, and the SQL builder is a `String`-returning function
-//! that runs nothing — so an agent verifies the engine invocation byte-for-byte without spawning
-//! DuckDB (North Star 2).
+//! Everything here is **pure and headless**: the merge is a function over two structs, and the
+//! SQL builder is a `String`-returning function that runs nothing — so an agent verifies the
+//! engine invocation byte-for-byte without spawning DuckDB (North Star 2).
 //!
 //! The three genuinely-open ingest decisions are resolved here and recorded in
 //! `dev/DECISIONS.md`:
@@ -30,13 +31,11 @@
 
 pub mod csv_config;
 pub mod csv_opts;
-pub mod sniff;
 
 pub use csv_config::{CsvConfig, load_csv_config_str};
 pub use csv_opts::{
     ColumnTypeOverride, CsvOpts, dialect_summary, merge, parse_types_spec, to_read_csv_sql,
 };
-pub use sniff::{SniffResult, sniff, sniff_bytes};
 
 // Q3/Q7/Q12 resolution: end-to-end fixture tests that pin the *engine's* observed ingest
 // semantics (column-name dedup, ragged-row error, empty-vs-NULL) against committed fixtures in

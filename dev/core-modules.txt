@@ -116,11 +116,10 @@ src/autocomplete/candidates.rs
 # when an identifier is quoted, when a value is a string literal), so it earns the hard floor.
 src/autocomplete/insertion.rs
 
-# Phase 4 (present now): CSV ingest — the pure sniffer over bytes, the CsvOpts merge precedence +
-# read_csv SQL builder, and the shared SQL identifier/literal quoting. All data-in/data-out: a
-# wrong delimiter guess, a wrong precedence pick, or a mis-escaped identifier is a real behavior
-# bug, so they earn the hard floor.
-src/ingest/sniff.rs
+# Phase 4 (present now): CSV ingest — the CsvOpts merge precedence + read_csv SQL builder, and the
+# shared SQL identifier/literal quoting. All data-in/data-out: a wrong precedence pick or a
+# mis-escaped identifier is a real behavior bug, so they earn the hard floor. (ciq's own byte
+# sniffer, once listed here, is gone: dialect detection is DuckDB's alone.)
 src/ingest/csv_opts.rs
 src/sql_ident.rs
 

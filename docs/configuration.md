@@ -12,7 +12,7 @@ default, so an empty file (or no file at all) yields the conservative built-ins.
 never blocks startup; ciq falls back to defaults and surfaces a warning.
 
 A CLI flag always wins over the corresponding config value (the precedence is
-**CLI flag > config file > sniffed value**).
+**CLI flag > config file > DuckDB's detection**).
 
 The file has five sections: `[general]`, `[theme]`, `[ai]`, `[history]`, and `[csv]`. Unknown
 top-level tables are ignored, so a config written for a newer ciq still loads on an older binary.

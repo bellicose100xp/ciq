@@ -14,17 +14,13 @@ use crate::engine::duckdb_engine::DuckdbEngine;
 use crate::engine::types::{Cell, QueryOutcome};
 use crate::engine::{CsvOpts, QueryEngine};
 use crate::error::EngineError;
-use crate::ingest::{merge, sniff_bytes};
+use crate::ingest::merge;
 use crate::sql_ident::quote_ident;
 
-/// Resolve the effective ingest opts the way `main::resolve_opts` does for a default invocation
-/// (no CLI flags, no config): sniff the file's bytes and merge the sniffed layer in. This is the
-/// production default-load path the bare `ciq <file>` invocation takes, which the engine tests'
-/// `CsvOpts::default()` bypasses.
-fn sniffed_opts(name: &str) -> CsvOpts {
-    let bytes = std::fs::read(fixture_path(name)).expect("read fixture");
-    let sniffed = sniff_bytes(&bytes).to_opts();
-    merge(&CsvOpts::default(), &CsvOpts::default(), &sniffed)
+/// The effective ingest opts a bare `ciq <file>` invocation resolves (no CLI flags, no config):
+/// the production default-load path, routed through `merge` exactly as `main::resolve_opts` does.
+fn default_load_opts() -> CsvOpts {
+    merge(&CsvOpts::default(), &CsvOpts::default())
 }
 
 /// Absolute path to a committed fixture under `tests/fixtures/`.
@@ -73,7 +69,7 @@ fn q3_duplicate_and_empty_headers_are_deduped_by_duckdb() {
 /// `CsvOpts::default()` bypasses.
 #[test]
 fn q3_all_text_header_survives_default_load() {
-    let opts = sniffed_opts("all_text_header.csv");
+    let opts = default_load_opts();
     // The sniffer deferred the header decision rather than asserting no-header.
     assert_eq!(opts.header, None, "sniffer must defer the all-text header");
 
@@ -274,5 +270,48 @@ fn all_varchar_override_forces_text_columns_end_to_end() {
         engine.schema().column_type("id"),
         Some(&ColumnType::Text),
         "all_varchar should force id to text"
+    );
+}
+
+// ---- Dialect detection is DuckDB's alone (no ciq pre-sniff) ----
+
+/// `unbalanced_quote.tsv` is a tab file whose data lines also hold a comma and, on most of them, a
+/// stray never-closed `"` right after it (`1,"Andy Carpenter" books<TAB>David Rosenfelt`); one
+/// line carries extra commas, as the real file this came from did. A leading-bytes pre-sniffer
+/// that honors quoting sees the tab swallowed by the open quote, picks comma, and passing that as
+/// `delim=` makes DuckDB's own sniffer fail on the quote (ciq once did exactly this). With no
+/// pre-sniff the default load reaches DuckDB with its full search space, and it reads the file as
+/// two tab-separated text columns under the header, every comma and quote kept inside the field.
+#[test]
+fn default_load_leaves_dialect_detection_to_duckdb() {
+    let engine = DuckdbEngine::open(&fixture_path("unbalanced_quote.tsv"), &default_load_opts())
+        .expect("a stray quote in a tab file must not break the default load");
+    let names: Vec<&str> = engine
+        .schema()
+        .columns()
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        ["query", "hint"],
+        "expected the tab split with the header row"
+    );
+
+    let outcome = engine.query("SELECT query, hint FROM t ORDER BY hint");
+    let rows = outcome.rows().expect("rows");
+    assert_eq!(rows.row_count(), 6);
+    let first = rows.row(0).expect("row 0");
+    assert_eq!(
+        first[0],
+        &Cell::Text("1,\"Biscuit\" books for 2 yr olds".to_string()),
+        "the comma and the stray quote stay inside the first field"
+    );
+    assert_eq!(first[1], &Cell::Text("Alyssa Satin Capucilli".to_string()));
+    let last = rows.row(5).expect("row 5");
+    assert_eq!(
+        last[0],
+        &Cell::Text("1,best split end repair, sealant, and sunscreen".to_string()),
+        "extra commas stay inside the field"
     );
 }

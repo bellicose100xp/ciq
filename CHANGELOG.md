@@ -7,6 +7,14 @@ changes alike, patch `0.minor.Y` for fixes, refactors, polish, and docs.
 
 ## [Unreleased]
 
+### Fixed
+- **A tab-separated file with stray quotes now opens.** ciq used to sniff the first few lines
+  itself and hand DuckDB a fixed delimiter. On a `.tsv` whose lines began `1,"Andy Carpenter"
+  books<TAB>...` the unclosed quote hid the tab, ciq guessed comma, and DuckDB failed with
+  `Delimiter Candidates: ','`. ciq no longer sniffs; DuckDB sees the whole file with its full
+  search space and picks the tab on its own. `--delim`, `--quote`, `--header`, and `--no-header`
+  still override it.
+
 ## [0.5.1] - 2026-10-13
 
 ### Changed

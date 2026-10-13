@@ -17,8 +17,8 @@ Usage: `ciq [OPTIONS] [FILE]`
 |---|---|---|
 | `FILE` | (positional) | CSV file to open. Omitting it is reserved for stdin ingest (a later phase). |
 | `--debug` | | Enable debug logging to `/tmp/ciq/ciq-debug.log` (file only; never the terminal). |
-| `--delim` | `<CHAR>` | Field delimiter (e.g. `;` or a tab). Overrides sniffing. |
-| `--quote` | `<CHAR>` | Quote character. Overrides sniffing. |
+| `--delim` | `<CHAR>` | Field delimiter (e.g. `;` or a tab). Overrides auto-detection. |
+| `--quote` | `<CHAR>` | Quote character. Overrides auto-detection. |
 | `--escape` | `<CHAR>` | Escape character inside quoted fields. |
 | `--header` | | Treat the first row as a header (inverse of `--no-header`). |
 | `--no-header` | | Treat the first row as data, not a header. |

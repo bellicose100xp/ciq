@@ -166,52 +166,35 @@ fn empty_types_vec_is_not_an_override() {
     assert_eq!(sql, "read_csv_auto('e.csv', sample_size = -1)");
 }
 
-// ---- merge: CLI > config > sniffed, field by field ----
+// ---- merge: CLI > config, field by field ----
 
 #[test]
-fn merge_cli_wins_over_config_and_sniffed() {
-    let sniffed = opt_delim(',');
+fn merge_cli_wins_over_config() {
     let config = opt_delim(';');
     let cli = opt_delim('|');
-    assert_eq!(merge(&config, &cli, &sniffed).delimiter, Some('|'));
+    assert_eq!(merge(&config, &cli).delimiter, Some('|'));
 }
 
 #[test]
 fn merge_config_wins_when_cli_absent() {
-    let sniffed = opt_delim(',');
     let config = opt_delim(';');
     let cli = CsvOpts::default();
-    assert_eq!(merge(&config, &cli, &sniffed).delimiter, Some(';'));
-}
-
-#[test]
-fn merge_sniffed_used_when_cli_and_config_absent() {
-    let sniffed = opt_delim('\t');
-    let config = CsvOpts::default();
-    let cli = CsvOpts::default();
-    assert_eq!(merge(&config, &cli, &sniffed).delimiter, Some('\t'));
+    assert_eq!(merge(&config, &cli).delimiter, Some(';'));
 }
 
 #[test]
 fn merge_all_none_stays_none() {
-    let merged = merge(
-        &CsvOpts::default(),
-        &CsvOpts::default(),
-        &CsvOpts::default(),
-    );
+    // Nothing set anywhere -> nothing sent to DuckDB, so its sniffer keeps its full search space.
+    let merged = merge(&CsvOpts::default(), &CsvOpts::default());
     assert_eq!(merged, CsvOpts::default());
 }
 
 #[test]
 fn merge_is_field_independent() {
-    // Each field resolves on its own: delimiter from CLI, header from config, quote from sniffed.
-    let sniffed = CsvOpts {
-        quote: Some('"'),
-        delimiter: Some(','),
-        ..CsvOpts::default()
-    };
+    // Each field resolves on its own: delimiter from CLI, header and quote from config.
     let config = CsvOpts {
         header: Some(true),
+        quote: Some('"'),
         delimiter: Some(';'),
         ..CsvOpts::default()
     };
@@ -219,16 +202,16 @@ fn merge_is_field_independent() {
         delimiter: Some('|'),
         ..CsvOpts::default()
     };
-    let merged = merge(&config, &cli, &sniffed);
+    let merged = merge(&config, &cli);
     assert_eq!(merged.delimiter, Some('|')); // CLI
     assert_eq!(merged.header, Some(true)); // config
-    assert_eq!(merged.quote, Some('"')); // sniffed
+    assert_eq!(merged.quote, Some('"')); // config
 }
 
 #[test]
 fn merge_false_header_is_a_real_override_not_a_skip() {
-    // `--no-header` -> Some(false): must win over a sniffed Some(true), not be treated as "unset".
-    let sniffed = CsvOpts {
+    // `--no-header` -> Some(false): must win over a config Some(true), not be treated as "unset".
+    let config = CsvOpts {
         header: Some(true),
         ..CsvOpts::default()
     };
@@ -236,7 +219,7 @@ fn merge_false_header_is_a_real_override_not_a_skip() {
         header: Some(false),
         ..CsvOpts::default()
     };
-    let merged = merge(&CsvOpts::default(), &cli, &sniffed);
+    let merged = merge(&config, &cli);
     assert_eq!(merged.header, Some(false));
 }
 
@@ -250,7 +233,7 @@ fn merge_normalizes_types_last_write_wins_and_sorted() {
         ]),
         ..CsvOpts::default()
     };
-    let merged = merge(&CsvOpts::default(), &cli, &CsvOpts::default());
+    let merged = merge(&CsvOpts::default(), &cli);
     assert_eq!(
         merged.types,
         Some(vec![
@@ -277,8 +260,8 @@ fn merge_then_emit_roundtrips_deterministically() {
         ]),
         ..CsvOpts::default()
     };
-    let merged_a = merge(&CsvOpts::default(), &cli_a, &CsvOpts::default());
-    let merged_b = merge(&CsvOpts::default(), &cli_b, &CsvOpts::default());
+    let merged_a = merge(&CsvOpts::default(), &cli_a);
+    let merged_b = merge(&CsvOpts::default(), &cli_b);
     assert_eq!(
         to_read_csv_sql(&merged_a, "x.csv"),
         to_read_csv_sql(&merged_b, "x.csv")

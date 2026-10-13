@@ -3,15 +3,15 @@
 //! "CsvOpts <-> CLI-flag inventory" item.)
 //!
 //! Every field is `Option<_>`: `None` means "no override at this layer — defer to the layer
-//! below" (config, then sniffed, then DuckDB's own auto-detect). The full-`None` `Default` is the
-//! common path: let DuckDB auto-detect everything, scanning the whole file for types.
+//! below" (config, then DuckDB's own auto-detect). The full-`None` `Default` is the common path:
+//! let DuckDB auto-detect everything, scanning the whole file for types.
 
 use crate::sql_ident::single_quote_literal;
 
 /// CSV ingest / dialect + type-override options.
 ///
-/// Three instances are merged at load by [`merge`] (CLI > config > sniffed). Each field documents
-/// its `read_csv` mapping; [`to_read_csv_sql`] emits them.
+/// Two instances are merged at load by [`merge`] (CLI > config). Each field documents its
+/// `read_csv` mapping; [`to_read_csv_sql`] emits them.
 ///
 /// Field <-> CLI-flag <-> `read_csv` arg inventory (the R5 reconciliation, closed here):
 ///
@@ -28,7 +28,7 @@ use crate::sql_ident::single_quote_literal;
 /// | `date_format` | `--date-format '%d/%m/%Y'` | `dateformat='<f>'` |
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CsvOpts {
-    /// Field delimiter. `read_csv(delim='<c>')`. `None` = auto-detect / sniffed.
+    /// Field delimiter. `read_csv(delim='<c>')`. `None` = auto-detect.
     pub delimiter: Option<char>,
     /// Quote character. `read_csv(quote='<c>')`. `None` = auto-detect.
     pub quote: Option<char>,
@@ -88,32 +88,35 @@ impl CsvOpts {
     }
 }
 
-/// Merge three option layers into one effective [`CsvOpts`], field by field, with precedence
-/// **CLI > config > sniffed**. For each field the first `Some` wins in that order; if all three
-/// are `None` the result is `None` (defer to DuckDB auto-detect).
+/// Merge the two option layers into one effective [`CsvOpts`], field by field, with precedence
+/// **CLI > config**. For each field the first `Some` wins in that order; if both are `None` the
+/// result is `None`, which hands that field to DuckDB's own sniffer at load.
+///
+/// There is deliberately no third, ciq-sniffed layer. DuckDB's sniffer sees the whole file and
+/// every delimiter/quote combination at once; a value ciq guessed from the leading bytes and
+/// passed as `delim=` would only narrow that search, and a wrong guess (a stray `"` in a tab file
+/// once hid every tab) is a load error DuckDB alone would not have made.
 ///
 /// Pure — no I/O — so it is exhaustively unit-tested. The `types` vector is normalized
 /// (de-duplicated keeping the last write per column, then sorted by column name) so the emitted
 /// SQL is byte-stable regardless of input order (the determinism rule for user-visible output).
-pub fn merge(config: &CsvOpts, cli: &CsvOpts, sniffed: &CsvOpts) -> CsvOpts {
-    fn pick<T: Clone>(cli: &Option<T>, config: &Option<T>, sniffed: &Option<T>) -> Option<T> {
-        cli.clone()
-            .or_else(|| config.clone())
-            .or_else(|| sniffed.clone())
+pub fn merge(config: &CsvOpts, cli: &CsvOpts) -> CsvOpts {
+    fn pick<T: Clone>(cli: &Option<T>, config: &Option<T>) -> Option<T> {
+        cli.clone().or_else(|| config.clone())
     }
 
-    let types = pick(&cli.types, &config.types, &sniffed.types).map(|t| normalize_types(&t));
+    let types = pick(&cli.types, &config.types).map(|t| normalize_types(&t));
 
     CsvOpts {
-        delimiter: pick(&cli.delimiter, &config.delimiter, &sniffed.delimiter),
-        quote: pick(&cli.quote, &config.quote, &sniffed.quote),
-        escape: pick(&cli.escape, &config.escape, &sniffed.escape),
-        header: pick(&cli.header, &config.header, &sniffed.header),
-        null_string: pick(&cli.null_string, &config.null_string, &sniffed.null_string),
-        sample_size: pick(&cli.sample_size, &config.sample_size, &sniffed.sample_size),
+        delimiter: pick(&cli.delimiter, &config.delimiter),
+        quote: pick(&cli.quote, &config.quote),
+        escape: pick(&cli.escape, &config.escape),
+        header: pick(&cli.header, &config.header),
+        null_string: pick(&cli.null_string, &config.null_string),
+        sample_size: pick(&cli.sample_size, &config.sample_size),
         types,
-        all_varchar: pick(&cli.all_varchar, &config.all_varchar, &sniffed.all_varchar),
-        date_format: pick(&cli.date_format, &config.date_format, &sniffed.date_format),
+        all_varchar: pick(&cli.all_varchar, &config.all_varchar),
+        date_format: pick(&cli.date_format, &config.date_format),
     }
 }
 

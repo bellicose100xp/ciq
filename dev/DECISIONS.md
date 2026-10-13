@@ -309,3 +309,19 @@ Confirmed defects from the Phase 5 adversarial review, fixed with regression tes
 - **`src/app.rs` over the 1000-line limit (low→fixed).** Phase 5 grew `app.rs` past the hard 1000-line cap. **Lifted the autocomplete orchestration** (`refresh_autocomplete`, `value_column_to_fetch`, the free `distinct_values`) into a sibling `impl App` file `src/app/autocomplete_app.rs` (the same pattern as `ai_app`/`history_app`/`polish`), removing six now-unused imports from `app.rs` and bringing it back under the cap (992 lines).
 
 - **`output-modes.md` documented a non-existent interactive OSC52 clipboard feature pointing at an empty key set (medium→fixed, docs).** `clipboard::osc52::copy` is never invoked from any non-test path and no copy chord exists in any App handler, yet the page described an in-session OSC 52 copy path and told readers to "See the Quick Reference for the in-session key set" (which has none — a dangling cross-reference, a P5.4 exit-criterion miss). **Rewrote the section** to the truthful capability: there is no in-session copy chord; pipe the `--output` result to your OS clipboard tool (`pbcopy`/`xclip`/`clip`). The broken Quick-Reference pointer is removed.
+
+---
+
+## No ciq pre-sniff: dialect detection is DuckDB's alone (2026-10-13)
+
+**Was:** `src/ingest/sniff.rs` read the first 64 lines of the file, picked a delimiter (`, ; \t |`, ties to comma), a quote (`"` if one appeared anywhere), and a header guess, and `merge` folded that in as a third layer under CLI and config. Whatever it picked went to `read_csv` as a fixed `delim=`/`quote=`, so DuckDB's own sniffer only searched inside that choice.
+
+**Failure that exposed it:** a 275k-line `.tsv` whose sorted leading lines all read `1,"Andy Carpenter" books<TAB>David Rosenfelt`. The stray never-closed `"` made the quote-aware field counter see the tab as inside a quoted field, so tab dropped out, comma won, and DuckDB was handed `delim=','` with `quote='"'`. Its error named the search space it had been left: `Delimiter Candidates: ','`. Unconstrained, DuckDB reads the same file as the two tab columns, because over the whole sample the tab count is constant while a few dozen lines carry extra commas.
+
+**Decided:** delete the sniffer and its layer. `merge(config, cli)` has two layers; a field neither sets stays `None` and `to_read_csv_sql` emits nothing for it, so a bare `ciq <file>` is still the byte-identical `read_csv_auto('<path>', sample_size = -1)`. DuckDB sees the whole sample and every delimiter/quote/escape combination at once; a guess from the leading bytes can only narrow that, and ciq has no information DuckDB lacks. The file extension is likewise not consulted: a `.tsv` is read by its contents.
+
+**Known limits, left to the flags:** an all-text file gives DuckDB no type contrast for the header decision, so it may take row 0 as the header (`--header`/`--no-header`); a file where two delimiters split every line equally is a true tie and DuckDB prefers comma (`--delim`). Both were already ciq's behavior in substance, since the sniffer's own header and tie rules were guesses of the same kind.
+
+**Schema-bar title:** `delim auto | header on` on a default load, as before when the sniffer returned `None`; the title reports ciq's overrides, and `auto` means DuckDB chose.
+
+**Guards:** `ingest_semantics_tests::default_load_leaves_dialect_detection_to_duckdb` over the committed `tests/fixtures/unbalanced_quote.tsv` (header row, stray quotes, one extra-comma line) asserts the tab split with every comma and quote kept in-field. `csv_opts_tests` cover the two-layer `merge`. `core-modules.txt` drops `sniff.rs`. Supersedes the "Sniffer header assertion" fix above (the module it patched is gone) and the P4.7 sniffer scope in `TASKS.md`.

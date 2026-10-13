@@ -1,7 +1,7 @@
 //! ciq binary entry point.
 //!
 //! Parses CLI args, stands up debug logging, resolves the effective CSV ingest options
-//! (CLI > config > sniffed), and — when given a file — launches the interactive TUI session via
+//! (CLI > config), and — when given a file — launches the interactive TUI session via
 //! the crossterm event loop (`ciq::app::event_loop::run`). Kept thin: the testable core lives in
 //! the library (`ciq::*`), reachable without launching a terminal. Only the event loop touches a
 //! real terminal (the §4.7 human surface).
@@ -12,7 +12,7 @@ use std::process::ExitCode;
 use clap::Parser;
 
 use ciq::engine::{CsvOpts, DuckdbEngine, EngineConfig, QueryEngine, QueryOutcome};
-use ciq::ingest::{load_csv_config_str, merge, parse_types_spec, sniff_bytes};
+use ciq::ingest::{load_csv_config_str, merge, parse_types_spec};
 use ciq::output::{OutputFormat, render_output};
 use ciq::query::preprocess::prepare_interactive;
 
@@ -28,11 +28,11 @@ struct Cli {
     #[arg(long)]
     debug: bool,
 
-    /// Field delimiter (e.g. ';' or a tab). Overrides sniffing.
+    /// Field delimiter (e.g. ';' or a tab). Overrides auto-detection.
     #[arg(long, value_name = "CHAR")]
     delim: Option<char>,
 
-    /// Quote character. Overrides sniffing.
+    /// Quote character. Overrides auto-detection.
     #[arg(long, value_name = "CHAR")]
     quote: Option<char>,
 
@@ -80,7 +80,7 @@ struct Cli {
 
 impl Cli {
     /// Build the *CLI* layer of [`CsvOpts`] from the parsed flags. An unset flag stays `None` so
-    /// the config / sniffed layers decide it.
+    /// the config layer or DuckDB decides it.
     fn to_csv_opts(&self) -> Result<CsvOpts, String> {
         let header = if self.header {
             Some(true)
@@ -107,28 +107,17 @@ impl Cli {
     }
 }
 
-/// Resolve the effective ingest options for `path`: merge CLI > config > sniffed.
+/// Resolve the effective ingest options: merge CLI > config. Anything neither layer sets is left
+/// to DuckDB's sniffer at load.
 ///
 /// The config layer reads the minimal `[csv]` section from `~/.config/ciq/config.toml` if it
-/// exists (the full schema is Phase 5 / Q5). The sniffed layer reads the file's leading bytes.
-/// Lives in `main.rs` (the CLI shim) because it touches the filesystem; the pieces it composes
-/// (`merge`, `sniff_bytes`, `load_csv_config_str`, `Cli::to_csv_opts`) are each pure/headless.
-fn resolve_opts(cli: &Cli, path: &Path) -> Result<CsvOpts, String> {
+/// exists (the full schema is Phase 5 / Q5). Lives in `main.rs` (the CLI shim) because it touches
+/// the filesystem; the pieces it composes (`merge`, `load_csv_config_str`, `Cli::to_csv_opts`)
+/// are each pure/headless.
+fn resolve_opts(cli: &Cli) -> Result<CsvOpts, String> {
     let cli_opts = cli.to_csv_opts()?;
-
     let config_opts = read_config_opts();
-
-    let sniffed_opts = match std::fs::read(path) {
-        Ok(bytes) => {
-            // Sniff only the leading bytes; DuckDB's own sniffer does the thorough pass at load.
-            let head = &bytes[..bytes.len().min(64 * 1024)];
-            sniff_bytes(head).to_opts()
-        }
-        // Unreadable here just means no sniff layer; the load below surfaces the real error.
-        Err(_) => CsvOpts::default(),
-    };
-
-    Ok(merge(&config_opts, &cli_opts, &sniffed_opts))
+    Ok(merge(&config_opts, &cli_opts))
 }
 
 /// Read the `[csv]` config layer from `~/.config/ciq/config.toml`, or the default if absent /
@@ -168,7 +157,7 @@ fn main() -> ExitCode {
 
     match &cli.file {
         Some(path) => {
-            let opts = match resolve_opts(&cli, path) {
+            let opts = match resolve_opts(&cli) {
                 Ok(o) => o,
                 Err(e) => {
                     eprintln!("ciq: {e}");
