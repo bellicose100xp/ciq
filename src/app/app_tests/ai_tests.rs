@@ -422,17 +422,41 @@ fn a_failing_query_adds_a_turn_asking_for_fixes() {
 }
 
 #[test]
-fn a_failing_query_pops_the_chat_up_when_it_is_hidden() {
+fn a_failing_query_leaves_a_hidden_chat_hidden() {
     let (mut app, ai_rx, _query_rx) = ai_app();
     assert!(!app.is_ai_open());
     app.ai_report_failure("some error", 0);
+    assert!(!app.is_ai_open(), "only Ctrl+A shows the chat");
     assert!(
-        app.is_ai_open(),
-        "an error is the one thing that opens the chat on its own"
+        app.ai().chat().is_empty(),
+        "and a hidden chat records nothing"
     );
+    assert!(ai_rx.try_recv().is_err(), "and asks for nothing");
+}
+
+#[test]
+fn a_chat_hidden_with_ctrl_a_stays_hidden_through_a_failure() {
+    let (mut app, ai_rx, _query_rx) = ai_app();
+    app.on_key(ctrl('a'), 0);
+    app.on_key(ctrl('a'), 0);
+    assert!(!app.is_ai_open());
+    app.ai_report_failure("some error", 0);
+    assert!(!app.is_ai_open());
+    assert!(ai_rx.try_recv().is_err());
+    app.on_key(ctrl('a'), 0);
+    assert!(app.is_ai_open(), "Ctrl+A brings it back");
+}
+
+#[test]
+fn a_failing_query_speaks_up_in_a_visible_unfocused_chat() {
+    let (mut app, ai_rx, _query_rx) = ai_app();
+    app.on_key(ctrl('a'), 0);
+    app.on_key(ctrl('g'), 0);
+    assert!(app.is_ai_open() && !app.ai().is_focused());
+    app.ai_report_failure("some error", 0);
     assert!(
         !app.ai().is_focused(),
-        "without stealing the keyboard from the bar the user is editing"
+        "without stealing the keyboard from the bar"
     );
     assert_eq!(app.ai().chat().len(), 1);
     assert!(ai_rx.try_recv().is_ok(), "and the fixes are requested");
@@ -665,9 +689,10 @@ fn the_chat_reports_the_recorded_error_not_the_current_status_line() {
 #[test]
 fn a_success_clears_the_recorded_error() {
     let (mut app, ai_rx, _query_rx) = ai_app();
+    app.on_key(ctrl('a'), 0);
     let id = dispatched(&mut app, "SELECT bogus FROM t");
     app.on_response_with_ai(error_resp(id, RequestKind::Main), 0);
-    // The error popped the chat up and asked for fixes; let that answer land first.
+    // The error asked the visible chat for fixes; let that answer land first.
     let failure = ai_rx.try_recv().expect("the failure turn was sent");
     app.on_ai_result(
         answer(failure.seq, r#"{"reply":"typo","suggestions":[]}"#),
@@ -682,7 +707,6 @@ fn a_success_clears_the_recorded_error() {
         },
         0,
     );
-    app.on_key(ctrl('g'), 0);
     type_str(&mut app, "what now?", 0);
     app.on_key(KeyEvent::plain(Key::Enter), 0);
     let job = ai_rx.try_recv().expect("sent");

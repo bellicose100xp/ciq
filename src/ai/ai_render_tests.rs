@@ -1,4 +1,4 @@
-//! Tests for `ai_render` — the pure row model (wrapping, blocks, spacers, status), the window and
+//! Tests for `ai_render` — the pure row model (wrapping, blocks, rules, status), the window and
 //! click math derived from it, the title and bottom hints, the input line, and the popup blit
 //! (`insta` + `ratatui::TestBackend`, logical cells only).
 //!
@@ -189,7 +189,7 @@ fn layout_rows_lists_prose_then_suggestion_blocks_then_the_status() {
     assert_eq!(
         rows.len(),
         6,
-        "no spacer after the last answer, no status row mid-chat"
+        "no rule after the last answer, no status row mid-chat"
     );
     // Every row of a block carries its suggestion; prose carries none.
     assert_eq!(rows[0].suggestion, None);
@@ -249,13 +249,21 @@ fn layout_rows_wraps_long_prose_and_sql_to_the_width() {
 }
 
 #[test]
-fn layout_rows_puts_a_spacer_between_exchanges() {
+fn layout_rows_puts_a_rule_between_exchanges() {
     let s = long();
     let rows = layout_rows(&s, 60);
     let t = texts(&rows);
-    let blanks = t.iter().filter(|l| l.is_empty()).count();
-    assert_eq!(blanks, 5, "a spacer after every answer but the last");
-    assert!(!t.last().unwrap().is_empty(), "no trailing spacer");
+    let rule = "\u{2500}".repeat(60);
+    let rules = t.iter().filter(|l| **l == rule).count();
+    assert_eq!(rules, 5, "a rule after every answer but the last");
+    assert!(t.iter().all(|l| !l.is_empty()), "no blank rows");
+    assert_ne!(*t.last().unwrap(), rule, "no trailing rule");
+    assert!(
+        rows.iter()
+            .filter(|r| text_of(&r.line) == rule)
+            .all(|r| r.suggestion.is_none()),
+        "a rule is never a click target"
+    );
 }
 
 #[test]

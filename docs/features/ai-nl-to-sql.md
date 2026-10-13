@@ -53,8 +53,10 @@ chat (and `Esc` from the chat goes back to the bar), while `Ctrl+A` only ever sh
 While the chat is visible but unfocused, `Alt+1` through `Alt+5` still apply the latest answer's
 rows, so you can pick a suggestion without leaving the bar.
 
-A failing query pops the chat up on its own if it is hidden, without taking the keyboard, so the
-fixes are on screen while you are still editing.
+A failing query speaks up only while the chat is visible. It adds the turn without taking the
+keyboard, so the fixes are on screen while you are still editing. A chat you hid with `Ctrl+A`
+stays hidden and sends nothing until you bring it back. A horizontal rule separates each exchange
+in the transcript.
 
 ## Opening it
 

@@ -42,7 +42,7 @@ The table is always named `t`. Inside the session:
 |---|---|
 | `Ctrl+P` | Open the column palette from the SELECT pane (needs a loaded schema). |
 | `Ctrl+R` | Open the query-history popup (seeds its filter with the bar text). |
-| `Ctrl+A` | Show or hide the AI chat. Opening it by hand gives it the keyboard. It is open by default on load, unfocused, at the bottom right, and a failing query pops it up if it is hidden. |
+| `Ctrl+A` | Show or hide the AI chat. Opening it by hand gives it the keyboard. It is open by default on load, unfocused, at the bottom right. Hidden, it stays hidden until the next `Ctrl+A`; a failing query only speaks up while it is visible. |
 | `Ctrl+G` | Put the keyboard in the AI chat to ask a question (opening it if hidden); press again to hand the keyboard back to the query bar. |
 | `Ctrl+F` | Open the row-filter search bar (needs a result on screen); on a confirmed search, re-enter editing. |
 | `Ctrl+O` | Quit and print the displayed result to the terminal (an aligned, colored table in your scrollback). |

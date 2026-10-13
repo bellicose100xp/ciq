@@ -88,7 +88,7 @@ a plaintext config while the tool reports everything is fine.
 | `effort` | `off` \| `low` \| `medium` \| `high` \| `xhigh` \| `max` | `low` | How hard the model thinks per request. `off` omits the effort and thinking fields entirely, for models that reject them. |
 | `max_tokens` | integer | `4096` | Output token cap per request, enough for five suggestions with SQL and a note each. A configured `0` falls back to the default rather than asking for an empty reply. |
 | `request_timeout_secs` | integer | `60` | Whole-request timeout in seconds. `0` disables the timeout. |
-| `open_on_start` | bool | `true` | Show the chat as soon as the CSV loads. It opens without taking the keyboard, so typing still goes to the query bar until you click the chat or press `Ctrl+G`. A failing query pops the chat up even when this is `false`. |
+| `open_on_start` | bool | `true` | Show the chat as soon as the CSV loads. It opens without taking the keyboard, so typing still goes to the query bar until you click the chat or press `Ctrl+G`. A hidden chat stays hidden; a failing query only speaks up while the chat is visible. |
 | `extra_instructions` | string | unset | Free-text preferences appended to every prompt. It never replaces the built-in rules, and the output-format rules always win. |
 | `max_context_length` | integer | `20000` | Character budget per request, spent on two things: the conversation turns sent with a message (the newest that fit; older ones are left out), and the result sample or error text embedded in that message (truncated when longer). A configured `0` falls back to the default. |
 

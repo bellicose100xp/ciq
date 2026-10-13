@@ -537,6 +537,14 @@ pub mod ai {
             .bg(p::pal().bg)
     }
 
+    /// The rule between two exchanges in the transcript — the unfocused border hue, so it reads
+    /// as chrome, not content.
+    pub fn divider() -> Style {
+        Style::default()
+            .fg(p::pal().border_unfocused)
+            .bg(p::pal().bg)
+    }
+
     /// The chat's accent — purple, shared by the border, the title, and the bottom hint keys.
     pub fn accent() -> Color {
         p::pal().purple

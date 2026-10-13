@@ -4,7 +4,7 @@
 //! The popup is a conversation laid out jiq-style: a scrollable transcript of `you:` / `ai:`
 //! turns with the prose **wrapped to the box width**, each answer's suggestions listed under it as
 //! numbered blocks (`[n] kind` prefix, the SQL wrapped with a hanging indent, the model's note on
-//! its own dimmed line), a blank spacer between exchanges, and an input line pinned to the bottom.
+//! its own dimmed line), a horizontal rule between exchanges, and an input line pinned to the bottom.
 //! The top border names the provider and model; the bottom border carries the shortcut legend,
 //! which changes with keyboard focus.
 //!
@@ -151,7 +151,7 @@ pub fn popup_rows_for(_state: &AiState) -> u16 {
 // --- the row model ---
 
 /// Flatten the transcript into painted rows at `width`: for each turn its wrapped prose, then one
-/// block per suggestion (prefix + wrapped SQL + dimmed note), a blank spacer after each answer,
+/// block per suggestion (prefix + wrapped SQL + dimmed note), a horizontal rule after each answer,
 /// and finally the status row (error banner or the fresh-chat hint) when there is one. The
 /// keyboard cursor is painted onto its block here, so the caller never re-derives it.
 pub fn layout_rows(state: &AiState, width: u16) -> Vec<Row> {
@@ -174,10 +174,11 @@ pub fn layout_rows(state: &AiState, width: u16) -> Vec<Row> {
             );
             flat += 1;
         }
-        // A spacer after every answer but the last, so exchanges read as separate paragraphs.
+        // A rule after every answer but the last, so a long conversation reads as separate
+        // exchanges rather than one run of text.
         if turn.role == Role::Assistant && ti + 1 < turns.len() {
             rows.push(Row {
-                line: Line::from(""),
+                line: divider_line(width),
                 suggestion: None,
             });
         }
@@ -221,7 +222,7 @@ pub fn transcript_lines(state: &AiState, width: u16, height: u16) -> Vec<Line<'s
 }
 
 /// The flattened suggestion a click on visible inner row `row` lands on, or `None` for prose, a
-/// spacer, the status row, the input line, or past the end. Uses the same window as the paint.
+/// rule, the status row, the input line, or past the end. Uses the same window as the paint.
 pub fn suggestion_at_row(state: &AiState, row: usize, width: u16, height: u16) -> Option<usize> {
     if row >= height as usize {
         return None;
@@ -237,6 +238,12 @@ fn window_start(state: &AiState, total: usize, height: usize) -> usize {
 }
 
 // --- rows ---
+
+/// The horizontal rule between two exchanges, spanning the transcript width in the muted border
+/// hue so it separates without competing with the text.
+fn divider_line(width: usize) -> Line<'static> {
+    Line::from(Span::styled("\u{2500}".repeat(width), theme::ai::divider()))
+}
 
 /// A turn's prose: the role label on the first row, then the text wrapped to the remaining width
 /// with continuation rows indented under it.

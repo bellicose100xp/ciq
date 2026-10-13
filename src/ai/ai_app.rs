@@ -358,15 +358,13 @@ impl App {
     }
 
     /// The automatic turn: a query just failed, so ask for fixes. This is the only message ciq sends
-    /// without the user typing — a successful query stays quiet. A hidden chat pops up (without
-    /// taking the keyboard, the user is mid-edit) so the fixes are seen. No-op while a request is
+    /// without the user typing — a successful query stays quiet. Only a **visible** chat speaks up:
+    /// a hidden one stays hidden and sends nothing, so `Ctrl+A` is the one thing that shows or
+    /// hides the box and a run of typos never drags it back on screen. No-op while a request is
     /// already in flight.
     pub(crate) fn ai_report_failure(&mut self, error: &str, _now_ms: u64) {
-        if !self.ai_ready() || self.ai.is_pending() {
+        if !self.ai_ready() || !self.ai.is_open() || self.ai.is_pending() {
             return;
-        }
-        if !self.ai.is_open() {
-            self.ai.open_unfocused();
         }
         let Some(schema) = self.schema.as_ref() else {
             return;

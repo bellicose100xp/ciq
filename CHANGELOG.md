@@ -7,6 +7,13 @@ changes alike, patch `0.minor.Y` for fixes, refactors, polish, and docs.
 
 ## [Unreleased]
 
+### Changed
+- **The AI chat stays hidden once you hide it.** `Ctrl+A` is the only thing that shows or hides the
+  popup. A failing query used to pop a hidden chat back up on every typo; it now speaks up only
+  while the chat is visible, and a hidden chat sends no request.
+- A horizontal rule now separates each exchange in the AI transcript, in place of a blank row, so
+  a long conversation reads as distinct question-and-answer pairs.
+
 ## [0.5.0] - 2026-10-10
 
 ### Added
