@@ -64,7 +64,7 @@ After all green:
 - Stage specific files by name (never `git add -A` / `git add .`).
 - Commit with a **single-line** lowercase Conventional Commit message (no body, no issue refs).
 - **Push `main` right after every commit.** Work on this package runs across several sessions and machines, and each one picks up the others' changes from `origin/main`, so an unpushed commit is invisible to them. Commit small and often, and push each commit as soon as it is made; never leave `main` ahead of `origin/main` at the end of a turn.
-- **Release when it makes sense, without waiting to be asked.** Releases are per batch of user-visible change, never per commit: cut one when the Unreleased section of `CHANGELOG.md` holds a fix or feature a user would notice and the gates are green. Docs-only, test-only, and internal commits accumulate and ride the next release. Cut it with the **`ciq-release`** skill (see Versioning & Releasing), and say in the turn's report which version shipped.
+- **Release when it makes sense, without waiting to be asked.** Releases are per batch of user-visible change, never per commit: cut one when the Unreleased section of `CHANGELOG.md` holds a fix or feature a user would notice and the gates are green. Docs-only, test-only, and internal commits accumulate and ride the next release, and so does a commit that is an intermediate step of a larger change: a release ships only finished work, never a feature or fix that is half-landed. Cut it with the **`ciq-release`** skill (see Versioning & Releasing), and say in the turn's report which version shipped.
 
 ## CI gates (4 jobs — see `dev/PLAN.md` §0/D5)
 
