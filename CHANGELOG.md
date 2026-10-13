@@ -7,6 +7,8 @@ changes alike, patch `0.minor.Y` for fixes, refactors, polish, and docs.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-13
+
 ### Fixed
 - **A tab-separated file with stray quotes now opens.** ciq used to sniff the first few lines
   itself and hand DuckDB a fixed delimiter. On a `.tsv` whose lines began `1,"Andy Carpenter"
@@ -209,7 +211,8 @@ startup.
 - **Release flow** — cargo-dist shell installer (curl-based) for macOS and Linux, built by the
   `Release` workflow on a `vX.Y.Z` tag.
 
-[Unreleased]: https://github.com/bellicose100xp/ciq/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/bellicose100xp/ciq/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/bellicose100xp/ciq/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/bellicose100xp/ciq/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/bellicose100xp/ciq/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/bellicose100xp/ciq/compare/v0.3.0...v0.4.0
