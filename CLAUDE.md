@@ -63,7 +63,8 @@ After all green:
 - **Sync with remote first:** `git fetch origin`; if you have local commits on `main`, `git rebase origin/main` (resolve conflicts locally, not in the PR); else `git pull --ff-only origin main`.
 - Stage specific files by name (never `git add -A` / `git add .`).
 - Commit with a **single-line** lowercase Conventional Commit message (no body, no issue refs).
-- **Do not push, tag, or release on your own.** Pushing/tagging is deferred until the user explicitly asks to release — then invoke the **`ciq-release`** skill (see Versioning & Releasing).
+- **Push `main` right after every commit.** Work on this package runs across several sessions and machines, and each one picks up the others' changes from `origin/main`, so an unpushed commit is invisible to them. Commit small and often, and push each commit as soon as it is made; never leave `main` ahead of `origin/main` at the end of a turn.
+- **Do not tag or release on your own.** Tagging is what publishes a release, and it waits for the user to ask — then invoke the **`ciq-release`** skill (see Versioning & Releasing).
 
 ## CI gates (4 jobs — see `dev/PLAN.md` §0/D5)
 
