@@ -7,6 +7,8 @@ changes alike, patch `0.minor.Y` for fixes, refactors, polish, and docs.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-13
+
 ### Changed
 - **The AI chat stays hidden once you hide it.** `Ctrl+A` is the only thing that shows or hides the
   popup. A failing query used to pop a hidden chat back up on every typo; it now speaks up only
@@ -199,7 +201,8 @@ startup.
 - **Release flow** — cargo-dist shell installer (curl-based) for macOS and Linux, built by the
   `Release` workflow on a `vX.Y.Z` tag.
 
-[Unreleased]: https://github.com/bellicose100xp/ciq/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/bellicose100xp/ciq/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/bellicose100xp/ciq/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/bellicose100xp/ciq/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/bellicose100xp/ciq/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/bellicose100xp/ciq/compare/v0.2.1...v0.3.0
